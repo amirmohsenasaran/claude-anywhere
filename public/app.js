@@ -842,7 +842,7 @@
     }
     if (text) b.appendChild(el('div', 'msg-text', text));
     m.appendChild(b);
-    if (queued) m.appendChild(el('div', 'queued-label', 'Queued · sends when Claude finishes'));
+    if (queued) m.appendChild(el('div', 'queued-label', 'Queued · Claude reads it after the current step'));
     return m;
   }
 

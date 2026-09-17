@@ -103,8 +103,10 @@ installer is about 250 MB and does not depend on the `claude` CLI.
 - A status line under the last message shows what is happening ("Thinking…",
   "Running Bash…", "Waiting for your approval"), seconds elapsed and output
   tokens; thinking streams open and collapses to "Thought for 4s".
-- Messages typed while Claude works are queued and run right after the current
-  turn (dashed bubble until then). Esc or the stop button interrupts.
+- Messages typed while Claude works are handed to Claude Code at once; it reads
+  them after the current step (the next tool boundary), not after the whole
+  turn, exactly as the CLI and Desktop do. The bubble is dashed until the turn
+  takes it up. Esc or the stop button interrupts.
 - Permission mode (Manual / Edit automatically / Plan / Auto), model and effort
   can be changed mid-turn; Shift+Tab cycles the mode like the CLI.
 - **Tasks.** Every command and subagent the turn runs is a task. A bar above
