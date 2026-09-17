@@ -334,3 +334,7 @@ body { font-size: 14px; }
 .ct-more > summary::-webkit-details-marker { display: none; }
 .ct-more > summary:hover { background: var(--bg-3); }
 .ct-search { width: 100%; font: inherit; font-size: 13px; padding: 7px 10px; margin: 6px 0; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); outline: none; }
+
+/* ---------- v17: interrupted-turn notice ---------- */
+.interrupted { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--line-2); color: var(--ink-2); font-size: 13.5px; }
+.interrupted .btn { font-size: 13px; padding: 6px 12px; }

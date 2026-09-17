@@ -143,11 +143,17 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     // Same derivation as server.mjs: no password means the fixed word "open".
     let token = hex::encode(Sha256::digest(format!("claude-remote:{}", if password.is_empty() { "open" } else { &password })));
 
-    // Already running with our password (another copy, or `npm start`)? Then just use it.
+    // Already running with our password (the server of a previous app instance that is
+    // still finishing a turn, another copy, or `npm start`)? Adopt it and carry on.
     // Something else on that port (a dev server with a different password)? Pick a free one.
     let mut port = port;
     if port_open(port) {
         if server_accepts(port, &token) {
+            let _ = ureq::post(&format!("http://127.0.0.1:{port}/api/adopt"))
+                .set("Authorization", &format!("Bearer {token}"))
+                .set("Content-Type", "application/json")
+                .timeout(Duration::from_secs(3))
+                .send_string(&format!("{{\"pid\":{}}}", std::process::id()));
             return Ok(ServerState { child: Mutex::new(None), port, token, env_file });
         }
         port = (port + 1..port + 20).find(|p| !port_open(*p)).ok_or("No free port near the configured one")?;
@@ -223,8 +229,21 @@ fn server_accepts(port: u16, token: &str) -> bool {
 
 fn stop_server(app: &AppHandle) {
     if let Some(state) = app.try_state::<ServerState>() {
+        // Claude mid-turn? Leave the server alone: it finishes the work on its own and
+        // exits when idle, and the next app instance adopts it.
+        let busy = ureq::get(&format!("http://127.0.0.1:{}/api/runs", state.port))
+            .set("Authorization", &format!("Bearer {}", state.token))
+            .timeout(Duration::from_secs(2))
+            .call()
+            .ok()
+            .and_then(|r| r.into_json::<serde_json::Value>().ok())
+            .map(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+            .unwrap_or(false);
         if let Ok(mut guard) = state.child.lock() {
             if let Some(mut child) = guard.take() {
+                if busy {
+                    return;
+                }
                 let _ = child.kill();
                 let _ = child.wait();
             }

@@ -1101,6 +1101,14 @@
       $('#chat-meta').title = [info.cwd, info.branch && 'Branch: ' + info.branch].filter(Boolean).join('\n');
       state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
       renderHistory(messages);
+      // The last turn never finished (the app or the PC restarted mid-work): say so, offer to go on.
+      if (info.interrupted) {
+        const n = el('div', 'interrupted');
+        n.appendChild(el('span', null, info.interrupted.kind === 'tool_call' ? 'This turn stopped in the middle of a tool call' + (info.interrupted.at ? ' (' + relTime(Date.parse(info.interrupted.at)) + ' ago)' : '') + '. The app or the computer was restarted before Claude finished.' : 'This turn stopped before Claude answered' + (info.interrupted.at ? ' (' + relTime(Date.parse(info.interrupted.at)) + ' ago)' : '') + '.'));
+        const b = el('button', 'btn btn-ghost', 'Continue where it left off'); b.type = 'button';
+        b.addEventListener('click', () => { n.remove(); input.value = 'Continue where you left off. Check what was already done before redoing anything, then finish the task.'; input.dispatchEvent(new Event('input')); submit(); });
+        n.appendChild(b); thread.appendChild(n);
+      }
       stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
       setRunning(false); setElsewhere(false);
       subscribe(id); // streams our own turn, or follows the file if another window is working

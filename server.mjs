@@ -410,11 +410,34 @@ function sessionSettings(id) {
   } catch {}
   return { model: saved.model || model || '', permissionMode: saved.permissionMode || mode || '', effort: saved.effort ?? '' };
 }
+// A turn that never finished (the app or the machine was restarted mid-work) leaves the
+// transcript ending on a tool call with no result, or on a tool result with no answer.
+function interruptedTurn(id) {
+  try {
+    const f = sessionFile(id); if (!f) return null;
+    const st = fs.statSync(f); const size = Math.min(st.size, 512 * 1024);
+    const fd = fs.openSync(f, 'r'); const buf = Buffer.alloc(size); fs.readSync(fd, buf, 0, size, st.size - size); fs.closeSync(fd);
+    let last = null;
+    for (const line of buf.toString('utf8').split('\n').reverse()) {
+      if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"')) continue;
+      let j; try { j = JSON.parse(line); } catch { continue; }
+      if (j.isSidechain || (j.type !== 'assistant' && j.type !== 'user')) continue;
+      last = j; break;
+    }
+    if (!last) return null;
+    const c = last.message?.content;
+    if (last.type === 'assistant' && Array.isArray(c) && c.some((b) => b.type === 'tool_use')) return { kind: 'tool_call', at: last.timestamp };
+    if (last.type === 'user' && Array.isArray(c) && c.some((b) => b.type === 'tool_result')) return { kind: 'tool_result', at: last.timestamp };
+    return null;
+  } catch { return null; }
+}
 app.get('/api/sessions/:id', async (req, res, next) => {
   try {
     const s = await getSessionInfo(req.params.id);
     if (!s) return res.status(404).json({ error: 'Not found' });
-    res.json({ ...shape(s, new Set(readPrefs().pinned)), settings: sessionSettings(req.params.id) });
+    const base = shape(s, new Set(readPrefs().pinned));
+    const interrupted = !base.live && !base.working ? interruptedTurn(req.params.id) : null;
+    res.json({ ...base, settings: sessionSettings(req.params.id), interrupted });
   } catch (e) { next(e); }
 });
 app.post('/api/sessions/:id/prefs', (req, res) => {
@@ -584,6 +607,15 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() ==
 console.log(`[claude-remote] node ${process.version} argv1=${process.argv[1]} main=${isMain} cwd=${process.cwd()}`);
 if (isMain) startServer();
 
-// Started by the desktop app: leave when it leaves, even if it was killed.
-const parentPid = Number(process.env.CLAUDE_REMOTE_PARENT_PID);
-if (parentPid) setInterval(() => { try { process.kill(parentPid, 0); } catch { console.log('[claude-remote] desktop app is gone, exiting'); process.exit(0); } }, 2000).unref();
+// Started by the desktop app: leave when it leaves, but never while Claude is mid-turn.
+// A new app instance (after a rebuild or update) finds this server on the port, adopts
+// it (POST /api/adopt) and carries on with the same live runs.
+let parentPid = Number(process.env.CLAUDE_REMOTE_PARENT_PID) || 0;
+let orphanSince = 0;
+if (parentPid) setInterval(() => {
+  try { process.kill(parentPid, 0); orphanSince = 0; return; } catch {}
+  const live = [...runs.values()].filter((r) => !r.done).length;
+  if (live) { if (!orphanSince) { orphanSince = Date.now(); console.log(`[claude-remote] desktop app is gone; staying up for ${live} running turn(s)`); } return; }
+  console.log('[claude-remote] desktop app is gone and nothing is running, exiting'); process.exit(0);
+}, 2000).unref();
+app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; console.log('[claude-remote] adopted by app pid', pid); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });
