@@ -237,3 +237,28 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   .model-label { display: none; }
 }
 @media (min-width: 861px) { #sidebar-close { display: none; } }
+
+/* ---------- sidebar: pinned + collapsible project groups ---------- */
+.project-group { margin-top: 6px; }
+.project-group > summary { list-style: none; display: flex; align-items: center; gap: 6px; padding: 5px 10px 3px; font-size: 11.5px; color: var(--ink-3); cursor: pointer; user-select: none; border-radius: 8px; }
+.project-group > summary::-webkit-details-marker { display: none; }
+.project-group > summary:hover { color: var(--ink); background: var(--bg-3); }
+.project-group > summary .chev { transition: transform .15s; }
+.project-group:not([open]) > summary .chev { transform: rotate(-90deg); }
+.project-group > summary .cnt { margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+.session-item { position: relative; padding-inline-end: 8px; }
+.session-item .pin { flex: none; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-3); opacity: 0; }
+.session-item:hover .pin, .session-item.pinned .pin { opacity: 1; }
+.session-item.pinned .pin { color: var(--accent); }
+.session-item .pin:hover { background: var(--bg); color: var(--ink); }
+@media (hover: none) { .session-item .pin { opacity: .6; } }
+#pin-btn.on { color: var(--accent); }
+.sidebar-user-plan .plan { text-transform: capitalize; }
+
+/* ---------- composer menus (model, permission mode) ---------- */
+.menu.menu-end { inset-inline-start: auto; inset-inline-end: 0; }
+.menu-title { font-size: 11.5px; color: var(--ink-3); padding: 6px 10px 2px; }
+.menu-item.sel { background: var(--bg-2); }
+.menu-item.sel::after { content: "✓"; float: inline-end; color: var(--accent); }
+.menu-item .desc { display: block; color: var(--ink-3); font-size: 11.5px; white-space: normal; }
+@media (max-width: 860px) { #mode-btn span { display: none; } #mode-btn::before { content: "⚙"; font-size: 13px; } }

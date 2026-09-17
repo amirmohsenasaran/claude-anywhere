@@ -13,6 +13,7 @@
 import express from 'express';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -63,7 +64,36 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-const shape = (s) => ({
+// ---------- small preferences file: pinned sessions (shared by every device) ----------
+const PREFS_PATH = path.join(here, 'data', 'prefs.json');
+function readPrefs() {
+  try { return { pinned: [], ...JSON.parse(fs.readFileSync(PREFS_PATH, 'utf8')) }; } catch { return { pinned: [] }; }
+}
+function writePrefs(p) {
+  fs.mkdirSync(path.dirname(PREFS_PATH), { recursive: true });
+  fs.writeFileSync(PREFS_PATH, JSON.stringify(p, null, 2));
+}
+
+// Which Claude account the CLI on this machine is signed in as. Read from the
+// same files Claude Code keeps its login in; nothing secret leaves this function.
+function whoAmI() {
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const out = { email: '', name: '', org: '', plan: '' };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    const a = j.oauthAccount || {};
+    out.email = a.emailAddress || ''; out.name = a.displayName || a.fullName || ''; out.org = a.organizationName || '';
+    out.plan = a.organizationType ? a.organizationType.replace(/^claude_/, '') : '';
+  } catch {}
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8'));
+    if (c.claudeAiOauth?.subscriptionType) out.plan = c.claudeAiOauth.subscriptionType;
+    out.auth = c.claudeAiOauth ? 'claude.ai' : 'api-key';
+  } catch { out.auth = process.env.ANTHROPIC_API_KEY ? 'api-key' : 'unknown'; }
+  return out;
+}
+
+const shape = (s, pinned) => ({
   id: s.sessionId,
   title: s.customTitle || s.summary || s.firstPrompt || 'Untitled',
   cwd: s.cwd || '',
@@ -72,15 +102,25 @@ const shape = (s) => ({
   lastModified: s.lastModified,
   createdAt: s.createdAt,
   live: isLive(s.sessionId),
+  pinned: !!pinned?.has(s.sessionId),
 });
 
-app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine' }));
+app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI() }));
+
+app.post('/api/sessions/:id/pin', (req, res) => {
+  const p = readPrefs();
+  const set = new Set(p.pinned);
+  if (req.body?.pinned) set.add(req.params.id); else set.delete(req.params.id);
+  p.pinned = [...set]; writePrefs(p);
+  res.json({ pinned: set.has(req.params.id) });
+});
 
 app.get('/api/sessions', async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
-    res.json((await listSessions({ limit, offset })).map(shape));
+    const pinned = new Set(readPrefs().pinned);
+    res.json((await listSessions({ limit, offset })).map((s) => shape(s, pinned)));
   } catch (e) { next(e); }
 });
 
@@ -96,7 +136,7 @@ app.get('/api/sessions/:id', async (req, res, next) => {
   try {
     const s = await getSessionInfo(req.params.id);
     if (!s) return res.status(404).json({ error: 'Not found' });
-    res.json(shape(s));
+    res.json(shape(s, new Set(readPrefs().pinned)));
   } catch (e) { next(e); }
 });
 
@@ -121,7 +161,8 @@ app.post('/api/sessions/:id/send', async (req, res, next) => {
     if (isLive(id)) return res.status(409).json({ error: 'Claude is still working on this chat.' });
     const info = await getSessionInfo(id);
     if (!info) return res.status(404).json({ error: 'Session not found' });
-    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt });
+    const { model, permissionMode, effort } = req.body || {};
+    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, model, permissionMode, effort });
     res.json({ runId: run.id, sessionId: id });
   } catch (e) { next(e); }
 });
@@ -131,7 +172,8 @@ app.post('/api/sessions', async (req, res) => {
   const cwd = String(req.body?.cwd || '').trim();
   if (!prompt) return res.status(400).json({ error: 'Empty message' });
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'Pick a folder that exists on this machine.' });
-  const { run, ready } = startRun({ cwd, prompt });
+  const { model, permissionMode, effort } = req.body || {};
+  const { run, ready } = startRun({ cwd, prompt, model, permissionMode, effort });
   try {
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Claude Code did not start in time')), 60000));
     const sessionId = await Promise.race([ready, timeout]);

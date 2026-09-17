@@ -55,8 +55,9 @@
 
       <div class="sidebar-bottom">
         <div class="avatar" id="sidebar-avatar">A</div>
-        <div class="sidebar-user">
+        <div class="sidebar-user" id="sidebar-user" title="">
           <div id="sidebar-name" class="sidebar-user-name">…</div>
+          <div id="sidebar-account" class="sidebar-user-plan">…</div>
           <div id="sidebar-host" class="sidebar-user-plan">…</div>
         </div>
         <button id="logout" class="link-btn small">Log out</button>
@@ -74,6 +75,9 @@
         </div>
         <div class="topbar-right">
           <span id="live-pill" class="pill hidden"><span class="dot"></span>Working</span>
+          <button id="pin-btn" class="icon-btn hidden" aria-label="Pin this chat" title="Pin">
+            <svg viewBox="0 0 20 20" width="17" height="17"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          </button>
         </div>
       </header>
 
@@ -101,7 +105,14 @@
               <div id="project-menu" class="menu hidden"></div>
             </div>
             <div class="composer-right">
-              <span class="model-label" id="model-label">Claude Fable 5.1</span>
+              <div class="composer-left">
+                <button id="mode-btn" class="chip" type="button" title="Permission mode"><span id="mode-name">Default</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+                <div id="mode-menu" class="menu menu-end hidden"></div>
+              </div>
+              <div class="composer-left">
+                <button id="model-btn" class="chip" type="button" title="Model"><span id="model-label">Claude Fable 5.1</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+                <div id="model-menu" class="menu menu-end hidden"></div>
+              </div>
               <button id="send" class="send" aria-label="Send">
                 <svg class="ic-send" viewBox="0 0 20 20" width="18" height="18"><path d="M10 16V4M5 9l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <svg class="ic-stop" viewBox="0 0 20 20" width="14" height="14"><rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/></svg>

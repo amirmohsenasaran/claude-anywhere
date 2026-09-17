@@ -63,25 +63,60 @@
     state.sessions = await api('/sessions?limit=200');
     renderSessions();
   }
+  let collapsed = new Set();
+  try { collapsed = new Set(JSON.parse(localStorage.getItem('cr.collapsed') || '[]')); } catch {}
+  const PIN_SVG = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  const CHEV_SVG = '<svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+
+  function sessionRow(s) {
+    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : ''));
+    a.href = '#/s/' + s.id; a.title = s.title;
+    if (s.live) a.appendChild(el('span', 'dot'));
+    const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
+    a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
+    const pin = el('button', 'pin'); pin.type = 'button'; pin.title = s.pinned ? 'Unpin' : 'Pin'; pin.innerHTML = PIN_SVG;
+    pin.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); togglePin(s.id, !s.pinned); });
+    a.appendChild(pin);
+    return a;
+  }
   function renderSessions() {
     const list = $('#session-list'); list.innerHTML = '';
+    const pinned = state.sessions.filter((s) => s.pinned);
+    if (pinned.length) {
+      const g = el('details', 'project-group'); g.open = !collapsed.has('__pinned');
+      const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, 'Pinned')); sm.appendChild(el('span', 'cnt', String(pinned.length))); g.appendChild(sm);
+      for (const s of pinned) g.appendChild(sessionRow(s));
+      g.addEventListener('toggle', () => rememberCollapsed('__pinned', !g.open));
+      list.appendChild(g);
+    }
     const groups = new Map();
     for (const s of state.sessions) { const k = s.project || 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
     for (const [name, items] of groups) {
-      const g = el('div', 'project-group');
-      g.appendChild(el('div', 'project-name', name));
-      for (const s of items) {
-        const a = el('a', 'session-item' + (s.id === state.current ? ' active' : ''));
-        a.href = '#/s/' + s.id; a.title = s.title;
-        if (s.live) a.appendChild(el('span', 'dot'));
-        const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
-        a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
-        g.appendChild(a);
-      }
+      const g = el('details', 'project-group'); g.open = !collapsed.has(name);
+      const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, name)); sm.appendChild(el('span', 'cnt', String(items.length)));
+      sm.title = items[0].cwd; g.appendChild(sm);
+      for (const s of items) g.appendChild(sessionRow(s));
+      g.addEventListener('toggle', () => rememberCollapsed(name, !g.open));
       list.appendChild(g);
     }
     if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
+    updatePinButton();
   }
+  function rememberCollapsed(name, isCollapsed) {
+    if (isCollapsed) collapsed.add(name); else collapsed.delete(name);
+    try { localStorage.setItem('cr.collapsed', JSON.stringify([...collapsed])); } catch {}
+  }
+  async function togglePin(id, pinned) {
+    const s = state.sessions.find((x) => x.id === id); if (s) s.pinned = pinned;
+    renderSessions();
+    try { await api(`/sessions/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }); } catch (e) { if (s) s.pinned = !pinned; renderSessions(); }
+  }
+  function updatePinButton() {
+    const b = $('#pin-btn'); const s = state.sessions.find((x) => x.id === state.current);
+    b.classList.toggle('hidden', !state.current);
+    b.classList.toggle('on', !!s?.pinned); b.title = s?.pinned ? 'Unpin' : 'Pin';
+  }
+  $('#pin-btn').addEventListener('click', () => { const s = state.sessions.find((x) => x.id === state.current); if (state.current) togglePin(state.current, !s?.pinned); });
 
   // ---------- projects (for new chats) ----------
   async function loadProjects() {
@@ -111,6 +146,52 @@
     inp.addEventListener('click', (e) => e.stopPropagation());
     c.appendChild(inp); menu.appendChild(c);
   }
+
+  // ---------- model / permission mode ----------
+  const MODELS = [
+    { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', desc: 'Most capable' },
+    { id: 'claude-opus-5', name: 'Claude Opus 5', desc: 'Strong, slower' },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', desc: 'Fast and capable' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', desc: 'Fastest, cheapest' },
+  ];
+  const EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }];
+  const MODES = [
+    { id: 'default', name: 'Default', desc: 'Asks before edits and commands' },
+    { id: 'acceptEdits', name: 'Accept edits', desc: 'File edits run without asking; commands still ask' },
+    { id: 'plan', name: 'Plan', desc: 'Read-only: Claude plans, does not change anything' },
+  ];
+  state.model = localStorage.getItem('cr.model') || MODELS[0].id;
+  state.effort = localStorage.getItem('cr.effort') || '';
+  state.mode = localStorage.getItem('cr.mode') || 'default';
+
+  function menuFor(btnId, menuId, render) {
+    const btn = $(btnId), m = $(menuId);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); const open = m.classList.contains('hidden'); document.querySelectorAll('.menu').forEach((x) => x.classList.add('hidden')); if (open) { render(m); m.classList.remove('hidden'); } });
+    document.addEventListener('click', (e) => { if (!m.contains(e.target)) m.classList.add('hidden'); });
+  }
+  function item(label, desc, selected, onPick) {
+    const b = el('button', 'menu-item' + (selected ? ' sel' : '')); b.type = 'button';
+    b.appendChild(document.createTextNode(label)); if (desc) b.appendChild(el('span', 'desc', desc));
+    b.addEventListener('click', onPick); return b;
+  }
+  function renderModelChip() {
+    const mdl = MODELS.find((x) => x.id === state.model) || MODELS[0];
+    $('#model-label').textContent = mdl.name + (state.effort ? ' · ' + state.effort : '');
+  }
+  function renderModeChip() { $('#mode-name').textContent = (MODES.find((x) => x.id === state.mode) || MODES[0]).name; }
+  menuFor('#model-btn', '#model-menu', (m) => {
+    m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Model'));
+    for (const x of MODELS) m.appendChild(item(x.name, x.desc, x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); }));
+    m.appendChild(el('div', 'menu-sep')); m.appendChild(el('div', 'menu-title', 'Effort'));
+    m.appendChild(item('Auto', '', !state.effort, () => { state.effort = ''; localStorage.removeItem('cr.effort'); renderModelChip(); m.classList.add('hidden'); }));
+    for (const x of EFFORTS) m.appendChild(item(x.name, '', x.id === state.effort, () => { state.effort = x.id; localStorage.setItem('cr.effort', x.id); renderModelChip(); m.classList.add('hidden'); }));
+  });
+  menuFor('#mode-btn', '#mode-menu', (m) => {
+    m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Permissions'));
+    for (const x of MODES) m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); }));
+  });
+  renderModelChip(); renderModeChip();
+  const turnOptions = () => ({ model: state.model, permissionMode: state.mode, ...(state.effort ? { effort: state.effort } : {}) });
 
   // ---------- thread rendering ----------
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
@@ -223,7 +304,7 @@
       if (ev.i != null) state.lastEventId = ev.i;
       switch (ev.t) {
         case 'idle': setRunning(false); es.close(); break;
-        case 'init': $('#model-label').textContent = prettyModel(ev.model); setRunning(true); break;
+        case 'init': setRunning(true); break;
         // One assistant row for the whole turn; each API message gets its own key space.
         case 'msg_start':
           msgNo += 1; partial.clear();
@@ -315,11 +396,11 @@
     setRunning(true);
     try {
       if (state.current) {
-        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text }) });
+        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text, ...turnOptions() }) });
         subscribe(state.current);
       } else {
         if (!state.cwd) throw new Error('Pick a folder first.');
-        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd }) });
+        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd, ...turnOptions() }) });
         state.current = r.sessionId;
         history.replaceState(null, '', '#/s/' + r.sessionId);
         $('#chat-title').textContent = text.slice(0, 60);
@@ -359,7 +440,7 @@
     thread.innerHTML = ''; empty.classList.add('show');
     $('#chat-title').textContent = 'New chat'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
-    setRunning(false); renderSessions();
+    setRunning(false); renderSessions(); updatePinButton();
     const h = new Date().getHours();
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();
@@ -376,7 +457,13 @@
     try {
       const me = await api('/me');
       state.userName = me.userName; state.host = me.host;
-      $('#sidebar-name').textContent = me.userName; $('#sidebar-host').textContent = 'Claude Code on ' + me.host;
+      const acc = me.account || {};
+      $('#sidebar-name').textContent = me.userName;
+      $('#sidebar-account').innerHTML = '';
+      $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'api-key' ? 'API key' : 'Not signed in')));
+      if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
+      $('#sidebar-host').textContent = 'Claude Code on ' + me.host;
+      $('#sidebar-user').title = [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?')].filter(Boolean).join('\n');
       $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
     } catch { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
