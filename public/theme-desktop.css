@@ -338,3 +338,10 @@ body { font-size: 14px; }
 /* ---------- v17: interrupted-turn notice ---------- */
 .interrupted { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--line-2); color: var(--ink-2); font-size: 13.5px; }
 .interrupted .btn { font-size: 13px; padding: 6px 12px; }
+
+/* ---------- v18: app section (version, restart, rebuild) ---------- */
+.app-row { align-items: flex-start; }
+.app-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.app-actions .btn { font-size: 12.5px; padding: 5px 10px; white-space: nowrap; }
+.app-log { margin: 8px 0 0; max-height: 160px; overflow: auto; font-size: 12px; white-space: pre-wrap; background: var(--bg-000); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; direction: ltr; text-align: left; }
+@media (max-width: 860px) { .app-row { flex-wrap: wrap; } .app-actions { flex-direction: row; width: 100%; } }

@@ -203,6 +203,18 @@
       <div id="connectors-list" class="ct-list"><div class="muted small pad">Loading…</div></div>
       <div class="ct-title">Plugins</div>
       <div id="plugins-list" class="ct-list"></div>
+      <div class="ct-title">App</div>
+      <div class="ct-row app-row">
+        <div class="ct-info">
+          <div class="ct-name">Claude Remote <span id="app-version" class="tag">…</span></div>
+          <div id="app-version-desc" class="ct-desc"></div>
+        </div>
+        <div class="app-actions">
+          <button id="app-restart" class="btn btn-ghost" type="button" title="Picks up new server and page code from the repo; the window reloads">Restart server</button>
+          <button id="app-rebuild" class="btn btn-ghost" type="button" title="Rebuilds the Windows app (only needed when the Rust shell changed) and relaunches it">Rebuild app</button>
+        </div>
+      </div>
+      <pre id="app-log" class="app-log hidden"></pre>
       <p id="connectors-error" class="login-error" hidden></p>
     </div>
   </div>

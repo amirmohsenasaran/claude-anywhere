@@ -107,3 +107,19 @@ installer is about 250 MB and does not depend on the `claude` CLI.
   turn (dashed bubble until then). Esc or the stop button interrupts.
 - Permission mode (Manual / Edit automatically / Plan / Auto), model and effort
   can be changed mid-turn; Shift+Tab cycles the mode like the CLI.
+
+## Updating from the phone
+
+Open Connectors & plugins (plug icon at the top) → **App**:
+
+- **Restart server** — picks up new server and page code (`server.mjs`, `lib/`,
+  `public/`) from the checkout the app runs from, and reloads the window. The
+  app refuses while Claude is mid-turn. Set `CLAUDE_REMOTE_SERVER_DIR` in the
+  app's `.env` (`%APPDATA%\com.arya.claude-remote\.env`) to the repo folder so
+  the app serves the working copy directly.
+- **Rebuild app** — only when the Rust shell (`src-tauri/`) changed. A detached
+  script (`scripts/rebuild.ps1`) waits until nothing is running, closes the app,
+  runs `cargo tauri build` and relaunches it; the log streams into the panel.
+
+Restarts never kill a running turn: a busy server stays up until it is idle,
+and the next app instance adopts it.

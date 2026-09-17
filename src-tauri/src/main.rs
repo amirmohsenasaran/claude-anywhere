@@ -33,7 +33,21 @@ struct ServerState {
     port: u16,
     token: String,
     env_file: PathBuf,
+    spawn: Option<SpawnCfg>, // how to start the server again (None when we adopted a running one)
 }
+
+#[derive(Clone)]
+struct SpawnCfg {
+    node: PathBuf,
+    root: PathBuf,
+    data_dir: PathBuf,
+    env_file: PathBuf,
+    port: u16,
+}
+
+// The server exits with this code when the app asked it to restart (POST /api/restart):
+// picks up new server code from the repo without touching the window.
+const RESTART_CODE: i32 = 75;
 
 fn main() {
     tauri::Builder::default()
@@ -68,6 +82,7 @@ fn main() {
 
             build_tray(&handle)?;
             spawn_notifier(handle.clone());
+            supervise_server(handle.clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -88,7 +103,19 @@ fn main() {
 
 // ---------- the Node server ----------
 
-fn server_dir(app: &AppHandle) -> PathBuf {
+fn server_dir(app: &AppHandle, env_file: &Path) -> PathBuf {
+    // CLAUDE_REMOTE_SERVER_DIR in the app's .env: run the server straight from a checkout,
+    // so edits (and "Restart server" from the phone) take effect without a rebuild.
+    if let Ok(text) = fs::read_to_string(env_file) {
+        for line in text.lines() {
+            if let Some(v) = line.strip_prefix("CLAUDE_REMOTE_SERVER_DIR=") {
+                let p = PathBuf::from(v.trim());
+                if p.join("server.mjs").exists() {
+                    return p;
+                }
+            }
+        }
+    }
     // Packaged: resources/server. Development: the repository root next to src-tauri.
     if let Ok(res) = app.path().resource_dir() {
         let packaged = res.join("server");
@@ -136,7 +163,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     let data_dir = app.path().app_data_dir()?;
     fs::create_dir_all(&data_dir)?;
     let env_file = data_dir.join(".env");
-    let root = server_dir(app);
+    let root = server_dir(app, &env_file);
     ensure_env_file(&env_file, &root)?;
     let (password, port) = read_env(&env_file);
     let password = if password == "change-me" { String::new() } else { password };
@@ -154,7 +181,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
                 .set("Content-Type", "application/json")
                 .timeout(Duration::from_secs(3))
                 .send_string(&format!("{{\"pid\":{}}}", std::process::id()));
-            return Ok(ServerState { child: Mutex::new(None), port, token, env_file });
+            return Ok(ServerState { child: Mutex::new(None), port, token, env_file, spawn: None });
         }
         port = (port + 1..port + 20).find(|p| !port_open(*p)).ok_or("No free port near the configured one")?;
     }
@@ -162,17 +189,27 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Remote again.")?;
     let root = root.canonicalize().unwrap_or(root);
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
-    let mut log = fs::File::create(data_dir.join("server.log")).ok();
+    let cfg = SpawnCfg { node, root, data_dir: data_dir.clone(), env_file: env_file.clone(), port };
+    let child = spawn_server(&cfg)?;
+    let _ = fs::remove_file(data_dir.join("startup-error.txt"));
+    Ok(ServerState { child: Mutex::new(Some(child)), port, token, env_file, spawn: Some(cfg) })
+}
+
+fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
+    let SpawnCfg { node, root, data_dir, env_file, port } = cfg;
+    let port = *port;
+    let mut log = fs::OpenOptions::new().create(true).append(true).open(data_dir.join("server.log")).ok();
     if let Some(f) = log.as_mut() {
         use std::io::Write;
         let _ = writeln!(f, "[claude-remote] node={} root={} port={port}", node.display(), root.display());
     }
     let log_err = log.as_ref().and_then(|f| f.try_clone().ok());
-    let mut cmd = Command::new(&node);
+    let mut cmd = Command::new(node);
     cmd.arg(root.join("server.mjs"))
-        .current_dir(&root)
+        .current_dir(root)
         .env("CLAUDE_REMOTE_DATA_DIR", data_dir.join("data"))
-        .env("CLAUDE_REMOTE_ENV_FILE", &env_file)
+        .env("CLAUDE_REMOTE_ENV_FILE", env_file)
+        .env("CLAUDE_REMOTE_APP_EXE", std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())
         .env("HOST", "0.0.0.0")
         .env("PORT", port.to_string())
         .env("CLAUDE_REMOTE_PARENT_PID", std::process::id().to_string())
@@ -196,8 +233,39 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
         }
         thread::sleep(Duration::from_millis(200));
     }
-    let _ = fs::remove_file(data_dir.join("startup-error.txt"));
-    Ok(ServerState { child: Mutex::new(Some(child)), port, token, env_file })
+    Ok(child)
+}
+
+// Watches the server we started. Exit code 75 means "restart me" (new code from the
+// repo): spawn it again and reload the window. Anything else is a crash: restart too,
+// but say so.
+fn supervise_server(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(700));
+        let Some(state) = app.try_state::<ServerState>() else { continue };
+        let Some(cfg) = state.spawn.clone() else { return };
+        let exited = {
+            let mut guard = match state.child.lock() { Ok(g) => g, Err(_) => continue };
+            match guard.as_mut().map(|c| c.try_wait()) {
+                Some(Ok(Some(status))) => { *guard = None; Some(status.code()) }
+                _ => None,
+            }
+        };
+        let Some(code) = exited else { continue };
+        if code != Some(RESTART_CODE) {
+            let _ = app.notification().builder().title("Claude Remote server stopped").body("Restarting it.").show();
+        }
+        match spawn_server(&cfg) {
+            Ok(child) => {
+                if let Ok(mut guard) = state.child.lock() { *guard = Some(child); }
+                if let Some(w) = app.get_webview_window("main") { let _ = w.eval("setTimeout(() => location.reload(), 300)"); }
+            }
+            Err(e) => {
+                let _ = app.notification().builder().title("Claude Remote server did not come back").body(format!("{e}")).show();
+                thread::sleep(Duration::from_secs(5));
+            }
+        }
+    });
 }
 
 // node.exe from PATH, or the usual install folder; resolved here so the log says which one ran.

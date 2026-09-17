@@ -503,8 +503,40 @@
     }
     if (!data.plugins.length) pl.appendChild(el('div', 'muted small pad', 'No plugin marketplaces installed.'));
   }
-  $('#connectors-btn').addEventListener('click', openConnectors);
-  $('#connectors-refresh').addEventListener('click', openConnectors);
+  // App section: what is running, restart the server with new code, rebuild the shell.
+  async function paintVersion() {
+    try {
+      const v = await api('/version');
+      $('#app-version').textContent = v.commit ? v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : '') : 'unknown';
+      $('#app-version-desc').textContent = [v.subject, v.when && 'committed ' + relTime(Date.parse(v.when)) + ' ago', 'server up ' + relTime(v.serverStartedAt), v.appBuiltAt && 'app built ' + relTime(v.appBuiltAt) + ' ago', v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
+      $('#app-restart').disabled = !v.inApp;
+    } catch (e) { $('#app-version').textContent = '?'; $('#app-version-desc').textContent = e.message; }
+  }
+  async function waitForServer(then) {
+    const log = $('#app-log'); log.classList.remove('hidden'); log.textContent = 'Restarting the server…';
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try { const r = await fetch('/api/version', { headers: { Authorization: 'Bearer ' + state.token }, cache: 'no-store' }); if (r.ok) { const v = await r.json(); if (Date.now() - v.serverStartedAt < 60000) { log.textContent = 'Back. Reloading…'; return then(); } } } catch {}
+      log.textContent = 'Restarting the server… ' + (i + 1) + 's';
+    }
+    log.textContent = 'The server did not come back yet. Reload the page in a moment.';
+  }
+  $('#app-restart').addEventListener('click', async () => {
+    const btn = $('#app-restart'); btn.disabled = true;
+    try { await api('/restart', { method: 'POST', body: JSON.stringify({}) }); await waitForServer(() => location.reload()); }
+    catch (e) { btn.disabled = false; $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; }
+  });
+  $('#app-rebuild').addEventListener('click', async () => {
+    if (!confirm('Rebuild the Windows app now? It waits until Claude is idle, then the app closes and comes back in 1–3 minutes.')) return;
+    const log = $('#app-log'); log.classList.remove('hidden'); log.textContent = 'Starting…';
+    try { await api('/rebuild', { method: 'POST', body: JSON.stringify({}) }); } catch (e) { log.textContent = e.message; return; }
+    const poll = setInterval(async () => {
+      try { const r = await fetch('/api/rebuild/log', { headers: { Authorization: 'Bearer ' + state.token }, cache: 'no-store' }); if (!r.ok) throw 0; const j = await r.json(); log.textContent = j.text || 'Waiting…'; log.scrollTop = log.scrollHeight; if (/\] done$/m.test(j.text || '')) { clearInterval(poll); setTimeout(() => location.reload(), 1500); } }
+      catch { log.textContent += '\n(app is restarting…)'; }
+    }, 2000);
+  });
+  $('#connectors-btn').addEventListener('click', () => { openConnectors(); paintVersion(); });
+  $('#connectors-refresh').addEventListener('click', () => { openConnectors(); paintVersion(); });
   $('#connectors-close').addEventListener('click', () => ctModal.classList.add('hidden'));
   ctModal.addEventListener('click', (e) => { if (e.target === ctModal) ctModal.classList.add('hidden'); });
 

@@ -17,7 +17,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+const SERVER_STARTED_AT = Date.now();
 import { promisify } from 'node:util';
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, forkSession, deleteSession, tagSession } from '@anthropic-ai/claude-agent-sdk';
 import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
@@ -582,6 +583,36 @@ app.get('/api/addresses', (_req, res) => {
   }
   res.json(out.sort((a, b) => Number(b.tailscale) - Number(a.tailscale)));
 });
+
+// ---------- updating from anywhere: what is running, restart the server, rebuild the app ----------
+const liveCount = () => [...runs.values()].filter((r) => !r.done).length;
+function gitInfo() {
+  const g = (args) => { try { return execFileSync('git', ['-C', here, ...args], { encoding: 'utf8', timeout: 4000, windowsHide: true }).trim(); } catch { return ''; } };
+  return { commit: g(['rev-parse', '--short', 'HEAD']), subject: g(['log', '-1', '--format=%s']), when: g(['log', '-1', '--format=%ci']), dirty: g(['status', '--porcelain']).split('\n').filter(Boolean).length };
+}
+app.get('/api/version', (_req, res) => {
+  let exeAt = null; try { exeAt = fs.statSync(process.env.CLAUDE_REMOTE_APP_EXE || '').mtimeMs; } catch {}
+  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: process.env.CLAUDE_REMOTE_APP_EXE || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!process.env.CLAUDE_REMOTE_PARENT_PID });
+});
+// New server code (server.mjs, lib/, public/) without touching the window: the app
+// restarts the server on exit code 75 and reloads the page.
+app.post('/api/restart', (req, res) => {
+  if (liveCount() && !req.body?.force) return res.status(409).json({ error: `Claude is still working (${liveCount()} turn${liveCount() === 1 ? '' : 's'}). Try again when it is done.` });
+  if (!process.env.CLAUDE_REMOTE_PARENT_PID) return res.status(400).json({ error: 'Not running inside the desktop app; restart `npm start` by hand.' });
+  res.json({ ok: true, restarting: true });
+  setTimeout(() => process.exit(75), 300);
+});
+// The Rust shell changed (rare): a detached script waits until idle, rebuilds and relaunches.
+const REBUILD_LOG = path.join(DATA_DIR, 'rebuild.log');
+app.post('/api/rebuild', (_req, res) => {
+  const script = path.join(here, 'scripts', 'rebuild.ps1');
+  if (!fs.existsSync(script)) return res.status(400).json({ error: 'scripts/rebuild.ps1 is missing' });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Repo', here, '-Port', String(PORT), '-Token', TOKEN, '-Log', REBUILD_LOG], { detached: true, stdio: 'ignore', windowsHide: true });
+  child.unref();
+  res.json({ ok: true, log: REBUILD_LOG });
+});
+app.get('/api/rebuild/log', (_req, res) => { let text = ''; try { text = fs.readFileSync(REBUILD_LOG, 'utf8'); } catch {} res.json({ text, liveRuns: liveCount() }); });
 
 app.get('/api/runs', (_req, res) => {
   res.json([...runs.values()].filter((r) => !r.done).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));
