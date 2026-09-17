@@ -363,12 +363,30 @@
     $('#model-label').textContent = mdl.name + (state.effort ? ' · ' + state.effort : '');
   }
   function renderModeChip() { $('#mode-name').textContent = (MODES.find((x) => x.id === state.mode) || MODES[0]).name; }
-  // A change made while Claude is working is pushed to the running process and
-  // takes effect for the next tool call / model request, like Shift+Tab in the CLI.
+  // Model, mode and effort belong to the session, like Desktop: a change is remembered for
+  // this session, and pushed to the running process so it takes effect for the next tool
+  // call / model request (Shift+Tab in the CLI). With no session open it is the default
+  // for new sessions on this device.
   async function pushControls(patch) {
-    if (!state.current || !state.running) return;
+    if (!state.current) return;
+    api(`/sessions/${state.current}/prefs`, { method: 'POST', body: JSON.stringify(patch) }).catch(() => {});
+    if (!state.running) return;
     try { await api(`/sessions/${state.current}/controls`, { method: 'POST', body: JSON.stringify(patch) }); }
     catch (e) { thread.appendChild(el('div', 'note error', e.message)); }
+  }
+  function applySessionSettings(s) {
+    restoreDeviceDefaults(); // unknown values fall back to this device's defaults, never to the previous session's
+    if (!s) return;
+    if (s.model && MODELS.some((m) => m.id === s.model)) state.model = s.model;
+    if (s.permissionMode && MODES.some((m) => m.id === s.permissionMode)) state.mode = s.permissionMode;
+    state.effort = s.effort || '';
+    renderModelChip(); renderModeChip();
+  }
+  function restoreDeviceDefaults() {
+    state.model = localStorage.getItem('cr.model') || MODELS[0].id;
+    state.effort = localStorage.getItem('cr.effort') || '';
+    state.mode = localStorage.getItem('cr.mode') || 'default';
+    renderModelChip(); renderModeChip();
   }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
@@ -1078,6 +1096,7 @@
       // its prompt onwards, so the history stops just before it.
       const messages = await api(`/sessions/${id}/messages` + (info.live && info.runStartedAt ? '?before=' + info.runStartedAt : ''));
       $('#chat-title').textContent = info.title;
+      applySessionSettings(info.settings);
       $('#chat-meta').textContent = info.project || '';
       $('#chat-meta').title = [info.cwd, info.branch && 'Branch: ' + info.branch].filter(Boolean).join('\n');
       state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
@@ -1098,6 +1117,7 @@
     app.classList.remove('sidebar-open');
     thread.innerHTML = ''; empty.classList.add('show'); app.classList.add('new');
     $('#chat-title').textContent = 'New session'; $('#chat-meta').textContent = '';
+    restoreDeviceDefaults();
     $('#project-btn').classList.remove('locked'); renderProjectChip();
     setRunning(false); setElsewhere(false); renderSessions(); updatePinButton(); restoreDraft(null);
     $('#session-bar').classList.add('hidden'); $('#new-bar').classList.remove('hidden'); $('#session-menu-btn').classList.add('hidden'); usage.context = null; paintUsage();

@@ -383,12 +383,46 @@ app.get('/api/projects', async (_req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// The model and mode a session is on, like Desktop: what the user last picked for it,
+// else what its transcript shows (assistant lines carry the model, user lines the mode).
+const settingsCache = new Map(); // id -> { size, model, mode }
+function sessionSettings(id) {
+  const prefs = readPrefs();
+  const saved = (prefs.sessionPrefs || {})[id] || {};
+  let model = '', mode = '';
+  try {
+    const f = sessionFile(id);
+    if (f) {
+      const size = fs.statSync(f).size; const hit = settingsCache.get(id);
+      if (hit && hit.size === size) ({ model, mode } = hit);
+      else {
+        // Prompt lines are rare in a long transcript (tool results dominate), so scan the whole file.
+        for (const line of fs.readFileSync(f, 'utf8').split('\n').reverse()) {
+          if (model && mode) break;
+          if (!line.includes('"permissionMode"') && !line.includes('"model"')) continue;
+          let j; try { j = JSON.parse(line); } catch { continue; }
+          if (!model && j.type === 'assistant' && j.message?.model) model = j.message.model;
+          if (!mode && j.type === 'user' && j.permissionMode) mode = j.permissionMode; // ('mode' lines are something else: "normal")
+        }
+        settingsCache.set(id, { size, model, mode });
+      }
+    }
+  } catch {}
+  return { model: saved.model || model || '', permissionMode: saved.permissionMode || mode || '', effort: saved.effort ?? '' };
+}
 app.get('/api/sessions/:id', async (req, res, next) => {
   try {
     const s = await getSessionInfo(req.params.id);
     if (!s) return res.status(404).json({ error: 'Not found' });
-    res.json(shape(s, new Set(readPrefs().pinned)));
+    res.json({ ...shape(s, new Set(readPrefs().pinned)), settings: sessionSettings(req.params.id) });
   } catch (e) { next(e); }
+});
+app.post('/api/sessions/:id/prefs', (req, res) => {
+  const p = readPrefs(); p.sessionPrefs = p.sessionPrefs || {};
+  const cur = p.sessionPrefs[req.params.id] || {};
+  for (const k of ['model', 'permissionMode', 'effort']) if (req.body?.[k] !== undefined) cur[k] = req.body[k];
+  p.sessionPrefs[req.params.id] = cur; writePrefs(p);
+  res.json(cur);
 });
 
 app.get('/api/sessions/:id/messages', async (req, res, next) => {
