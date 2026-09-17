@@ -137,8 +137,9 @@
   const CHEV_SVG = '<svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
   function sessionRow(s) {
-    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : ''));
-    a.href = '#/s/' + s.id; a.title = s.title;
+    const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
+    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : ''));
+    a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
     if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
@@ -157,19 +158,38 @@
       g.addEventListener('toggle', () => rememberCollapsed('__pinned', !g.open));
       list.appendChild(g);
     }
+    const q = (state.search || '').trim().toLowerCase();
     const groups = new Map();
-    for (const s of state.sessions) { const k = s.project || 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    for (const s of state.sessions) {
+      if (q && !(s.title + ' ' + s.project + ' ' + s.branch).toLowerCase().includes(q)) continue;
+      const k = s.project || 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s);
+    }
     for (const [name, items] of groups) {
-      const g = el('details', 'project-group'); g.open = !collapsed.has(name);
+      const g = el('details', 'project-group'); g.open = q ? true : !collapsed.has(name);
       const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, name)); sm.appendChild(el('span', 'cnt', String(items.length)));
+      // "+" on the project row: a new session in that folder, like Desktop
+      const add = el('button', 'proj-add'); add.type = 'button'; add.title = 'New session in ' + name;
+      add.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+      add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); state.cwd = items[0].cwd; localStorage.setItem('cr.cwd', state.cwd); location.hash = '#/'; renderProjectChip(); });
+      sm.appendChild(add);
       sm.title = items[0].cwd; g.appendChild(sm);
       for (const s of items) g.appendChild(sessionRow(s));
-      g.addEventListener('toggle', () => rememberCollapsed(name, !g.open));
+      g.addEventListener('toggle', () => { if (!q) rememberCollapsed(name, !g.open); });
       list.appendChild(g);
     }
     if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
+    if (q && !groups.size) list.appendChild(el('div', 'muted small pad', 'No sessions match.'));
     updatePinButton();
   }
+  // search (magnifier in the sidebar), back / forward
+  $('#search-btn').addEventListener('click', () => {
+    const sb = $('#sidebar'); sb.classList.toggle('searching');
+    if (sb.classList.contains('searching')) $('#search-input').focus(); else { state.search = ''; $('#search-input').value = ''; renderSessions(); }
+  });
+  $('#search-input').addEventListener('input', () => { state.search = $('#search-input').value; renderSessions(); });
+  $('#search-input').addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#search-btn').click(); });
+  $('#nav-back').addEventListener('click', () => history.back());
+  $('#nav-fwd').addEventListener('click', () => history.forward());
   function rememberCollapsed(name, isCollapsed) {
     if (isCollapsed) collapsed.add(name); else collapsed.delete(name);
     try { localStorage.setItem('cr.collapsed', JSON.stringify([...collapsed])); } catch {}
@@ -223,10 +243,10 @@
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', desc: 'Fastest, cheapest' },
   ];
   const EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }];
-  // Same labels and order as the Claude Desktop mode picker.
+  // Same labels as the Claude Desktop mode picker (read from the app itself).
   const MODES = [
     { id: 'default', name: 'Manual', desc: 'Ask before file edits and shell commands' },
-    { id: 'acceptEdits', name: 'Edit automatically', desc: 'Edit files without asking; still ask before other commands' },
+    { id: 'acceptEdits', name: 'Accept edits', desc: 'Edit files without asking; still ask before other commands' },
     { id: 'plan', name: 'Plan', desc: 'Propose an approach without editing source code' },
     { id: 'auto', name: 'Auto', desc: 'Run with background safety checks; ask only for risky actions' },
   ];
@@ -310,25 +330,52 @@
     return JSON.stringify(content, null, 2);
   }
 
-  // A message element for one assistant API message (text + thinking + tool_use blocks).
+  // A message element for one assistant turn (text + thinking + tool_use blocks).
   function assistantMsg() {
     const m = el('div', 'msg assistant');
     const av = el('div', 'msg-avatar', '✱'); m.appendChild(av);
     const body = el('div', 'msg-body'); m.appendChild(body);
-    return { root: m, body, blocks: new Map(), tools: new Map() };
+    return { root: m, body, blocks: new Map(), tools: new Map(), group: null };
   }
+  // Consecutive tool calls fold into one "Ran 3 commands ›" line, like Desktop.
+  const TOOL_KIND = { Bash: 'command', PowerShell: 'command', Read: 'read', Glob: 'search', Grep: 'search', Edit: 'edit', Write: 'write', NotebookEdit: 'edit', Agent: 'agent', WebFetch: 'web', WebSearch: 'web' };
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  function groupLabel(names) {
+    const c = {}; for (const n of names) { const k = TOOL_KIND[n] || 'tool'; c[k] = (c[k] || 0) + 1; }
+    const parts = [];
+    if (c.command) parts.push('Ran ' + plural(c.command, 'command', 'commands'));
+    if (c.read) parts.push('Read ' + plural(c.read, 'file', 'files'));
+    if (c.search) parts.push('Searched ' + plural(c.search, 'time', 'times'));
+    if (c.edit) parts.push('Edited ' + plural(c.edit, 'file', 'files'));
+    if (c.write) parts.push('Wrote ' + plural(c.write, 'file', 'files'));
+    if (c.agent) parts.push('Ran ' + plural(c.agent, 'agent', 'agents'));
+    if (c.web) parts.push('Fetched ' + plural(c.web, 'page', 'pages'));
+    if (c.tool) parts.push('Used ' + plural(c.tool, 'tool', 'tools'));
+    if (!parts.length) return 'Worked';
+    return parts.map((p, i) => i ? p[0].toLowerCase() + p.slice(1) : p).join(', ');
+  }
+  function toolGroupFor(msg) {
+    if (msg.group && msg.group === msg.body.lastElementChild) return msg.group;
+    const g = el('details', 'tool-group'); g.appendChild(el('summary', null, 'Working')); g.appendChild(el('div', 'group-body'));
+    g._names = []; msg.body.appendChild(g); msg.group = g; return g;
+  }
+  function setGroupSummary(g, text) { if (g) g.querySelector('summary').textContent = text; }
   function renderBlock(msg, index, block) {
     let node = msg.blocks.get(index);
     if (block.type === 'text') {
-      if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); }
+      if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
       node.innerHTML = md(block.text);
     } else if (block.type === 'thinking') {
-      if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); }
+      if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
       node.querySelector('.step-body').textContent = block.thinking || '';
       if (!block.thinking && !block.live) node.classList.add('hidden'); else node.classList.remove('hidden');
       if (block.live) { node.open = true; node.classList.add('live'); node.querySelector('.name').textContent = 'Thinking'; }
     } else if (block.type === 'tool_use') {
-      if (!node) { node = stepEl('tool', block.name, ''); node._toolId = block.id; msg.body.appendChild(node); msg.blocks.set(index, node); msg.tools.set(block.id, node); }
+      if (!node) {
+        node = stepEl('tool', block.name, ''); node._toolId = block.id;
+        const g = toolGroupFor(msg); g.querySelector('.group-body').appendChild(node); g._names.push(block.name); if (!g._fromCli) setGroupSummary(g, groupLabel(g._names));
+        msg.blocks.set(index, node); msg.tools.set(block.id, node);
+      }
       node.querySelector('.arg').textContent = toolSummary(block.name, block.input);
       const b = node.querySelector('.step-body'); b.innerHTML = '';
       b.appendChild(el('div', 'label', 'Input'));
@@ -383,18 +430,31 @@
     status.el?.remove(); status.startedAt = 0; status.tool = null; status.waiting = false;
   }
 
+  // Copy + time under a finished assistant turn (the Desktop action row).
+  function addActions(msg, whenMs) {
+    if (!msg?.root || msg.root.querySelector('.msg-actions')) return;
+    const row = el('div', 'msg-actions');
+    const copy = el('button'); copy.type = 'button'; copy.title = 'Copy';
+    copy.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15"><rect x="7" y="7" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v6A1.5 1.5 0 0 0 5.5 13H7" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+    copy.addEventListener('click', async () => { const t = [...msg.body.querySelectorAll('.prose')].map((n) => n.innerText).join('\n\n'); try { await navigator.clipboard.writeText(t); copy.title = 'Copied'; setTimeout(() => copy.title = 'Copy', 1500); } catch {} });
+    row.appendChild(copy);
+    if (whenMs) row.appendChild(el('span', 'time', relTime(whenMs) === 'now' ? 'just now' : relTime(whenMs) + (/\d[mhd]$/.test(relTime(whenMs)) ? ' ago' : '')));
+    msg.body.appendChild(row);
+  }
+
   function renderHistory(messages) {
     thread.innerHTML = '';
     const toolNodes = new Map();
     let group = null; // the assistant row for the current turn
+    let lastAt = 0;
     for (const m of messages) {
       if (m.role === 'user') {
         const results = m.content.filter((b) => b.type === 'tool_result');
         for (const r of results) attachResult(toolNodes.get(r.tool_use_id), r);
         const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
-        if (text) { thread.appendChild(userMsg(text)); group = null; }
+        if (text) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text)); group = null; }
       } else if (m.role === 'assistant') {
-        // One assistant row per turn: consecutive assistant API messages share it, like claude.ai.
+        // One assistant row per turn: consecutive assistant API messages share it, like Desktop.
         if (!group) group = assistantMsg();
         let any = false;
         m.content.forEach((b, i) => {
@@ -403,9 +463,11 @@
           renderBlock(group, key, b); any = true;
           if (b.type === 'tool_use') toolNodes.set(b.id, group.blocks.get(key));
         });
+        if (m.timestamp) lastAt = Date.parse(m.timestamp) || lastAt;
         if (any && !group.root.isConnected) thread.appendChild(group.root);
       }
     }
+    if (group) addActions(group, lastAt);
   }
 
   // ---------- live turn ----------
@@ -479,7 +541,10 @@
         case 'status': if (ev.permissionMode) { state.mode = ev.permissionMode; renderModeChip(); } break;
         case 'tool_progress': status.tool = ev.tool; if (!status.toolSince) status.toolSince = Date.now() - (ev.elapsed || 0) * 1000; statusPaint(); break;
         case 'usage': if (ev.outputTokens) { status.tokens = ev.outputTokens; statusPaint(); } break;
-        case 'tool_summary': break;
+        case 'tool_summary': { // the CLI's own wording ("Ran 3 commands") for the open group
+          const g = state.live?.group; if (g && ev.summary) { g._fromCli = true; setGroupSummary(g, ev.summary); }
+          break;
+        }
         case 'task': if (ev.summary || ev.description) thread.appendChild(el('div', 'note', (ev.kind === 'task_started' ? 'Started: ' : '') + (ev.summary || ev.description))); statusPaint(); break;
         case 'note': thread.appendChild(el('div', 'note', ev.text)); statusPaint(); break;
         // One assistant row for the whole turn; each API message gets its own key space.
@@ -535,6 +600,7 @@
         case 'permission_resolved': resolvePermissionCard(ev.reqId, ev.behavior); status.waiting = false; statusPaint(); break;
         case 'result':
           if (ev.isError) thread.appendChild(el('div', 'note error', ev.text));
+          if (state.live) addActions(state.live, Date.now());
           state.live = null; statusStop();
           break;
         case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
@@ -620,6 +686,7 @@
         const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd, ...turnOptions() }) });
         state.current = r.sessionId;
         history.replaceState(null, '', '#/s/' + r.sessionId);
+        app.classList.remove('new');
         $('#chat-title').textContent = text.slice(0, 60);
         $('#chat-meta').textContent = state.cwd.split(/[\\/]/).pop();
         $('#project-btn').classList.add('locked');
@@ -635,7 +702,7 @@
   async function openSession(id) {
     state.current = id; state.live = null;
     if (state.es) { state.es.close(); state.es = null; }
-    app.classList.remove('sidebar-open');
+    app.classList.remove('sidebar-open'); app.classList.remove('new');
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
     renderSessions();
     try {
@@ -644,7 +711,8 @@
       // its prompt onwards, so the history stops just before it.
       const messages = await api(`/sessions/${id}/messages` + (info.live && info.runStartedAt ? '?before=' + info.runStartedAt : ''));
       $('#chat-title').textContent = info.title;
-      $('#chat-meta').textContent = [info.project, info.branch].filter(Boolean).join(' · ');
+      $('#chat-meta').textContent = info.project || '';
+      $('#chat-meta').title = [info.cwd, info.branch && 'Branch: ' + info.branch].filter(Boolean).join('\n');
       state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
       renderHistory(messages);
       stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
@@ -658,8 +726,8 @@
     state.current = null; state.live = null;
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
-    thread.innerHTML = ''; empty.classList.add('show');
-    $('#chat-title').textContent = 'New chat'; $('#chat-meta').textContent = '';
+    thread.innerHTML = ''; empty.classList.add('show'); app.classList.add('new');
+    $('#chat-title').textContent = 'New session'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
     setRunning(false); setElsewhere(false); renderSessions(); updatePinButton(); restoreDraft(null);
     const h = new Date().getHours();

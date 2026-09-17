@@ -16,6 +16,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/theme-desktop.css" />
 </head>
 <body>
   <!-- Login -->
@@ -36,19 +37,29 @@
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-top">
         <a class="wordmark" href="#/">Claude</a>
-        <button id="sidebar-close" class="icon-btn" aria-label="Close sidebar">
+        <button id="sidebar-close" class="icon-btn" aria-label="Close sidebar" title="Close sidebar">
           <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 4h14M3 10h14M3 16h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+        </button>
+        <button id="search-btn" class="icon-btn" aria-label="Search sessions" title="Search">
+          <svg viewBox="0 0 20 20" width="18" height="18"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <button id="nav-back" class="icon-btn" aria-label="Back" title="Back">
+          <svg viewBox="0 0 20 20" width="18" height="18"><path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="nav-fwd" class="icon-btn" aria-label="Forward" title="Forward">
+          <svg viewBox="0 0 20 20" width="18" height="18"><path d="M8 4l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
 
       <a href="#/" class="new-chat">
         <span class="new-chat-icon">
-          <svg viewBox="0 0 20 20" width="16" height="16"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </span>
-        New chat
+        New
       </a>
 
       <div class="sidebar-section">
+        <div class="sidebar-search"><input id="search-input" type="search" placeholder="Search sessions" autocomplete="off" /></div>
         <div class="sidebar-label">Recents</div>
         <div id="session-list" class="session-list"><div class="muted small pad">Loading…</div></div>
       </div>
@@ -70,7 +81,7 @@
           <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 4h14M3 10h14M3 16h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
         </button>
         <div class="topbar-title">
-          <div id="chat-title" class="chat-title">New chat</div>
+          <div id="chat-title" class="chat-title">New session</div>
           <div id="chat-meta" class="chat-meta"></div>
         </div>
         <div class="topbar-right">
