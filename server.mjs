@@ -48,7 +48,29 @@ const TOKEN = createHash('sha256').update('claude-remote:' + (PASSWORD || 'open'
 // ---------- http ----------
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '60mb' })); // attachments travel as base64
+
+// Attachments: images are sent to Claude as image blocks; any other file is saved on
+// this PC and referenced from the prompt by path, the way Remote Control does it.
+const UPLOAD_DIR = path.join(os.tmpdir(), 'claude-remote-uploads');
+function parseAttachments(body) {
+  const images = (Array.isArray(body?.attachments) ? body.attachments : [])
+    .filter((a) => a && typeof a.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(a.media_type || ''))
+    .slice(0, 10)
+    .map((a) => ({ media_type: a.media_type, data: a.data }));
+  const paths = [];
+  for (const f of (Array.isArray(body?.files) ? body.files : []).slice(0, 10)) {
+    if (!f || typeof f.data !== 'string') continue;
+    const safe = String(f.name || 'file').replace(/[^\w.\- ()]/g, '_').slice(0, 120);
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    const p = path.join(UPLOAD_DIR, `${Date.now().toString(36)}-${safe}`);
+    fs.writeFileSync(p, Buffer.from(f.data, 'base64'));
+    paths.push(p);
+  }
+  let text = String(body?.text || '').trim();
+  if (paths.length) text += (text ? '\n\n' : '') + 'Attached file' + (paths.length > 1 ? 's' : '') + ':\n' + paths.map((p) => '- ' + p).join('\n');
+  return { text, images };
+}
 
 app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked/lib/marked.umd.js')));
 app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
@@ -213,14 +235,14 @@ app.get('/api/sessions/:id/messages', async (req, res, next) => {
 app.post('/api/sessions/:id/send', async (req, res, next) => {
   try {
     const id = req.params.id;
-    const prompt = String(req.body?.text || '').trim();
-    if (!prompt) return res.status(400).json({ error: 'Empty message' });
+    const { text: prompt, images } = parseAttachments(req.body);
+    if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
     // Claude is mid-turn here: hand the message over, it runs right after (Desktop behaviour).
-    if (isLive(id)) { const qid = runs.get(id).enqueue(prompt); if (qid) return res.json({ queued: true, id: qid, sessionId: id }); }
+    if (isLive(id)) { const qid = runs.get(id).enqueue(prompt, images); if (qid) return res.json({ queued: true, id: qid, sessionId: id }); }
     const info = await getSessionInfo(id);
     if (!info) return res.status(404).json({ error: 'Session not found' });
     const { model, permissionMode, effort } = req.body || {};
-    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, model, permissionMode, effort });
+    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, images, model, permissionMode, effort });
     res.json({ runId: run.id, sessionId: id });
   } catch (e) { next(e); }
 });
@@ -237,12 +259,12 @@ app.post('/api/sessions/:id/controls', async (req, res, next) => {
 });
 
 app.post('/api/sessions', async (req, res) => {
-  const prompt = String(req.body?.text || '').trim();
+  const { text: prompt, images } = parseAttachments(req.body);
   const cwd = String(req.body?.cwd || '').trim();
-  if (!prompt) return res.status(400).json({ error: 'Empty message' });
+  if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'Pick a folder that exists on this machine.' });
   const { model, permissionMode, effort } = req.body || {};
-  const { run, ready } = startRun({ cwd, prompt, model, permissionMode, effort });
+  const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort });
   try {
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Claude Code did not start in time')), 60000));
     const sessionId = await Promise.race([ready, timeout]);

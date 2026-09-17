@@ -382,19 +382,32 @@
       const pre = el('pre', null, typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2)); b.appendChild(pre);
     }
   }
+  const dataUrl = (img) => img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
   function attachResult(toolNode, result) {
     if (!toolNode) return;
     const b = toolNode.querySelector('.step-body');
     b.appendChild(el('div', 'label', result.is_error ? 'Error' : 'Result'));
-    b.appendChild(el('pre', null, resultText(result.content).slice(0, 20000)));
+    const blocks = Array.isArray(result.content) ? result.content : [{ type: 'text', text: resultText(result.content) }];
+    const text = blocks.filter((x) => x.type === 'text').map((x) => x.text).join('\n');
+    if (text) b.appendChild(el('pre', null, text.slice(0, 20000)));
+    // Images Claude looked at (Read on a screenshot, a browser capture…) are shown, like Desktop.
+    for (const x of blocks) if (x.type === 'image') { const im = el('img', 'tool-img'); im.src = dataUrl(x); im.alt = 'image'; im.loading = 'lazy'; b.appendChild(im); }
+    if (blocks.some((x) => x.type === 'image')) { toolNode.open = true; toolNode.classList.add('has-image'); }
     if (result.is_error) toolNode.classList.add('error');
   }
 
-  function userMsg(text, { queued = false, id = null } = {}) {
+  function userMsg(text, { queued = false, id = null, images = [] } = {}) {
     const m = el('div', 'msg user' + (queued ? ' queued' : ''));
     if (id) m.dataset.promptId = id;
     m.appendChild(el('div', 'msg-avatar', (state.userName || 'U')[0].toUpperCase()));
-    const b = el('div', 'msg-body', text); b.dir = 'auto'; m.appendChild(b);
+    const b = el('div', 'msg-body'); b.dir = 'auto';
+    if (images.length) {
+      const strip = el('div', 'msg-images');
+      for (const img of images) { const im = el('img'); im.src = typeof img === 'string' ? img : dataUrl(img); im.alt = 'attachment'; im.addEventListener('click', () => window.open(im.src, '_blank')); strip.appendChild(im); }
+      b.appendChild(strip);
+    }
+    if (text) b.appendChild(el('div', 'msg-text', text));
+    m.appendChild(b);
     if (queued) m.appendChild(el('div', 'queued-label', 'Queued · sends when Claude finishes'));
     return m;
   }
@@ -452,7 +465,8 @@
         const results = m.content.filter((b) => b.type === 'tool_result');
         for (const r of results) attachResult(toolNodes.get(r.tool_use_id), r);
         const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
-        if (text) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text)); group = null; }
+        const images = m.content.filter((b) => b.type === 'image');
+        if (text || images.length) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text, { images })); group = null; }
       } else if (m.role === 'assistant') {
         // One assistant row per turn: consecutive assistant API messages share it, like Desktop.
         if (!group) group = assistantMsg();
@@ -480,7 +494,7 @@
   }
   // While Claude works the button is Stop, unless there is text typed: then it sends (queues) it.
   function paintSendButton() {
-    const hasText = !!$('#input').value.trim();
+    const hasText = !!$('#input').value.trim() || pending.length > 0;
     $('#send').classList.toggle('running', state.running && !hasText);
     $('#send').title = state.running && !hasText ? 'Stop' : state.running ? 'Send (queued until Claude finishes)' : 'Send';
   }
@@ -512,8 +526,9 @@
         case 'tail': mode = 'tail'; setRunning(false); setElsewhere(!!ev.working); break;
         case 'working': setElsewhere(!!ev.on); if (!ev.on) loadSessions().catch(() => {}); break;
         case 'user_text': {
-          const text = stripHarness(ev.text); if (!text) break;
-          state.live = null; thread.appendChild(userMsg(text)); autoscroll(); break;
+          const text = stripHarness(ev.text); const images = ev.images || [];
+          if (!text && !images.length) break;
+          state.live = null; thread.appendChild(userMsg(text, { images })); autoscroll(); break;
         }
         case 'mode': break;
         case 'queued': {
@@ -527,7 +542,7 @@
           state.live = null;
           const q = ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`);
           if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); }
-          else thread.appendChild(userMsg(ev.text, { id: ev.id }));
+          else thread.appendChild(userMsg(ev.text, { id: ev.id, images: ev.images || [] }));
           if (state.running) { status.startedAt = Date.now(); statusStart(); }
           autoscroll(); break;
         }
@@ -662,28 +677,78 @@
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); }
     if (e.key === 'Escape' && state.running) { e.preventDefault(); stop(); }
   });
-  send.addEventListener('click', () => { if (state.running && !input.value.trim()) stop(); else submit(); });
+  send.addEventListener('click', () => { if (state.running && !input.value.trim() && !pending.length) stop(); else submit(); });
+
+  // ---------- attachments: images go to Claude as images; other files are saved on the PC and referenced ----------
+  const pending = []; // { kind: 'image'|'file', name, media_type, data (base64), dataUrl }
+  const strip = $('#attachments');
+  function renderPending() {
+    strip.innerHTML = ''; strip.classList.toggle('hidden', !pending.length);
+    pending.forEach((a, i) => {
+      const chip = el('div', 'att' + (a.kind === 'image' ? ' att-img' : ''));
+      if (a.kind === 'image') { const im = el('img'); im.src = a.dataUrl; chip.appendChild(im); } else chip.appendChild(el('span', 'att-name', a.name));
+      const x = el('button', 'att-x'); x.type = 'button'; x.title = 'Remove'; x.textContent = '×';
+      x.addEventListener('click', () => { pending.splice(i, 1); renderPending(); paintSendButton(); });
+      chip.appendChild(x); strip.appendChild(chip);
+    });
+    paintSendButton();
+  }
+  const readAsDataUrl = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+  // Big photos are shrunk (longest side 1600px) so they upload fast and stay under the API's image limits.
+  async function prepareImage(file) {
+    const url = await readAsDataUrl(file);
+    if (file.size < 1200 * 1024 && /^image\/(png|jpeg|webp|gif)$/.test(file.type)) return { kind: 'image', name: file.name, media_type: file.type, data: url.split(',')[1], dataUrl: url };
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const out = c.toDataURL('image/jpeg', 0.85);
+    return { kind: 'image', name: file.name.replace(/\.\w+$/, '') + '.jpg', media_type: 'image/jpeg', data: out.split(',')[1], dataUrl: out };
+  }
+  async function addFiles(files) {
+    for (const f of files) {
+      if (pending.length >= 10) break;
+      try {
+        if (f.type.startsWith('image/')) pending.push(await prepareImage(f));
+        else if (f.size <= 25 * 1024 * 1024) pending.push({ kind: 'file', name: f.name, media_type: f.type || 'application/octet-stream', data: (await readAsDataUrl(f)).split(',')[1] });
+        else thread.appendChild(el('div', 'note error', f.name + ' is larger than 25 MB.'));
+      } catch (e) { thread.appendChild(el('div', 'note error', 'Could not read ' + f.name)); }
+    }
+    renderPending();
+  }
+  $('#attach-btn').addEventListener('click', () => $('#file-input').click());
+  $('#file-input').addEventListener('change', () => { addFiles([...$('#file-input').files]); $('#file-input').value = ''; });
+  input.addEventListener('paste', (e) => { const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); addFiles(files); } });
+  for (const evn of ['dragover', 'dragenter']) document.addEventListener(evn, (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); $('#composer').classList.add('drop'); } });
+  document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) $('#composer').classList.remove('drop'); });
+  document.addEventListener('drop', (e) => { $('#composer').classList.remove('drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles([...e.dataTransfer.files]); } });
 
   async function submit() {
-    const text = input.value.trim(); if (!text) return;
+    const text = input.value.trim(); if (!text && !pending.length) return;
+    const attachments = pending.filter((a) => a.kind === 'image').map((a) => ({ media_type: a.media_type, data: a.data }));
+    const files = pending.filter((a) => a.kind === 'file').map((a) => ({ name: a.name, media_type: a.media_type, data: a.data }));
+    const images = pending.filter((a) => a.kind === 'image').map((a) => a.dataUrl);
+    const shown = text || (files.length ? files.map((f) => f.name).join(', ') : '');
+    pending.length = 0; renderPending();
     input.value = ''; input.style.height = 'auto'; try { localStorage.removeItem(draftKey(state.current)); } catch {}
     empty.classList.remove('show'); stickToBottom = true;
+    const body = { text, attachments, files };
     // Claude is mid-turn on this chat: the message is queued and runs right after, like Desktop.
     if (state.running && state.current) {
-      const ghost = userMsg(text, { queued: true }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
-      try { const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text }) }); if (r.id) ghost.dataset.promptId = r.id; }
+      const ghost = userMsg(shown, { queued: true, images }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
+      try { const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify(body) }); if (r.id) ghost.dataset.promptId = r.id; }
       catch (e) { ghost.remove(); thread.appendChild(el('div', 'note error', e.message)); }
       return;
     }
-    thread.appendChild(userMsg(text)); autoscroll();
+    thread.appendChild(userMsg(shown, { images })); autoscroll();
     setRunning(true);
     try {
       if (state.current) {
-        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text, ...turnOptions() }) });
+        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ ...body, ...turnOptions() }) });
         subscribe(state.current, { since: 0 }); // event 0 is our own prompt, already on screen
       } else {
         if (!state.cwd) throw new Error('Pick a folder first.');
-        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd, ...turnOptions() }) });
+        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ ...body, cwd: state.cwd, ...turnOptions() }) });
         state.current = r.sessionId;
         history.replaceState(null, '', '#/s/' + r.sessionId);
         app.classList.remove('new');
