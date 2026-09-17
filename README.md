@@ -12,11 +12,12 @@ or the Claude Desktop app.
 
 ```
 npm install
-copy .env.example .env      # set REMOTE_PASSWORD (and USER_NAME)
+copy .env.example .env      # optional: REMOTE_PASSWORD, USER_NAME
 npm start                   # http://127.0.0.1:7777
 ```
 
-Sign in with the password from `.env`.
+There is no password unless you set one in `.env`. The first time a device
+opens the app it asks which Claude account to use.
 
 ## Reach it from the phone
 
@@ -61,12 +62,17 @@ to in the last 45 seconds carry a dot in the sidebar.
 
 ## Accounts
 
-The account line at the bottom of the sidebar comes from `claude auth status`,
-run with the same environment the app uses for Claude. By default that is the
-machine's own `claude login`. To run on another account, open "Use a different
-Claude account" on the login page and paste a token from `claude setup-token`
-(or a Console API key); it is proven with one small Haiku request, stored in
-`data/auth.json`, and forgotten on Log out.
+Two accounts are available and you switch between them any time from the
+sidebar (click your name, or "Switch"):
+
+- **This computer's login**: whatever `claude login` signed into on this PC.
+- **Token**: a token from `claude setup-token` (or a Console API key) pasted
+  in the app. It is proven with one small Haiku request, then kept in
+  `data/auth.json`. Remove it from the same dialog.
+
+Whatever you send is billed to the active account; the sessions themselves
+stay on this computer either way. The account line at the bottom of the
+sidebar comes from `claude auth status`, run on the active account.
 
 ## Desktop app (Windows, Rust + WebView2)
 

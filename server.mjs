@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { runs, pendingPermissions, isLive, startRun, answerPermission, bus } from './lib/runs.mjs';
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS } from './lib/tail.mjs';
-import { getAuth, setAuth, classifyToken, authEnv, authSource, verifyEnv } from './lib/auth.mjs';
+import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,13 +37,13 @@ loadDotEnv();
 
 const PORT = Number(process.env.PORT || 7777);
 const HOST = process.env.HOST || '127.0.0.1';
-const PASSWORD = process.env.REMOTE_PASSWORD || '';
+// An app password is optional (REMOTE_PASSWORD in .env). Without one, anybody who
+// can reach the port can use Claude on this PC, so keep the server on localhost,
+// Tailscale, or a network you trust.
+const PASSWORD = (process.env.REMOTE_PASSWORD || '').trim() === 'change-me' ? '' : (process.env.REMOTE_PASSWORD || '').trim();
+const PASSWORD_REQUIRED = PASSWORD.length > 0;
 const USER_NAME = process.env.USER_NAME || 'there';
-if (!PASSWORD || PASSWORD === 'change-me') {
-  console.error('Set REMOTE_PASSWORD in .env before starting (copy .env.example).');
-  process.exit(1);
-}
-const TOKEN = createHash('sha256').update('claude-remote:' + PASSWORD).digest('hex');
+const TOKEN = createHash('sha256').update('claude-remote:' + (PASSWORD || 'open')).digest('hex');
 
 // ---------- http ----------
 const app = express();
@@ -54,22 +54,11 @@ app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked
 app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
 app.use(express.static(path.join(here, 'public'), { extensions: ['html'] }));
 
-// Sign in with the shared password. Optionally hand over a Claude token to run
-// on a different account than the machine's own `claude login`; it is proven
-// with one tiny request before it is kept.
-app.post('/api/login', async (req, res) => {
-  if (typeof req.body?.password !== 'string' || req.body.password !== PASSWORD) return res.status(401).json({ error: 'Wrong password' });
-  const claudeToken = typeof req.body.claudeToken === 'string' ? req.body.claudeToken.trim() : '';
-  if (claudeToken) {
-    const kind = classifyToken(claudeToken);
-    const candidate = { ...process.env };
-    delete candidate.CLAUDE_CODE_OAUTH_TOKEN; delete candidate.ANTHROPIC_API_KEY;
-    candidate[kind === 'apikey' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN'] = claudeToken;
-    const check = await verifyEnv(candidate);
-    if (!check.ok) return res.status(400).json({ error: 'Claude rejected that token: ' + check.error });
-    setAuth({ kind, token: claudeToken, since: Date.now() });
-    whoCache = { at: 0, value: null };
-  }
+app.get('/api/config', (_req, res) => res.json({ passwordRequired: PASSWORD_REQUIRED, userName: USER_NAME }));
+
+// Sign in. With no app password configured this simply hands out the session token.
+app.post('/api/login', (req, res) => {
+  if (PASSWORD_REQUIRED && (typeof req.body?.password !== 'string' || req.body.password !== PASSWORD)) return res.status(401).json({ error: 'Wrong password' });
   res.json({ token: TOKEN, userName: USER_NAME });
 });
 
@@ -92,30 +81,32 @@ function writePrefs(p) {
   fs.writeFileSync(PREFS_PATH, JSON.stringify(p, null, 2));
 }
 
-// Which Claude account the CLI on this machine is signed in as. Read from the
-// same files Claude Code keeps its login in; nothing secret leaves this function.
-let whoCache = { at: 0, value: null };
-function whoAmI() {
-  if (Date.now() - whoCache.at < 60000 && whoCache.value) return whoCache.value;
-  // Preferred: ask the CLI itself, with this process's env, so a token set in .env
-  // (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) is reported the way it will be used.
+// Who a given account ('local' = this computer's `claude login`, 'token' = the pasted
+// token) is, as reported by the CLI itself. Nothing secret leaves this function.
+const whoCache = new Map(); // which -> { at, value }
+function whoAmI(which = activeAccount()) {
+  const hit = whoCache.get(which);
+  if (hit && Date.now() - hit.at < 60000) return hit.value;
+  const cli = process.env.CLAUDE_REMOTE_CLI || 'claude';
   try {
-    const raw = execFileSync('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true, env: authEnv() });
+    const raw = execFileSync(cli, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true, env: envFor(which) });
     const j = JSON.parse(raw);
+    const a = getAuth();
     const value = {
+      which,
       email: j.email || '', name: '', org: j.orgName || '', plan: j.subscriptionType || '',
       auth: j.authMethod || (j.loggedIn ? 'unknown' : 'none'), loggedIn: !!j.loggedIn,
-      source: authSource(), tokenKind: getAuth()?.kind || '',
+      source: which === 'token' ? 'token entered in the app' : localSource(), tokenKind: which === 'token' ? a.tokenKind : '',
       projectsDir: j.projectsDirectory || '',
     };
-    whoCache = { at: Date.now(), value };
+    whoCache.set(which, { at: Date.now(), value });
     return value;
   } catch {}
-  return whoAmIFromFiles();
+  return which === 'local' ? whoAmIFromFiles() : { which, email: '', plan: '', auth: 'oauth_token', loggedIn: true, source: 'token entered in the app', tokenKind: getAuth().tokenKind };
 }
 function whoAmIFromFiles() {
   const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const out = { email: '', name: '', org: '', plan: '', source: authSource(), tokenKind: getAuth()?.kind || '' };
+  const out = { which: 'local', email: '', name: '', org: '', plan: '', source: localSource(), tokenKind: '' };
   try {
     const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
     const a = j.oauthAccount || {};
@@ -144,9 +135,30 @@ const shape = (s, pinned) => ({
   pinned: !!pinned?.has(s.sessionId),
 });
 
-app.post('/api/auth/clear', (_req, res) => { setAuth(null); whoCache = { at: 0, value: null }; res.json({ ok: true }); });
+app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken }));
 
-app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI() }));
+// ---------- accounts: this computer's login, and an optional token; switch any time ----------
+app.get('/api/accounts', (_req, res) => {
+  const a = getAuth();
+  res.json({ active: activeAccount(), local: whoAmI('local'), token: a.hasToken ? whoAmI('token') : null });
+});
+app.post('/api/accounts/active', (req, res) => {
+  const which = req.body?.which === 'token' ? 'token' : 'local';
+  if (which === 'token' && !getAuth().hasToken) return res.status(400).json({ error: 'No token has been added yet.' });
+  res.json({ active: setActive(which) });
+});
+// Add or replace the token; it is proven with one tiny request before it is kept.
+app.post('/api/accounts/token', async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  const kind = classifyToken(token);
+  if (!kind) return res.status(400).json({ error: 'Paste a token first.' });
+  const check = await verifyEnv(candidateEnv(token, kind));
+  if (!check.ok) return res.status(400).json({ error: 'Claude rejected that token: ' + check.error });
+  setToken(token, kind);
+  whoCache.delete('token');
+  res.json({ active: 'token', token: whoAmI('token') });
+});
+app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete('token'); res.json({ active: 'local' }); });
 
 app.post('/api/sessions/:id/pin', (req, res) => {
   const p = readPrefs();
@@ -303,7 +315,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: String(err?.message || err) });
 });
 
-export { TOKEN, PASSWORD, HOST, PORT, bus };
+export { TOKEN, PASSWORD, PASSWORD_REQUIRED, HOST, PORT, bus };
 export function startServer({ host = HOST, port = PORT } = {}) {
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {

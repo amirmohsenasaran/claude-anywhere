@@ -22,13 +22,8 @@
   <section id="login" class="login hidden">
     <form id="login-form" class="login-card">
       <div class="wordmark">Claude</div>
-      <p class="login-hint">This page controls Claude Code on your computer. Enter the password from <code>.env</code>.</p>
+      <p class="login-hint">This page controls Claude Code on your computer. Enter the app password from <code>.env</code>.</p>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
-      <details id="login-token-box" class="login-token">
-        <summary>Use a different Claude account</summary>
-        <p class="login-hint">By default this uses the account Claude Code is signed into on the computer. Paste a token from <code>claude setup-token</code> (or a Console API key) to run on another account instead. It is checked with one small request and kept on the computer.</p>
-        <input id="login-token" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
-      </details>
       <button type="submit" class="btn btn-primary" id="login-submit">Continue</button>
       <p id="login-error" class="login-error" hidden></p>
     </form>
@@ -65,7 +60,7 @@
           <div id="sidebar-account" class="sidebar-user-plan">…</div>
           <div id="sidebar-host" class="sidebar-user-plan">…</div>
         </div>
-        <button id="logout" class="link-btn small" title="Sign out of this page; also forgets a token entered at login">Log out</button>
+        <button id="switch-account" class="link-btn small" title="Choose which Claude account runs this app">Switch</button>
       </div>
     </aside>
 
@@ -132,6 +127,34 @@
         <div class="composer-foot">Claude can make mistakes. Tools run on <span id="foot-host">your computer</span>.</div>
       </div>
     </main>
+  </div>
+
+  <!-- Account chooser: this computer's login, or a token; switch any time -->
+  <div id="account-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span class="spark">✱</span><span>Which Claude account?</span><button id="account-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+      <p class="modal-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
+      <div class="account-list">
+        <button class="account-card" data-which="local">
+          <div class="account-title">This computer's login <span class="tag">Local</span></div>
+          <div class="account-desc" id="acct-local-desc">…</div>
+          <div class="account-check">✓</div>
+        </button>
+        <button class="account-card" data-which="token">
+          <div class="account-title">Token <span class="tag">Token</span></div>
+          <div class="account-desc" id="acct-token-desc">Not added yet</div>
+          <div class="account-check">✓</div>
+        </button>
+      </div>
+      <div class="token-box">
+        <div class="token-row">
+          <input id="acct-token-input" type="password" placeholder="Paste a token from claude setup-token, or a Console API key" autocomplete="off" spellcheck="false" />
+          <button id="acct-token-add" class="btn btn-primary">Add</button>
+        </div>
+        <div class="token-actions"><button id="acct-token-remove" class="link-btn small hidden">Remove token</button></div>
+        <p id="acct-error" class="login-error" hidden></p>
+      </div>
+    </div>
   </div>
 
   <template id="tpl-permission">

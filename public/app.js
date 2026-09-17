@@ -42,21 +42,78 @@
     $('#login-password').focus();
   }
   function logout() { try { localStorage.removeItem('cr.token'); } catch {} state.token = null; showLogin(); }
+  async function login(password) {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Wrong password');
+    state.token = data.token; try { localStorage.setItem('cr.token', data.token); } catch {}
+  }
   $('#login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const btn = $('#login-submit'); const claudeToken = $('#login-token').value.trim();
-    btn.classList.add('busy'); btn.textContent = claudeToken ? 'Checking token…' : 'Signing in…';
-    let res, data;
-    try {
-      res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#login-password').value, claudeToken }) });
-      data = await res.json().catch(() => ({}));
-    } finally { btn.classList.remove('busy'); btn.textContent = 'Continue'; }
-    if (!res.ok) return showLogin(data.error || 'Wrong password');
-    $('#login-token').value = '';
-    state.token = data.token; try { localStorage.setItem('cr.token', data.token); } catch {}
-    boot();
+    const btn = $('#login-submit');
+    btn.classList.add('busy'); btn.textContent = 'Signing in…';
+    try { await login($('#login-password').value); boot(); }
+    catch (e) { showLogin(e.message); }
+    finally { btn.classList.remove('busy'); btn.textContent = 'Continue'; }
   });
-  $('#logout').addEventListener('click', async () => { try { await api('/auth/clear', { method: 'POST' }); } catch {} logout(); });
+
+  // ---------- accounts: this computer's login or a token, switchable any time ----------
+  const acctModal = $('#account-modal');
+  let accounts = null;
+  const describe = (a) => a ? [a.email || (a.auth === 'oauth_token' ? 'Signed in with a token' : a.loggedIn === false ? 'Not signed in' : 'Signed in'), a.plan, a.org && a.org !== a.email + "'s Organization" ? a.org : ''].filter(Boolean).join(' · ') : '';
+  async function openAccounts() {
+    acctModal.classList.remove('hidden');
+    $('#acct-error').hidden = true;
+    try { accounts = await api('/accounts'); } catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; return; }
+    renderAccounts();
+  }
+  function renderAccounts() {
+    if (!accounts) return;
+    $('#acct-local-desc').textContent = describe(accounts.local) || 'No Claude Code login found on this computer';
+    $('#acct-token-desc').textContent = accounts.token ? describe(accounts.token) : 'Not added yet';
+    for (const card of acctModal.querySelectorAll('.account-card')) {
+      const w = card.dataset.which;
+      card.classList.toggle('active', accounts.active === w);
+      card.classList.toggle('disabled', w === 'token' && !accounts.token);
+    }
+    $('#acct-token-remove').classList.toggle('hidden', !accounts.token);
+    $('#acct-token-input').placeholder = accounts.token ? 'Paste a different token to replace it' : 'Paste a token from claude setup-token, or a Console API key';
+  }
+  acctModal.querySelectorAll('.account-card').forEach((card) => card.addEventListener('click', async () => {
+    const which = card.dataset.which;
+    if (which === 'token' && !accounts?.token) { $('#acct-token-input').focus(); return; }
+    try { await api('/accounts/active', { method: 'POST', body: JSON.stringify({ which }) }); localStorage.setItem('cr.accountChosen', '1'); acctModal.classList.add('hidden'); await refreshMe(); }
+    catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
+  }));
+  $('#acct-token-add').addEventListener('click', async () => {
+    const token = $('#acct-token-input').value.trim(); if (!token) return $('#acct-token-input').focus();
+    const btn = $('#acct-token-add'); btn.classList.add('busy'); btn.textContent = 'Checking…'; $('#acct-error').hidden = true;
+    try { await api('/accounts/token', { method: 'POST', body: JSON.stringify({ token }) }); $('#acct-token-input').value = ''; localStorage.setItem('cr.accountChosen', '1'); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); }
+    catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
+    finally { btn.classList.remove('busy'); btn.textContent = 'Add'; }
+  });
+  $('#acct-token-remove').addEventListener('click', async () => {
+    try { await api('/accounts/token', { method: 'DELETE' }); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); }
+    catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
+  });
+  $('#account-close').addEventListener('click', () => { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); });
+  acctModal.addEventListener('click', (e) => { if (e.target === acctModal) { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); } });
+  $('#switch-account').addEventListener('click', openAccounts);
+  $('#sidebar-user').addEventListener('click', openAccounts);
+
+  async function refreshMe() {
+    const me = await api('/me');
+    state.userName = me.userName; state.host = me.host;
+    const acc = me.account || {};
+    $('#sidebar-name').textContent = me.userName;
+    $('#sidebar-account').innerHTML = '';
+    $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'oauth_token' ? 'Token account' : acc.loggedIn === false ? 'Not signed in' : 'Signed in')));
+    if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
+    $('#sidebar-host').textContent = (me.active === 'token' ? 'Token' : 'This computer') + ' · ' + me.host;
+    $('#sidebar-user').title = 'Click to switch account\n' + [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?'), 'Source: ' + (acc.source || '?'), acc.projectsDir && 'Sessions: ' + acc.projectsDir].filter(Boolean).join('\n');
+    $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
+    return me;
+  }
 
   // ---------- sidebar ----------
   const app = $('#app');
@@ -617,24 +674,21 @@
 
   // ---------- boot ----------
   async function boot() {
-    if (!state.token) return showLogin();
-    try {
-      const me = await api('/me');
-      state.userName = me.userName; state.host = me.host;
-      const acc = me.account || {};
-      $('#sidebar-name').textContent = me.userName;
-      $('#sidebar-account').innerHTML = '';
-      const viaToken = /\.env/.test(acc.source || '');
-      const who = acc.email || (acc.auth === 'oauth_token' ? 'Token from claude setup-token' : acc.loggedIn === false ? 'Not signed in' : 'Signed in');
-      $('#sidebar-account').appendChild(document.createTextNode(who));
-      if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
-      $('#sidebar-host').textContent = (acc.source === 'token entered at login' ? 'Token · ' : viaToken ? 'Token from .env · ' : 'Machine login · ') + me.host;
-      $('#sidebar-user').title = [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?'), 'Source: ' + (acc.source || '?'), acc.projectsDir && 'Sessions: ' + acc.projectsDir].filter(Boolean).join('\n');
-      $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
-    } catch { return; }
+    // No app password configured? Then no login screen: just fetch the session token.
+    if (!state.token) {
+      let cfg = {};
+      try { cfg = await (await fetch('/api/config')).json(); } catch {}
+      if (cfg.passwordRequired) return showLogin();
+      try { await login(''); } catch { return showLogin(); }
+    }
+    let me;
+    try { me = await refreshMe(); } catch { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     await Promise.all([loadSessions(), loadProjects()]);
     route();
+    // First time on this device: ask which account to use (local or token).
+    let chosen = false; try { chosen = !!localStorage.getItem('cr.accountChosen'); } catch {}
+    if (!chosen && !me.hasToken) openAccounts();
     setInterval(() => { if (!document.hidden) loadSessions().catch(() => {}); }, 10000);
     // Coming back after the screen was off: rebuild the open chat from disk and reattach.
     let hiddenAt = 0;

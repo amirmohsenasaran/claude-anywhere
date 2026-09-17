@@ -111,23 +111,11 @@ fn ensure_env_file(env_file: &Path, server_root: &Path) -> std::io::Result<()> {
         fs::copy(&dev, env_file)?;
         return Ok(());
     }
-    let password = random_password();
     let user = std::env::var("USERNAME").unwrap_or_else(|_| "there".into());
-    fs::write(env_file, format!("REMOTE_PASSWORD={password}\nHOST=0.0.0.0\nPORT=7777\nUSER_NAME={user}\n"))
-}
-
-fn random_password() -> String {
-    // Twelve characters from a small alphabet; easy to type on a phone.
-    let alphabet = b"abcdefghjkmnpqrstuvwxyz23456789";
-    let mut out = String::new();
-    let mut seed = Sha256::digest(format!("{:?}{:?}", Instant::now(), std::process::id()));
-    for i in 0..12 {
-        if i % 32 == 31 {
-            seed = Sha256::digest(seed);
-        }
-        out.push(alphabet[(seed[i % 32] as usize) % alphabet.len()] as char);
-    }
-    out
+    fs::write(
+        env_file,
+        format!("# Optional app password. Empty = no password (keep the PC on a network you trust).\nREMOTE_PASSWORD=\nHOST=0.0.0.0\nPORT=7777\nUSER_NAME={user}\n"),
+    )
 }
 
 fn read_env(env_file: &Path) -> (String, u16) {
@@ -151,10 +139,9 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     let root = server_dir(app);
     ensure_env_file(&env_file, &root)?;
     let (password, port) = read_env(&env_file);
-    if password.is_empty() || password == "change-me" {
-        return Err(format!("Set REMOTE_PASSWORD in {}", env_file.display()).into());
-    }
-    let token = hex::encode(Sha256::digest(format!("claude-remote:{password}")));
+    let password = if password == "change-me" { String::new() } else { password };
+    // Same derivation as server.mjs: no password means the fixed word "open".
+    let token = hex::encode(Sha256::digest(format!("claude-remote:{}", if password.is_empty() { "open" } else { &password })));
 
     // Already running with our password (another copy, or `npm start`)? Then just use it.
     // Something else on that port (a dev server with a different password)? Pick a free one.
@@ -310,10 +297,15 @@ fn show_phone_info(app: &AppHandle) {
     if lines.is_empty() {
         lines.push("(no network address found)".into());
     }
+    let password_line = if password.is_empty() || password == "change-me" {
+        "No app password is set: anyone who can open this address can use Claude on this PC. Use Tailscale, or set REMOTE_PASSWORD in the settings file.".to_string()
+    } else {
+        format!("Password: {password}")
+    };
     let text = format!(
-        "Open one of these on your phone:\n\n{}\n\nPassword: {}\n\nOn the phone use \"Add to Home Screen\" to install it.\nSettings file: {}",
+        "Open one of these on your phone:\n\n{}\n\n{}\n\nOn the phone use \"Add to Home Screen\" to install it.\nSettings file: {}",
         lines.join("\n"),
-        password,
+        password_line,
         state.env_file.display()
     );
     app.dialog().message(text).title("Claude on your phone").kind(MessageDialogKind::Info).show(|_| {});
