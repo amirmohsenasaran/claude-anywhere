@@ -316,9 +316,9 @@
     input.placeholder = on ? 'Claude is working on this chat in another window…' : 'How can I help you today?';
   }
 
-  function subscribe(sessionId) {
+  function subscribe(sessionId, { since = -1 } = {}) {
     if (state.es) { state.es.close(); state.es = null; }
-    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}`);
+    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}`);
     state.es = es;
     // partial blocks under construction, by index
     const partial = new Map();
@@ -336,6 +336,7 @@
           state.live = null; thread.appendChild(userMsg(text)); autoscroll(); break;
         }
         case 'mode': break;
+        case 'prompt': state.live = null; thread.appendChild(userMsg(ev.text)); autoscroll(); break;
         case 'init': mode = 'run'; setRunning(true); break;
         // One assistant row for the whole turn; each API message gets its own key space.
         case 'msg_start':
@@ -426,19 +427,28 @@
 
   // ---------- composer ----------
   const input = $('#input'), send = $('#send');
-  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px'; });
+  // Unsent text survives a refresh, per chat.
+  const draftKey = (id) => 'cr.draft.' + (id || 'new');
+  function restoreDraft(id) {
+    let v = ''; try { v = localStorage.getItem(draftKey(id)) || ''; } catch {}
+    input.value = v; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px';
+  }
+  input.addEventListener('input', () => {
+    input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px';
+    try { if (input.value) localStorage.setItem(draftKey(state.current), input.value); else localStorage.removeItem(draftKey(state.current)); } catch {}
+  });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); } });
   send.addEventListener('click', () => { if (state.running) stop(); else submit(); });
 
   async function submit() {
     const text = input.value.trim(); if (!text) return;
-    input.value = ''; input.style.height = 'auto';
+    input.value = ''; input.style.height = 'auto'; try { localStorage.removeItem(draftKey(state.current)); } catch {}
     thread.appendChild(userMsg(text)); empty.classList.remove('show'); stickToBottom = true; autoscroll();
     setRunning(true);
     try {
       if (state.current) {
         await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text, ...turnOptions() }) });
-        subscribe(state.current);
+        subscribe(state.current, { since: 0 }); // event 0 is our own prompt, already on screen
       } else {
         if (!state.cwd) throw new Error('Pick a folder first.');
         const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd, ...turnOptions() }) });
@@ -447,7 +457,7 @@
         $('#chat-title').textContent = text.slice(0, 60);
         $('#chat-meta').textContent = state.cwd.split(/[\\/]/).pop();
         $('#project-btn').classList.add('locked');
-        subscribe(r.sessionId);
+        subscribe(r.sessionId, { since: 0 });
       }
     } catch (e) {
       thread.appendChild(el('div', 'note error', e.message)); setRunning(false);
@@ -463,7 +473,10 @@
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
     renderSessions();
     try {
-      const [info, messages] = await Promise.all([api('/sessions/' + id), api(`/sessions/${id}/messages`)]);
+      const info = await api('/sessions/' + id);
+      // A turn started here and still running is replayed by the live stream from
+      // its prompt onwards, so the history stops just before it.
+      const messages = await api(`/sessions/${id}/messages` + (info.live && info.runStartedAt ? '?before=' + info.runStartedAt : ''));
       $('#chat-title').textContent = info.title;
       $('#chat-meta').textContent = [info.project, info.branch].filter(Boolean).join(' · ');
       state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
@@ -471,6 +484,7 @@
       stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
       setRunning(false); setElsewhere(false);
       subscribe(id); // streams our own turn, or follows the file if another window is working
+      restoreDraft(id);
     } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
@@ -481,7 +495,7 @@
     thread.innerHTML = ''; empty.classList.add('show');
     $('#chat-title').textContent = 'New chat'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
-    setRunning(false); setElsewhere(false); renderSessions(); updatePinButton();
+    setRunning(false); setElsewhere(false); renderSessions(); updatePinButton(); restoreDraft(null);
     const h = new Date().getHours();
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();

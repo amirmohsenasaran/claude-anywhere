@@ -138,6 +138,7 @@ const shape = (s, pinned) => ({
   lastModified: s.lastModified,
   createdAt: s.createdAt,
   live: isLive(s.sessionId),
+  runStartedAt: isLive(s.sessionId) ? runs.get(s.sessionId).startedAt : null,
   working: isLive(s.sessionId) || Date.now() - s.lastModified < WORKING_WINDOW_MS,
   pinned: !!pinned?.has(s.sessionId),
 });
@@ -182,8 +183,12 @@ app.get('/api/sessions/:id', async (req, res, next) => {
 app.get('/api/sessions/:id/messages', async (req, res, next) => {
   try {
     const out = [];
+    // `before` (ms): leave out lines written by a turn that is still running here,
+    // because the live stream will replay that turn from its start.
+    const before = Number(req.query.before) || 0;
     for (const m of await getSessionMessages(req.params.id)) {
       if (m.parent_tool_use_id) continue; // subagent traffic
+      if (before && m.timestamp && Date.parse(m.timestamp) >= before - 1500) continue;
       const c = m.message?.content;
       const content = Array.isArray(c) ? c : [{ type: 'text', text: String(c ?? '') }];
       out.push({ role: m.type, uuid: m.uuid, timestamp: m.timestamp, content });

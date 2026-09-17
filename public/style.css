@@ -297,3 +297,53 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .scroll { position: relative; z-index: 0; }
 .composer-wrap { position: relative; z-index: 10; }
 .menu { z-index: 50; isolation: isolate; }
+
+/* ---------- v4: closer to claude.ai ---------- */
+:root { --bg-000: #FFFFFF; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg-000: #30302E; } }
+:root[data-theme="dark"] { --bg-000: #30302E; }
+.sidebar { width: 260px; padding: 10px 8px; }
+.sidebar-top .wordmark { font-size: 21px; padding-inline-start: 4px; }
+.new-chat { padding: 7px 8px; font-size: 14px; }
+.new-chat-icon { width: 26px; height: 26px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+.sidebar-nav a { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; font-size: 14px; color: var(--ink); }
+.sidebar-nav a:hover { background: var(--bg-3); }
+.sidebar-nav a svg { width: 18px; height: 18px; color: var(--ink-2); margin-inline-start: 4px; }
+.sidebar-label { padding: 10px 10px 4px; font-size: 12px; }
+.session-item { padding: 6px 8px; font-size: 13.5px; }
+.session-item .muted.small { display: none; }           /* claude.ai lists titles only */
+.session-item:hover .muted.small { display: none; }
+.project-group > summary { padding: 6px 8px 3px; }
+.sidebar-bottom { padding: 10px 6px 4px; }
+.avatar { width: 28px; height: 28px; font-size: 12px; }
+
+.topbar { min-height: 56px; padding: 12px 16px; }
+.chat-title { font-size: 14px; font-weight: 500; }
+.scroll { padding: 0 24px; }
+.thread, .empty { max-width: 48rem; }
+.greeting { font-size: 34px; }
+.msg { margin: 26px 0; }
+.msg.user { justify-content: flex-end; }
+.msg.user .msg-avatar { display: none; }
+.msg.user .msg-body { flex: 0 1 auto; max-width: 85%; background: var(--bg-3); border-radius: 18px; padding: 10px 16px; font-size: 15.5px; }
+.msg.assistant .msg-avatar { width: 26px; height: 26px; font-size: 14px; margin-top: 4px; }
+.prose { font-size: 16px; line-height: 1.65; }
+.prose p { margin: .7em 0; }
+.prose pre { background: var(--bg-000); border-radius: 12px; }
+.step { border-radius: 12px; }
+.step > summary { padding: 8px 12px; }
+
+.composer-wrap { padding: 6px 24px calc(14px + env(safe-area-inset-bottom)); }
+.composer { background: var(--bg-000); border-radius: 20px; border-color: var(--line); box-shadow: 0 0 0 1px rgba(20,20,19,.02), 0 6px 24px rgba(20,20,19,.06); padding: 12px 14px 10px; }
+.composer:focus-within { border-color: var(--line-2); }
+.composer textarea { font-size: 16px; padding: 2px 4px 6px; }
+.send { width: 32px; height: 32px; border-radius: 10px; }
+.send.running { border-radius: 10px; }
+.composer-foot { font-size: 12px; margin-top: 10px; }
+@media (max-width: 860px) {
+  .scroll { padding: 0 14px; }
+  .composer-wrap { padding: 4px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .msg.user .msg-body { max-width: 92%; }
+  .greeting { font-size: 27px; }
+}
