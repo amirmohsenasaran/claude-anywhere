@@ -164,6 +164,7 @@
   const MODES = [
     { id: 'default', name: 'Default', desc: 'Asks before edits and commands' },
     { id: 'acceptEdits', name: 'Accept edits', desc: 'File edits run without asking; commands still ask' },
+    { id: 'auto', name: 'Auto', desc: 'Claude approves routine actions itself and asks you only for the risky ones' },
     { id: 'plan', name: 'Plan', desc: 'Read-only: Claude plans, does not change anything' },
   ];
   state.model = localStorage.getItem('cr.model') || MODELS[0].id;
