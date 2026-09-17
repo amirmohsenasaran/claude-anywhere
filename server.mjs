@@ -313,5 +313,11 @@ export function startServer({ host = HOST, port = PORT } = {}) {
   });
 }
 
-// Run directly (`node server.mjs`): listen. Imported by the desktop app: it calls startServer().
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) startServer();
+// Run directly (`node server.mjs`): listen. When imported as a module, the importer calls startServer().
+const isMain = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === path.resolve(fileURLToPath(import.meta.url)).toLowerCase();
+console.log(`[claude-remote] node ${process.version} argv1=${process.argv[1]} main=${isMain} cwd=${process.cwd()}`);
+if (isMain) startServer();
+
+// Started by the desktop app: leave when it leaves, even if it was killed.
+const parentPid = Number(process.env.CLAUDE_REMOTE_PARENT_PID);
+if (parentPid) setInterval(() => { try { process.kill(parentPid, 0); } catch { console.log('[claude-remote] desktop app is gone, exiting'); process.exit(0); } }, 2000).unref();

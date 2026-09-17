@@ -45,7 +45,13 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = start_server(&handle).map_err(|e| {
+                // Keep the reason on disk too, for when the dialog is gone.
+                if let Ok(dir) = app.path().app_data_dir() {
+                    let _ = fs::write(dir.join("startup-error.txt"), format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()));
+                }
                 app.dialog().message(format!("{e}")).title("Claude Remote could not start").kind(MessageDialogKind::Error).blocking_show();
+                std::process::exit(1);
+                #[allow(unreachable_code)]
                 e
             })?;
             let url = format!("http://127.0.0.1:{}/?auto={}", state.port, state.token);
@@ -150,42 +156,82 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     }
     let token = hex::encode(Sha256::digest(format!("claude-remote:{password}")));
 
-    // Already running (another copy, or `npm start`)? Then just use it.
+    // Already running with our password (another copy, or `npm start`)? Then just use it.
+    // Something else on that port (a dev server with a different password)? Pick a free one.
+    let mut port = port;
     if port_open(port) {
-        return Ok(ServerState { child: Mutex::new(None), port, token, env_file });
+        if server_accepts(port, &token) {
+            return Ok(ServerState { child: Mutex::new(None), port, token, env_file });
+        }
+        port = (port + 1..port + 20).find(|p| !port_open(*p)).ok_or("No free port near the configured one")?;
     }
 
-    let log = fs::File::create(data_dir.join("server.log")).ok();
-    let mut cmd = Command::new("node");
+    let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Remote again.")?;
+    let root = root.canonicalize().unwrap_or(root);
+    let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
+    let mut log = fs::File::create(data_dir.join("server.log")).ok();
+    if let Some(f) = log.as_mut() {
+        use std::io::Write;
+        let _ = writeln!(f, "[claude-remote] node={} root={} port={port}", node.display(), root.display());
+    }
+    let log_err = log.as_ref().and_then(|f| f.try_clone().ok());
+    let mut cmd = Command::new(&node);
     cmd.arg(root.join("server.mjs"))
         .current_dir(&root)
         .env("CLAUDE_REMOTE_DATA_DIR", data_dir.join("data"))
         .env("CLAUDE_REMOTE_ENV_FILE", &env_file)
         .env("HOST", "0.0.0.0")
         .env("PORT", port.to_string())
+        .env("CLAUDE_REMOTE_PARENT_PID", std::process::id().to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(log.map(Stdio::from).unwrap_or_else(Stdio::null));
+        .stdout(log.map(Stdio::from).unwrap_or_else(Stdio::null))
+        .stderr(log_err.map(Stdio::from).unwrap_or_else(Stdio::null));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let child = cmd.spawn().map_err(|e| format!("Could not start Node (is it installed and on PATH?): {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("Could not start Node (is it installed and on PATH?): {e}"))?;
 
     let deadline = Instant::now() + Duration::from_secs(30);
     while !port_open(port) {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!("Node exited right away ({status}). See {}", data_dir.join("server.log").display()).into());
+        }
         if Instant::now() > deadline {
             return Err(format!("The server did not come up on port {port}. See {}", data_dir.join("server.log").display()).into());
         }
         thread::sleep(Duration::from_millis(200));
     }
+    let _ = fs::remove_file(data_dir.join("startup-error.txt"));
     Ok(ServerState { child: Mutex::new(Some(child)), port, token, env_file })
+}
+
+// node.exe from PATH, or the usual install folder; resolved here so the log says which one ran.
+fn find_node() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).map(|d| d.join("node.exe")).collect())
+        .unwrap_or_default();
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        candidates.push(Path::new(&pf).join("nodejs").join("node.exe"));
+    }
+    if let Ok(la) = std::env::var("LOCALAPPDATA") {
+        candidates.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
+    }
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 fn port_open(port: u16) -> bool {
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+fn server_accepts(port: u16, token: &str) -> bool {
+    ureq::get(&format!("http://127.0.0.1:{port}/api/me"))
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(Duration::from_secs(3))
+        .call()
+        .is_ok()
 }
 
 fn stop_server(app: &AppHandle) {
