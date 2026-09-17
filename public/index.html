@@ -135,6 +135,14 @@
           <button id="sb-pr" class="sb-pr hidden" type="button">Create PR</button>
           <button id="sb-close" class="icon-btn small" type="button" title="Hide"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
         </div>
+        <!-- What this turn is running in the background: commands, subagents, workflows (Desktop's tasks panel) -->
+        <button id="tasks-bar" class="tasks-bar hidden" type="button">
+          <span class="tb-dot"></span>
+          <span id="tb-text">1 task running</span>
+          <span id="tb-detail" class="muted"></span>
+          <span class="sb-spacer"></span>
+          <span class="tb-open">Show</span>
+        </button>
         <div id="update-banner" class="limit-banner update-banner hidden">
           <svg viewBox="0 0 20 20" width="15" height="15"><path d="M10 3v9M6 8l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span id="ub-text">A new version is ready</span>
@@ -200,6 +208,17 @@
         <div class="composer-foot">Claude can make mistakes. Tools run on <span id="foot-host">your computer</span>.</div>
       </div>
     </main>
+
+    <aside id="tasks-panel" class="tasks-panel hidden" aria-label="Tasks">
+      <div class="tp-head">
+        <span class="tp-title">Tasks</span>
+        <span id="tp-count" class="muted"></span>
+        <span class="sb-spacer"></span>
+        <button id="tp-clear" class="btn btn-ghost small hidden" type="button">Clear finished</button>
+        <button id="tp-close" class="icon-btn small" type="button" title="Close"><svg viewBox="0 0 20 20" width="15" height="15"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+      </div>
+      <div id="tp-list" class="tp-list"></div>
+    </aside>
   </div>
 
   <!-- Connectors (MCP servers) and plugins -->

@@ -918,6 +918,128 @@
     if (group) addActions(group, lastAt);
   }
 
+  // ---------- tasks: what the turn is running (commands, subagents, workflows) ----------
+  // A bar above the composer says how many are running; it opens a panel on the right
+  // (a sheet on the phone) with each task, its elapsed time and output, and its own Stop.
+  state.tasks = [];
+  const hiddenTasks = new Set();
+  const tasksPanel = $('#tasks-panel'), tpList = $('#tp-list');
+  let tasksOpen = false, tasksTimer = null;
+  const outputOpen = new Map(); // taskId -> { pre, timer }
+  const toast = (m) => { const n = el('div', 'note error', m); thread.appendChild(n); autoscroll(); setTimeout(() => n.remove(), 5000); };
+  const TASK_ICON = {
+    local_bash: '<svg viewBox="0 0 20 20" width="15" height="15"><rect x="2.5" y="4" width="15" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 8l2.5 2L6 12M10 12.5h4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    local_agent: '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M10 2.5l1.6 4.4 4.4 1.6-4.4 1.6L10 14.5 8.4 10.1 4 8.5l4.4-1.6z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M15.5 13.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z" fill="currentColor"/></svg>',
+    local_workflow: '<svg viewBox="0 0 20 20" width="15" height="15"><circle cx="5" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="15" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="15" cy="15" r="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7 10h3l3-5M10 10l3 5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+  };
+  const taskKind = (t) => t.type === 'local_bash' ? 'Command' : t.type === 'local_agent' ? 'Agent' + (t.subagentType ? ' · ' + t.subagentType : '') : t.type === 'local_workflow' ? 'Workflow' + (t.workflow ? ' · ' + t.workflow : '') : t.type === 'mcp_task' ? 'Connector task' : t.type === 'remote_agent' ? 'Remote agent' : 'Task';
+  const taskState = (t) => t.status === 'running' ? (t.backgrounded ? 'Running in background' : 'Running') : t.status === 'completed' ? 'Finished' : t.status === 'failed' ? 'Failed' : t.status === 'stopped' ? 'Stopped' : t.status;
+  const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0);
+  const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'; };
+  const visibleTasks = () => state.tasks.filter((t) => !hiddenTasks.has(t.id));
+  function paintTasks() {
+    const all = visibleTasks();
+    const running = all.filter((t) => t.status === 'running');
+    const bar = $('#tasks-bar');
+    bar.classList.toggle('hidden', !all.length);
+    bar.classList.toggle('idle', !running.length);
+    if (all.length) {
+      const cmds = running.filter((t) => t.type === 'local_bash').length, agents = running.filter((t) => t.type === 'local_agent').length, other = running.length - cmds - agents;
+      $('#tb-text').textContent = running.length ? `${running.length} task${running.length === 1 ? '' : 's'} running` : `${all.length} task${all.length === 1 ? '' : 's'} finished`;
+      const parts = []; if (cmds) parts.push(cmds + (cmds === 1 ? ' command' : ' commands')); if (agents) parts.push(agents + (agents === 1 ? ' agent' : ' agents')); if (other) parts.push(other + ' other');
+      $('#tb-detail').textContent = parts.join(' · ');
+      bar.querySelector('.tb-open').textContent = tasksOpen ? 'Hide' : 'Show';
+    }
+    if (!all.length && tasksOpen) closeTasks();
+    if (tasksOpen) paintTaskList(all);
+    clearInterval(tasksTimer); tasksTimer = null;
+    if (running.length && tasksOpen) tasksTimer = setInterval(() => { for (const t of running) { const n = tpList.querySelector(`[data-task="${t.id}"] .tp-elapsed`); if (n) n.textContent = fmtDur(Date.now() - t.startedAt); } }, 1000);
+  }
+  function openTasks() { tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
+  function closeTasks() { tasksOpen = false; tasksPanel.classList.add('hidden'); app.classList.remove('tasks-open'); for (const [, o] of outputOpen) clearInterval(o.timer); outputOpen.clear(); paintTasks(); }
+  $('#tasks-bar').addEventListener('click', () => tasksOpen ? closeTasks() : openTasks());
+  $('#tp-close').addEventListener('click', closeTasks);
+  $('#tp-clear').addEventListener('click', () => { for (const t of state.tasks) if (t.status !== 'running') hiddenTasks.add(t.id); paintTasks(); });
+  function paintTaskList(all) {
+    const running = all.filter((t) => t.status === 'running'), finished = all.filter((t) => t.status !== 'running');
+    $('#tp-count').textContent = running.length ? running.length + ' running' : '';
+    $('#tp-clear').classList.toggle('hidden', !finished.length);
+    // keep open output views across repaints
+    const keep = new Map(); for (const [id, o] of outputOpen) keep.set(id, o.pre.textContent);
+    tpList.innerHTML = '';
+    const section = (label, items) => {
+      if (!items.length) return;
+      tpList.appendChild(el('div', 'tp-section', label));
+      for (const t of items) tpList.appendChild(taskRow(t, keep.get(t.id)));
+    };
+    section('Running', running); section('Finished', finished);
+    if (!all.length) tpList.appendChild(el('div', 'muted small pad', 'Nothing is running.'));
+  }
+  function taskRow(t, keptOutput) {
+    const row = el('div', 'tp-row' + (t.status === 'running' ? ' running' : ' ' + t.status)); row.dataset.task = t.id;
+    const head = el('div', 'tp-row-head');
+    const ic = el('span', 'tp-icon'); ic.innerHTML = TASK_ICON[t.type] || TASK_ICON.local_bash; head.appendChild(ic);
+    const main = el('div', 'tp-main');
+    main.appendChild(el('div', 'tp-desc', t.description || taskKind(t)));
+    const meta = el('div', 'tp-meta');
+    meta.appendChild(el('span', null, taskKind(t)));
+    meta.appendChild(el('span', 'tp-state', taskState(t)));
+    meta.appendChild(el('span', 'tp-elapsed', fmtDur((t.endedAt || Date.now()) - t.startedAt)));
+    if (t.usage?.tool_uses) meta.appendChild(el('span', null, t.usage.tool_uses + (t.usage.tool_uses === 1 ? ' tool use' : ' tool uses')));
+    if (t.usage?.total_tokens) meta.appendChild(el('span', null, fmtTok(t.usage.total_tokens) + ' tokens'));
+    if (t.lastTool && t.status === 'running') meta.appendChild(el('span', null, 'now: ' + t.lastTool));
+    main.appendChild(meta);
+    if (t.summary && t.summary !== t.description) main.appendChild(el('div', 'tp-summary', t.summary));
+    if (t.error) main.appendChild(el('div', 'tp-summary error', t.error));
+    head.appendChild(main);
+    const acts = el('div', 'tp-actions');
+    if (t.status === 'running') {
+      const stop = el('button', 'btn btn-ghost small', 'Stop'); stop.type = 'button';
+      stop.addEventListener('click', async () => { stop.disabled = true; stop.textContent = 'Stopping…'; try { await api(`/sessions/${state.current}/tasks/${t.id}/stop`, { method: 'POST' }); } catch (e) { stop.disabled = false; stop.textContent = 'Stop'; toast(e.message); } });
+      acts.appendChild(stop);
+    }
+    head.appendChild(acts);
+    row.appendChild(head);
+    const foot = el('div', 'tp-foot');
+    const outBtn = el('button', 'tp-link', keptOutput != null ? 'Hide output' : 'Output'); outBtn.type = 'button';
+    const pre = el('pre', 'tp-out' + (keptOutput != null ? '' : ' hidden')); if (keptOutput != null) pre.textContent = keptOutput;
+    outBtn.addEventListener('click', () => toggleOutput(t, pre, outBtn));
+    foot.appendChild(outBtn);
+    if (t.status === 'running' && !t.backgrounded && t.toolUseId) {
+      const bg = el('button', 'tp-link', 'Run in background'); bg.type = 'button'; bg.title = 'Let Claude go on while this keeps running (Ctrl+B in the terminal)';
+      bg.addEventListener('click', async () => { bg.disabled = true; try { await api(`/sessions/${state.current}/tasks/${t.id}/background`, { method: 'POST' }); } catch (e) { bg.disabled = false; toast(e.message); } });
+      foot.appendChild(bg);
+    }
+    let promptPre = null;
+    if (t.prompt && t.type === 'local_agent') {
+      const pb = el('button', 'tp-link', 'Prompt'); pb.type = 'button';
+      promptPre = el('pre', 'tp-out hidden'); promptPre.textContent = t.prompt;
+      pb.addEventListener('click', () => { promptPre.classList.toggle('hidden'); pb.textContent = promptPre.classList.contains('hidden') ? 'Prompt' : 'Hide prompt'; });
+      foot.appendChild(pb);
+    }
+    row.appendChild(foot); if (promptPre) row.appendChild(promptPre); row.appendChild(pre);
+    if (keptOutput != null) { const o = outputOpen.get(t.id); if (o) o.pre = pre; }
+    return row;
+  }
+  async function toggleOutput(t, pre, btn) {
+    const cur = outputOpen.get(t.id);
+    if (cur) { clearInterval(cur.timer); outputOpen.delete(t.id); pre.classList.add('hidden'); btn.textContent = 'Output'; return; }
+    pre.classList.remove('hidden'); btn.textContent = 'Hide output'; pre.textContent = 'Loading…';
+    const o = { pre, timer: null }; outputOpen.set(t.id, o);
+    const load = async () => {
+      try {
+        const r = await api(`/sessions/${state.current}/tasks/${t.id}/output`);
+        const stick = o.pre.scrollTop + o.pre.clientHeight >= o.pre.scrollHeight - 8;
+        o.pre.textContent = r.exists ? (r.truncated ? '…\n' : '') + (r.text || '(nothing yet)') : '(no output yet)';
+        if (stick) o.pre.scrollTop = o.pre.scrollHeight;
+      } catch (e) { o.pre.textContent = e.message; }
+      const still = state.tasks.find((x) => x.id === t.id)?.status === 'running';
+      if (!still && o.timer) { clearInterval(o.timer); o.timer = null; }
+    };
+    await load();
+    if (state.tasks.find((x) => x.id === t.id)?.status === 'running') o.timer = setInterval(load, 2000);
+  }
+
   // ---------- live turn ----------
   function setRunning(on) {
     state.running = on;
@@ -996,7 +1118,7 @@
           const g = state.live?.group; if (g && ev.summary) { g._fromCli = true; setGroupSummary(g, ev.summary); const d = groupDiff(g._names, g._inputs); if (d.add || d.del) { const st = el('span', 'group-diff'); st.innerHTML = `<span class="add">+${d.add.toLocaleString()}</span> <span class="del">−${d.del.toLocaleString()}</span>`; g.querySelector('summary').appendChild(st); } }
           break;
         }
-        case 'task': if (ev.summary || ev.description) thread.appendChild(el('div', 'note', (ev.kind === 'task_started' ? 'Started: ' : '') + (ev.summary || ev.description))); statusPaint(); break;
+        case 'tasks': state.tasks = ev.tasks || []; paintTasks(); break;
         case 'note': thread.appendChild(el('div', 'note', ev.text)); statusPaint(); break;
         // One assistant row for the whole turn; each API message gets its own key space.
         case 'msg_start':
@@ -1057,7 +1179,7 @@
         case 'error': authNote(ev.text); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
         case 'done':
-          setRunning(false); state.live = null; es.close(); loadSessions();
+          setRunning(false); state.live = null; es.close(); loadSessions(); state.tasks = []; paintTasks();
           // keep watching the file in case another window continues this chat
           if (state.current === sessionId) setTimeout(() => { if (state.current === sessionId && !state.running) subscribe(sessionId); }, 500);
           break;
@@ -1217,7 +1339,7 @@
 
   // ---------- routing ----------
   async function openSession(id) {
-    state.current = id; state.live = null;
+    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open'); app.classList.remove('new');
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
@@ -1252,7 +1374,7 @@
     input.focus();
   }
   function openNew() {
-    state.current = null; state.live = null;
+    state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
     thread.innerHTML = ''; empty.classList.add('show'); app.classList.add('new');

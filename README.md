@@ -107,6 +107,15 @@ installer is about 250 MB and does not depend on the `claude` CLI.
   turn (dashed bubble until then). Esc or the stop button interrupts.
 - Permission mode (Manual / Edit automatically / Plan / Auto), model and effort
   can be changed mid-turn; Shift+Tab cycles the mode like the CLI.
+- **Tasks.** Every command and subagent the turn runs is a task. A bar above
+  the composer ("2 tasks running · 1 command · 1 agent") opens a panel on the
+  right (a full-screen sheet on the phone) with each task: what it is, how long
+  it has run, tool uses and tokens for agents, a one-line progress summary, its
+  live output, and its own **Stop**. A foreground command or agent can be sent
+  to the background ("Run in background", the CLI's Ctrl+B) so Claude carries
+  on. The stop button in the composer ends the turn only; background tasks keep
+  running until they finish or you stop them, and the session process stays up
+  until then. Finished tasks stay listed with their result until cleared.
 
 ## Updating from the phone
 

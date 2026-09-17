@@ -445,7 +445,12 @@ function interruptedTurn(id) {
 }
 app.get('/api/sessions/:id', async (req, res, next) => {
   try {
-    const s = await getSessionInfo(req.params.id);
+    let s = await getSessionInfo(req.params.id);
+    // A session that started a moment ago has a live process but no transcript on disk yet.
+    if (!s && isLive(req.params.id)) {
+      const run = runs.get(req.params.id); const first = run.events.find((e) => e.t === 'prompt'); const init = run.events.find((e) => e.t === 'init');
+      s = { sessionId: req.params.id, firstPrompt: (first?.text || '').slice(0, 120), cwd: init?.cwd || run.cwd || '', lastModified: run.startedAt, createdAt: run.startedAt };
+    }
     if (!s) return res.status(404).json({ error: 'Not found' });
     const base = shape(s, new Set(readPrefs().pinned));
     const interrupted = !base.live && !base.working ? interruptedTurn(req.params.id) : null;
@@ -524,6 +529,41 @@ app.post('/api/sessions/:id/stop', (req, res) => {
   const run = runs.get(req.params.id);
   if (run && !run.done) run.stop();
   res.json({ ok: true });
+});
+
+// Tasks: the commands, subagents and workflows a live turn is running (Desktop's tasks panel).
+const liveTasks = (id) => { const run = runs.get(id); return run && !run.done ? [...run.tasks.values()].filter((t) => !t.ambient) : []; };
+app.get('/api/sessions/:id/tasks', (req, res) => res.json({ tasks: liveTasks(req.params.id) }));
+app.post('/api/sessions/:id/tasks/:taskId/stop', async (req, res) => {
+  const run = runs.get(req.params.id);
+  if (!run || run.done) return res.status(404).json({ error: 'No live turn.' });
+  try { res.json({ ok: await run.stopTask(req.params.taskId) }); } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+app.post('/api/sessions/:id/tasks/:taskId/background', async (req, res) => {
+  const run = runs.get(req.params.id);
+  if (!run || run.done) return res.status(404).json({ error: 'No live turn.' });
+  try { res.json({ ok: await run.backgroundTask(req.params.taskId) }); } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+// What a task has printed so far: the CLI writes it under the temp dir, per project slug and session.
+function taskOutputFile(sessionId, task) {
+  if (task?.outputFile && fs.existsSync(task.outputFile)) return task.outputFile;
+  const f = sessionFile(sessionId); if (!f) return null;
+  const slug = path.basename(path.dirname(f));
+  const p = path.join(os.tmpdir(), 'claude', slug, sessionId, 'tasks', task.id + '.output');
+  return fs.existsSync(p) ? p : null;
+}
+app.get('/api/sessions/:id/tasks/:taskId/output', (req, res) => {
+  const run = runs.get(req.params.id);
+  const task = run?.tasks.get(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'Unknown task.' });
+  const file = taskOutputFile(req.params.id, task);
+  if (!file) return res.json({ text: '', size: 0, exists: false });
+  const MAX = 64 * 1024;
+  try {
+    const st = fs.statSync(file); const start = Math.max(0, st.size - MAX);
+    const fd = fs.openSync(file, 'r'); const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd);
+    res.json({ text: buf.toString('utf8'), size: st.size, exists: true, truncated: start > 0 });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
 // Server-sent events for one session. While a turn started here is running,
