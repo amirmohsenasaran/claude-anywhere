@@ -262,3 +262,35 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .menu-item.sel::after { content: "✓"; float: inline-end; color: var(--accent); }
 .menu-item .desc { display: block; color: var(--ink-3); font-size: 11.5px; white-space: normal; }
 @media (max-width: 860px) { #mode-btn span { display: none; } #mode-btn::before { content: "⚙"; font-size: 13px; } }
+
+/* ---------- v3: composer like claude.ai, login token, external activity ---------- */
+.composer-left { display: flex; align-items: center; gap: 2px; }
+.chip { color: var(--ink-2); font-size: 13px; padding: 6px 8px; border-radius: 8px; gap: 5px; }
+.chip .chev { color: var(--ink-3); }
+#model-btn { color: var(--ink-2); font-size: 13px; }
+#model-btn:hover, .chip:hover { background: var(--bg-2); color: var(--ink); }
+.menu { min-width: 300px; padding: 8px; border-radius: 14px; }
+.menu-title { font-size: 12px; font-weight: 500; color: var(--ink-3); padding: 6px 10px 4px; }
+.menu-item { padding: 9px 10px; border-radius: 10px; font-size: 14px; display: flex; flex-direction: column; gap: 1px; position: relative; padding-inline-end: 34px; }
+.menu-item .desc { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
+.menu-item.sel::after { content: "✓"; position: absolute; inset-inline-end: 12px; top: 9px; float: none; color: var(--ink); font-size: 14px; }
+.menu-item.sel { background: var(--bg-2); }
+.seg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px 4px; font-size: 13.5px; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 9px; overflow: hidden; }
+.seg button { padding: 5px 11px; font-size: 12.5px; color: var(--ink-2); border-inline-end: 1px solid var(--line-2); }
+.seg button:last-child { border-inline-end: 0; }
+.seg button.on { background: var(--ink); color: var(--bg); }
+.seg button:not(.on):hover { background: var(--bg-2); }
+@media (max-width: 860px) { #mode-btn span { display: none; } #mode-btn::before { content: none; } .menu { max-width: calc(100vw - 32px); } }
+
+.login-token { text-align: start; font-size: 13px; color: var(--ink-2); }
+.login-token summary { cursor: pointer; color: var(--accent); list-style: none; text-align: center; }
+.login-token summary::-webkit-details-marker { display: none; }
+.login-token .login-hint { font-size: 12.5px; margin: 8px 0; }
+.login-token input { width: 100%; font-family: var(--mono); font-size: 12.5px; }
+.btn.busy { opacity: .7; pointer-events: none; }
+
+.pill.elsewhere { color: var(--ink-2); }
+.pill.elsewhere .dot { background: var(--ink-3); }
+.composer.locked { opacity: .75; }
+.composer-note { text-align: center; font-size: 12.5px; color: var(--ink-2); margin: 0 0 6px; }

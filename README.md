@@ -50,3 +50,20 @@ The PC has to be awake: the sessions, files and tools live here.
   always safe.
 - One live turn per session at a time.
 - Everything is served over plain HTTP; keep it behind Tailscale or a tunnel.
+
+## Watching other windows
+
+Open a session that VS Code, a terminal or Claude Desktop is working on and the
+app follows its transcript file: each finished block (text, tool call, result)
+appears as the other window writes it, the header says "Working in another
+window", and the composer stays locked until that turn ends. Sessions written
+to in the last 45 seconds carry a dot in the sidebar.
+
+## Accounts
+
+The account line at the bottom of the sidebar comes from `claude auth status`,
+run with the same environment the app uses for Claude. By default that is the
+machine's own `claude login`. To run on another account, open "Use a different
+Claude account" on the login page and paste a token from `claude setup-token`
+(or a Console API key); it is proven with one small Haiku request, stored in
+`data/auth.json`, and forgotten on Log out.

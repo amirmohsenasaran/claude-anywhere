@@ -19,6 +19,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { runs, pendingPermissions, isLive, startRun, answerPermission } from './lib/runs.mjs';
+import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS } from './lib/tail.mjs';
+import { getAuth, setAuth, classifyToken, authEnv, authSource, verifyEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,9 +54,23 @@ app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked
 app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
 app.use(express.static(path.join(here, 'public'), { extensions: ['html'] }));
 
-app.post('/api/login', (req, res) => {
-  if (typeof req.body?.password === 'string' && req.body.password === PASSWORD) return res.json({ token: TOKEN, userName: USER_NAME });
-  res.status(401).json({ error: 'Wrong password' });
+// Sign in with the shared password. Optionally hand over a Claude token to run
+// on a different account than the machine's own `claude login`; it is proven
+// with one tiny request before it is kept.
+app.post('/api/login', async (req, res) => {
+  if (typeof req.body?.password !== 'string' || req.body.password !== PASSWORD) return res.status(401).json({ error: 'Wrong password' });
+  const claudeToken = typeof req.body.claudeToken === 'string' ? req.body.claudeToken.trim() : '';
+  if (claudeToken) {
+    const kind = classifyToken(claudeToken);
+    const candidate = { ...process.env };
+    delete candidate.CLAUDE_CODE_OAUTH_TOKEN; delete candidate.ANTHROPIC_API_KEY;
+    candidate[kind === 'apikey' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN'] = claudeToken;
+    const check = await verifyEnv(candidate);
+    if (!check.ok) return res.status(400).json({ error: 'Claude rejected that token: ' + check.error });
+    setAuth({ kind, token: claudeToken, since: Date.now() });
+    whoCache = { at: 0, value: null };
+  }
+  res.json({ token: TOKEN, userName: USER_NAME });
 });
 
 app.use('/api', (req, res, next) => {
@@ -83,12 +99,12 @@ function whoAmI() {
   // Preferred: ask the CLI itself, with this process's env, so a token set in .env
   // (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) is reported the way it will be used.
   try {
-    const raw = execFileSync('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+    const raw = execFileSync('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true, env: authEnv() });
     const j = JSON.parse(raw);
     const value = {
       email: j.email || '', name: '', org: j.orgName || '', plan: j.subscriptionType || '',
       auth: j.authMethod || (j.loggedIn ? 'unknown' : 'none'), loggedIn: !!j.loggedIn,
-      source: process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'CLAUDE_CODE_OAUTH_TOKEN' : process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY' : 'claude login',
+      source: authSource(), tokenKind: getAuth()?.kind || '',
       projectsDir: j.projectsDirectory || '',
     };
     whoCache = { at: Date.now(), value };
@@ -98,7 +114,7 @@ function whoAmI() {
 }
 function whoAmIFromFiles() {
   const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const out = { email: '', name: '', org: '', plan: '', source: 'claude login' };
+  const out = { email: '', name: '', org: '', plan: '', source: authSource(), tokenKind: getAuth()?.kind || '' };
   try {
     const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
     const a = j.oauthAccount || {};
@@ -122,8 +138,11 @@ const shape = (s, pinned) => ({
   lastModified: s.lastModified,
   createdAt: s.createdAt,
   live: isLive(s.sessionId),
+  working: isLive(s.sessionId) || Date.now() - s.lastModified < WORKING_WINDOW_MS,
   pinned: !!pinned?.has(s.sessionId),
 });
+
+app.post('/api/auth/clear', (_req, res) => { setAuth(null); whoCache = { at: 0, value: null }; res.json({ ok: true }); });
 
 app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI() }));
 
@@ -209,18 +228,25 @@ app.post('/api/sessions/:id/stop', (req, res) => {
   res.json({ ok: true });
 });
 
-// Server-sent events for one session's live turn. Replays what the client
-// missed (Last-Event-ID) and then streams; ends when the turn ends.
+// Server-sent events for one session. While a turn started here is running,
+// it streams that turn (replaying what the client missed via Last-Event-ID).
+// Otherwise it follows the transcript file, so work done in VS Code, a
+// terminal or Claude Desktop shows up here as it happens.
 app.get('/api/sessions/:id/events', (req, res) => {
-  const run = runs.get(req.params.id);
+  const id = req.params.id;
+  const run = runs.get(id);
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-  if (!run) { res.write(`data: ${JSON.stringify({ t: 'idle' })}\n\n`); return res.end(); }
-  const since = Number(req.get('last-event-id') ?? req.query.since ?? -1);
-  for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
-  if (run.done) return res.end();
-  run.listeners.add(res);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
+  if (run && !run.done) {
+    const since = Number(req.get('last-event-id') ?? req.query.since ?? -1);
+    for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
+    run.listeners.add(res);
+    req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
+    return;
+  }
+  res.write(`data: ${JSON.stringify({ t: 'tail', working: isWorkingElsewhere(id) })}\n\n`);
+  const stop = tailSession(id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`));
+  req.on('close', () => { clearInterval(ping); if (stop) stop(); });
 });
 
 app.post('/api/permissions/:reqId', (req, res) => {

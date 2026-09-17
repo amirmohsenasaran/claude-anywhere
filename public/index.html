@@ -24,7 +24,12 @@
       <div class="wordmark">Claude</div>
       <p class="login-hint">This page controls Claude Code on your computer. Enter the password from <code>.env</code>.</p>
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
-      <button type="submit" class="btn btn-primary">Continue</button>
+      <details id="login-token-box" class="login-token">
+        <summary>Use a different Claude account</summary>
+        <p class="login-hint">By default this uses the account Claude Code is signed into on the computer. Paste a token from <code>claude setup-token</code> (or a Console API key) to run on another account instead. It is checked with one small request and kept on the computer.</p>
+        <input id="login-token" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+      </details>
+      <button type="submit" class="btn btn-primary" id="login-submit">Continue</button>
       <p id="login-error" class="login-error" hidden></p>
     </form>
   </section>
@@ -60,7 +65,7 @@
           <div id="sidebar-account" class="sidebar-user-plan">…</div>
           <div id="sidebar-host" class="sidebar-user-plan">…</div>
         </div>
-        <button id="logout" class="link-btn small">Log out</button>
+        <button id="logout" class="link-btn small" title="Sign out of this page; also forgets a token entered at login">Log out</button>
       </div>
     </aside>
 
@@ -74,7 +79,7 @@
           <div id="chat-meta" class="chat-meta"></div>
         </div>
         <div class="topbar-right">
-          <span id="live-pill" class="pill hidden"><span class="dot"></span>Working</span>
+          <span id="live-pill" class="pill hidden"><span class="dot"></span><span id="live-text">Working</span></span>
           <button id="pin-btn" class="icon-btn hidden" aria-label="Pin this chat" title="Pin">
             <svg viewBox="0 0 20 20" width="17" height="17"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           </button>
@@ -97,6 +102,14 @@
           <textarea id="input" rows="1" placeholder="How can I help you today?" dir="auto"></textarea>
           <div class="composer-row">
             <div class="composer-left">
+              <div class="composer-left">
+                <button id="mode-btn" class="chip" type="button" title="Permission mode">
+                  <svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 2.5l6 2.2v4.6c0 3.6-2.5 6.6-6 8.2-3.5-1.6-6-4.6-6-8.2V4.7z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                  <span id="mode-name">Default</span>
+                  <svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
+                <div id="mode-menu" class="menu hidden"></div>
+              </div>
               <button id="project-btn" class="chip" type="button" title="Folder Claude Code will work in">
                 <svg viewBox="0 0 20 20" width="14" height="14"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h3.2l1.6 1.8h6.2A1.5 1.5 0 0 1 17 7.3v7.2a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
                 <span id="project-name">Pick a folder</span>
@@ -105,10 +118,6 @@
               <div id="project-menu" class="menu hidden"></div>
             </div>
             <div class="composer-right">
-              <div class="composer-left">
-                <button id="mode-btn" class="chip" type="button" title="Permission mode"><span id="mode-name">Default</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
-                <div id="mode-menu" class="menu menu-end hidden"></div>
-              </div>
               <div class="composer-left">
                 <button id="model-btn" class="chip" type="button" title="Model"><span id="model-label">Claude Fable 5.1</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
                 <div id="model-menu" class="menu menu-end hidden"></div>

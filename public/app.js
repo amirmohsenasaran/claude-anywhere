@@ -39,13 +39,19 @@
   function logout() { try { localStorage.removeItem('cr.token'); } catch {} state.token = null; showLogin(); }
   $('#login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#login-password').value }) });
-    if (!res.ok) return showLogin('Wrong password');
-    const data = await res.json();
+    const btn = $('#login-submit'); const claudeToken = $('#login-token').value.trim();
+    btn.classList.add('busy'); btn.textContent = claudeToken ? 'Checking token…' : 'Signing in…';
+    let res, data;
+    try {
+      res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#login-password').value, claudeToken }) });
+      data = await res.json().catch(() => ({}));
+    } finally { btn.classList.remove('busy'); btn.textContent = 'Continue'; }
+    if (!res.ok) return showLogin(data.error || 'Wrong password');
+    $('#login-token').value = '';
     state.token = data.token; try { localStorage.setItem('cr.token', data.token); } catch {}
     boot();
   });
-  $('#logout').addEventListener('click', logout);
+  $('#logout').addEventListener('click', async () => { try { await api('/auth/clear', { method: 'POST' }); } catch {} logout(); });
 
   // ---------- sidebar ----------
   const app = $('#app');
@@ -71,7 +77,7 @@
   function sessionRow(s) {
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : ''));
     a.href = '#/s/' + s.id; a.title = s.title;
-    if (s.live) a.appendChild(el('span', 'dot'));
+    if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
     const pin = el('button', 'pin'); pin.type = 'button'; pin.title = s.pinned ? 'Unpin' : 'Pin'; pin.innerHTML = PIN_SVG;
@@ -179,12 +185,18 @@
     $('#model-label').textContent = mdl.name + (state.effort ? ' · ' + state.effort : '');
   }
   function renderModeChip() { $('#mode-name').textContent = (MODES.find((x) => x.id === state.mode) || MODES[0]).name; }
-  menuFor('#model-btn', '#model-menu', (m) => {
-    m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Model'));
+  menuFor('#model-btn', '#model-menu', function render(m) {
+    m.innerHTML = '';
     for (const x of MODELS) m.appendChild(item(x.name, x.desc, x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); }));
-    m.appendChild(el('div', 'menu-sep')); m.appendChild(el('div', 'menu-title', 'Effort'));
-    m.appendChild(item('Auto', '', !state.effort, () => { state.effort = ''; localStorage.removeItem('cr.effort'); renderModelChip(); m.classList.add('hidden'); }));
-    for (const x of EFFORTS) m.appendChild(item(x.name, '', x.id === state.effort, () => { state.effort = x.id; localStorage.setItem('cr.effort', x.id); renderModelChip(); m.classList.add('hidden'); }));
+    m.appendChild(el('div', 'menu-sep'));
+    const row = el('div', 'seg-row'); row.appendChild(el('span', null, 'Effort'));
+    const seg = el('div', 'seg');
+    for (const x of [{ id: '', name: 'Auto' }, ...EFFORTS]) {
+      const b = el('button', x.id === state.effort ? 'on' : '', x.name); b.type = 'button';
+      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = x.id; if (x.id) localStorage.setItem('cr.effort', x.id); else localStorage.removeItem('cr.effort'); renderModelChip(); render(m); });
+      seg.appendChild(b);
+    }
+    row.appendChild(seg); m.appendChild(row);
   });
   menuFor('#mode-btn', '#mode-menu', (m) => {
     m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Permissions'));
@@ -287,8 +299,20 @@
   function setRunning(on) {
     state.running = on;
     $('#send').classList.toggle('running', on);
-    $('#live-pill').classList.toggle('hidden', !on);
+    $('#live-pill').classList.toggle('hidden', !on && !state.elsewhere);
+    if (on) { $('#live-pill').classList.remove('elsewhere'); $('#live-text').textContent = 'Working'; }
     $('#input').disabled = false;
+  }
+  // Another window (VS Code, terminal, Claude Desktop) is mid-turn on this session.
+  function setElsewhere(on) {
+    state.elsewhere = on;
+    if (state.running) return;
+    $('#live-pill').classList.toggle('hidden', !on);
+    $('#live-pill').classList.toggle('elsewhere', on);
+    $('#live-text').textContent = on ? 'Working in another window' : 'Working';
+    $('#composer').classList.toggle('locked', on);
+    $('#send').disabled = on;
+    input.placeholder = on ? 'Claude is working on this chat in another window…' : 'How can I help you today?';
   }
 
   function subscribe(sessionId) {
@@ -297,14 +321,21 @@
     state.es = es;
     // partial blocks under construction, by index
     const partial = new Map();
-    let msgNo = 0;
+    let msgNo = 0, mode = 'run';
     const key = (index) => msgNo + ':' + index;
     es.onmessage = (e) => {
       const ev = JSON.parse(e.data);
       if (ev.i != null) state.lastEventId = ev.i;
       switch (ev.t) {
         case 'idle': setRunning(false); es.close(); break;
-        case 'init': setRunning(true); break;
+        case 'tail': mode = 'tail'; setRunning(false); setElsewhere(!!ev.working); break;
+        case 'working': setElsewhere(!!ev.on); if (!ev.on) loadSessions().catch(() => {}); break;
+        case 'user_text': {
+          const text = stripHarness(ev.text); if (!text) break;
+          state.live = null; thread.appendChild(userMsg(text)); autoscroll(); break;
+        }
+        case 'mode': break;
+        case 'init': mode = 'run'; setRunning(true); break;
         // One assistant row for the whole turn; each API message gets its own key space.
         case 'msg_start':
           msgNo += 1; partial.clear();
@@ -326,6 +357,11 @@
         case 'assistant':
           // final blocks for the message being streamed: re-render with full data
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
+          if (ev.tail) {
+            // From the transcript file: one finished block per line, keyed by its uuid.
+            ev.content.forEach((b, i) => { if (b.type === 'thinking' && !b.thinking) return; renderBlock(state.live, ev.uuid + ':' + i, b); });
+            autoscroll(); break;
+          }
           // The SDK emits one `assistant` message per finished block, so its content index is not
           // the stream index. Match tool blocks by id and text/thinking blocks by the latest
           // streamed block of that type.
@@ -347,7 +383,11 @@
           break;
         case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
-        case 'done': setRunning(false); state.live = null; es.close(); loadSessions(); break;
+        case 'done':
+          setRunning(false); state.live = null; es.close(); loadSessions();
+          // keep watching the file in case another window continues this chat
+          if (state.current === sessionId) setTimeout(() => { if (state.current === sessionId && !state.running) subscribe(sessionId); }, 500);
+          break;
       }
     };
     es.onerror = () => { /* EventSource retries by itself with Last-Event-ID */ };
@@ -428,8 +468,8 @@
       state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
       renderHistory(messages);
       stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
-      setRunning(false);
-      if (info.live) subscribe(id); else { /* nothing running */ }
+      setRunning(false); setElsewhere(false);
+      subscribe(id); // streams our own turn, or follows the file if another window is working
     } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
@@ -440,7 +480,7 @@
     thread.innerHTML = ''; empty.classList.add('show');
     $('#chat-title').textContent = 'New chat'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
-    setRunning(false); renderSessions(); updatePinButton();
+    setRunning(false); setElsewhere(false); renderSessions(); updatePinButton();
     const h = new Date().getHours();
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();
@@ -464,14 +504,21 @@
       const who = acc.email || (acc.auth === 'oauth_token' ? 'Token from claude setup-token' : acc.loggedIn === false ? 'Not signed in' : 'Signed in');
       $('#sidebar-account').appendChild(document.createTextNode(who));
       if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
-      $('#sidebar-host').textContent = (viaToken ? 'Token from .env (' + acc.source + ') · ' : 'Machine login · ') + me.host;
+      $('#sidebar-host').textContent = (acc.source === 'token entered at login' ? 'Token · ' : viaToken ? 'Token from .env · ' : 'Machine login · ') + me.host;
       $('#sidebar-user').title = [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?'), 'Source: ' + (acc.source || '?'), acc.projectsDir && 'Sessions: ' + acc.projectsDir].filter(Boolean).join('\n');
       $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
     } catch { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     await Promise.all([loadSessions(), loadProjects()]);
     route();
-    setInterval(() => { if (!document.hidden) loadSessions().catch(() => {}); }, 30000);
+    setInterval(() => { if (!document.hidden) loadSessions().catch(() => {}); }, 10000);
+    // Coming back after the screen was off: rebuild the open chat from disk and reattach.
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (state.current && !state.running && Date.now() - hiddenAt > 15000) openSession(state.current);
+      else loadSessions().catch(() => {});
+    });
   }
   boot();
 })();
