@@ -67,3 +67,29 @@ machine's own `claude login`. To run on another account, open "Use a different
 Claude account" on the login page and paste a token from `claude setup-token`
 (or a Console API key); it is proven with one small Haiku request, stored in
 `data/auth.json`, and forgotten on Log out.
+
+## Desktop app (Windows)
+
+```
+npm run desktop    # run it as a native window from this folder
+npm run dist       # build release/Claude Remote Setup x.y.z.exe (NSIS installer)
+```
+
+The desktop app runs the same server inside itself, opens the chat in its own
+window already signed in, lives in the tray (closing the window hides it),
+can start with Windows, and shows a system notification when Claude asks for
+a permission or finishes a turn while the window is not in front. It listens
+on all interfaces so the phone can reach it: tray → "Phone connection…" shows
+the address (Tailscale first) and the password. Its settings live in
+`%APPDATA%\claude-remote\.env`, and pins / the optional token in
+`%APPDATA%\claude-remote\data\`.
+
+## While Claude works
+
+- A status line under the last message shows what is happening ("Thinking…",
+  "Running Bash…", "Waiting for your approval"), seconds elapsed and output
+  tokens; thinking streams open and collapses to "Thought for 4s".
+- Messages typed while Claude works are queued and run right after the current
+  turn (dashed bubble until then). Esc or the stop button interrupts.
+- Permission mode (Manual / Edit automatically / Plan / Auto), model and effort
+  can be changed mid-turn; Shift+Tab cycles the mode like the CLI.
