@@ -36,20 +36,30 @@
   const isVideo = (h) => /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(h || ''), isAudio = (h) => /\.(mp3|m4a|wav|ogg)(\?|#|$)/i.test(h || '');
   const mediaSrc = (href) => isWebUrl(href) ? href : localFileUrl(href.replace(/^file:\/\/\/?/i, ''));
   // Video and audio files an answer points at play inline (Desktop shows a player); images show as images.
+  // A video sits in a rounded frame with one big play button, like Desktop; the native
+  // controls appear once it plays.
+  const videoHtml = (src) => `<div class="video-frame"><video preload="metadata" playsinline class="md-video" src="${escapeAttr(src)}"></video><button type="button" class="video-play" aria-label="Play"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></button></div>`;
+  function videoEl(src) { const t = document.createElement('template'); t.innerHTML = videoHtml(src); return t.content.firstElementChild; }
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.video-play'); if (!btn) return;
+    const v = btn.parentElement.querySelector('video'); if (!v) return;
+    v.controls = true; btn.parentElement.classList.add('playing'); v.play().catch(() => {});
+  });
+  document.addEventListener('pause', (e) => { if (e.target.tagName === 'VIDEO' && e.target.ended) e.target.parentElement?.classList.remove('playing'); }, true);
   marked.use({ renderer: {
     image({ href, title, text }) {
-      if (isVideo(href)) return `<video controls preload="metadata" class="md-video" src="${escapeAttr(mediaSrc(href))}"></video>`;
+      if (isVideo(href)) return videoHtml(mediaSrc(href));
       if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
       return `<img src="${escapeAttr(mediaSrc(href))}" alt="${escapeAttr(text)}"${title ? ` title="${escapeAttr(title)}"` : ''} loading="lazy" class="md-img">`;
     },
     link({ href, title, tokens }) {
       const inner = this.parser.parseInline(tokens);
-      if (isVideo(href)) return `<video controls preload="metadata" class="md-video" src="${escapeAttr(mediaSrc(href))}"></video>`;
+      if (isVideo(href)) return videoHtml(mediaSrc(href));
       if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
       return `<a href="${escapeAttr(href)}"${title ? ` title="${escapeAttr(title)}"` : ''} target="_blank" rel="noopener">${inner}</a>`;
     },
   } });
-  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true }, ADD_TAGS: ['video', 'audio'], ADD_ATTR: ['loading', 'controls', 'preload', 'target'] });
+  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true, svg: true }, ADD_TAGS: ['video', 'audio', 'button', 'svg', 'path'], ADD_ATTR: ['loading', 'controls', 'preload', 'target', 'playsinline', 'aria-label', 'viewBox', 'fill', 'd'] });
   const stripHarness = (t) => String(t || '')
     .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args)[\s\S]*?<\/\1>/g, '')
     .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
@@ -91,7 +101,7 @@
   function renderAccounts() {
     if (!accounts) return;
     $('#acct-local-desc').textContent = describe(accounts.local) || 'No Claude Code login found on this computer';
-    $('#acct-token-desc').textContent = accounts.token ? describe(accounts.token) : 'Not added yet';
+    $('#acct-token-desc').textContent = accounts.token ? describe(accounts.token) + ' · paste a new token below to replace it' : 'Not added yet';
     for (const card of acctModal.querySelectorAll('.account-card')) {
       const w = card.dataset.which;
       card.classList.toggle('active', accounts.active === w);
@@ -540,7 +550,7 @@
     const media = el('div', 'sent-media');
     for (const p of files) {
       const src = localFileUrl(p);
-      if (isVideo(p)) { const v = el('video', 'md-video'); v.controls = true; v.preload = 'metadata'; v.src = src; media.appendChild(v); }
+      if (isVideo(p)) media.appendChild(videoEl(src));
       else if (isAudio(p)) { const a = el('audio', 'md-audio'); a.controls = true; a.src = src; media.appendChild(a); }
       else if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p)) { const im = el('img', 'md-img sent-img'); im.src = src; im.alt = baseName(p); im.loading = 'lazy'; im.addEventListener('click', () => window.open(src, '_blank')); media.appendChild(im); }
       else { const chip = el('a', 'sent-file'); chip.textContent = baseName(p); chip.title = p; chip.href = src; chip.target = '_blank'; media.appendChild(chip); }
@@ -595,9 +605,9 @@
     for (const m of text.matchAll(MEDIA_PATH)) {
       const p = m[0].trim(); if (seen.has(p) || /^https?:/i.test(p)) continue; seen.add(p);
       if (seen.size > 4) break;
-      const media = el(isAudio(p) ? 'audio' : 'video', isAudio(p) ? 'md-audio' : 'md-video');
-      media.controls = true; media.preload = 'metadata'; media.src = localFileUrl(p);
-      media.addEventListener('error', () => media.remove(), { once: true });
+      let media;
+      if (isAudio(p)) { media = el('audio', 'md-audio'); media.controls = true; media.src = localFileUrl(p); media.addEventListener('error', () => media.remove(), { once: true }); }
+      else { media = videoEl(localFileUrl(p)); media.querySelector('video').addEventListener('error', () => media.remove(), { once: true }); }
       node.appendChild(media);
     }
   }
@@ -834,11 +844,11 @@
         case 'permission': showPermission(ev); status.waiting = true; statusPaint(); autoscroll(); break;
         case 'permission_resolved': resolvePermissionCard(ev.reqId, ev.behavior); status.waiting = false; statusPaint(); break;
         case 'result':
-          if (ev.isError) thread.appendChild(el('div', 'note error', ev.text));
+          if (ev.isError) authNote(ev.text);
           if (state.live) addActions(state.live, Date.now());
           state.live = null; statusStop(); refreshGit();
           break;
-        case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
+        case 'error': authNote(ev.text); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
         case 'done':
           setRunning(false); state.live = null; es.close(); loadSessions();
@@ -848,6 +858,16 @@
       }
     };
     es.onerror = () => { /* EventSource retries by itself with Last-Event-ID */ };
+  }
+  // An error that smells like a dead token gets a button straight to the account dialog.
+  function authNote(text) {
+    const n = el('div', 'note error', text || 'Something went wrong.');
+    if (/401|invalid|expired|authenticat|not logged in|api key|oauth/i.test(text || '')) {
+      n.appendChild(document.createTextNode(' '));
+      const b = el('button', 'link-btn inline', 'Update token or switch account'); b.type = 'button';
+      b.addEventListener('click', openAccounts); n.appendChild(b);
+    }
+    thread.appendChild(n); autoscroll();
   }
   function findTool(id) {
     for (const d of thread.querySelectorAll('details.step.tool')) if (d._toolId === id) return d;
@@ -1030,11 +1050,31 @@
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();
   }
+  const isPhone = () => window.matchMedia('(max-width: 860px)').matches;
+  let cameBack = false, hadSession = false;
+  window.addEventListener('popstate', () => { cameBack = true; });
   function route() {
     const m = location.hash.match(/^#\/s\/([0-9a-f-]{36})$/i);
-    if (m) openSession(m[1]); else openNew();
+    if (m) { openSession(m[1]); hadSession = true; }
+    else {
+      openNew();
+      // Back from a session on the phone lands on the session list, like the mobile app.
+      if (isPhone() && cameBack && hadSession) app.classList.add('sidebar-open');
+      hadSession = false;
+    }
+    cameBack = false;
   }
   window.addEventListener('hashchange', route);
+  // Swipe from the left edge opens the list; swipe the list to the left closes it.
+  let sw = null;
+  document.addEventListener('touchstart', (e) => { if (!isPhone()) return; const t = e.touches[0]; sw = { x: t.clientX, y: t.clientY, edge: t.clientX < 28, inSidebar: !!e.target.closest('#sidebar') }; }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!sw) return; const t = e.touches[0]; const dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+    if (Math.abs(dy) > 50) { sw = null; return; }
+    if (sw.edge && dx > 60 && !app.classList.contains('sidebar-open')) { app.classList.add('sidebar-open'); sw = null; }
+    else if (sw.inSidebar && dx < -60 && app.classList.contains('sidebar-open')) { app.classList.remove('sidebar-open'); sw = null; }
+  }, { passive: true });
+  document.addEventListener('touchend', () => { sw = null; }, { passive: true });
 
   // ---------- boot ----------
   async function boot() {

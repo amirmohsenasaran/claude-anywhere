@@ -276,3 +276,40 @@ body { font-size: 14px; }
 .limit-banner { max-width: 48rem; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink); }
 .limit-banner .muted { color: var(--ink-3); }
 @media (max-width: 860px) { .sent-media .md-video, .sent-media .sent-img { max-width: 100%; } .limit-banner { font-size: 12.5px; } }
+
+/* ---------- v15: Desktop's menus, send button, video frame ---------- */
+.menu { background: var(--bg-000); border: 1px solid var(--line-2); border-radius: 12px; padding: 6px; box-shadow: 0 8px 30px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .2); min-width: 260px; }
+.menu-title { font-size: 12px; color: var(--ink-3); padding: 6px 10px 4px; font-weight: 400; }
+.menu-item { padding: 7px 34px 7px 10px; border-radius: 8px; font-size: 13.5px; gap: 1px; }
+.menu-item:hover { background: var(--bg-3); }
+.menu-item.sel { background: transparent; }
+.menu-item.sel:hover { background: var(--bg-3); }
+.menu-item.sel::after { content: "✓"; color: #3b82f6; font-size: 13px; top: 8px; }
+.menu-item .desc { font-size: 12px; color: var(--ink-3); }
+.menu-item .hint { font-size: 12px; color: var(--ink-3); top: 8px; }
+.menu-item .tag { background: var(--chip-bg); color: var(--ink-2); font-size: 11px; border-radius: 5px; padding: 1px 6px; }
+.menu-sep { background: var(--line); margin: 6px 4px; }
+.seg-row { padding: 6px 10px 4px; font-size: 13px; }
+.seg { border-color: var(--line-2); border-radius: 8px; }
+.seg button { padding: 4px 10px; font-size: 12px; }
+.seg button.on { background: var(--bg-3); color: var(--ink); }
+.chip, #model-btn, .nb-chip { color: var(--ink-2); }
+.chip:hover, #model-btn:hover { color: var(--ink); background: var(--bg-3); }
+
+/* the send control is quiet, not a white disc */
+.send { background: var(--bg-3); color: var(--ink); border-radius: 50%; width: 30px; height: 30px; }
+.send:hover { background: var(--line-2); }
+.send:disabled { background: var(--bg-2); color: var(--ink-3); }
+.send.running { background: var(--bg-3); color: var(--ink); }
+.sb-pr, .fb-foot .btn-primary, #acct-token-add { background: var(--bg-3); color: var(--ink); border: 1px solid var(--line-2); }
+.sb-pr:hover, .fb-foot .btn-primary:hover, #acct-token-add:hover { background: var(--line-2); }
+
+/* video: a rounded frame, one play button, controls only once it plays */
+.video-frame { position: relative; width: 100%; max-width: 560px; border-radius: 12px; overflow: hidden; background: #000; border: 1px solid var(--line); margin: .6em 0; }
+.video-frame video { display: block; width: 100%; max-height: 420px; background: #000; margin: 0; border: 0; border-radius: 0; }
+.video-play { position: absolute; inset: 0; margin: auto; width: 60px; height: 60px; border-radius: 50%; background: rgba(20, 20, 19, .72); color: #fff; display: grid; place-items: center; backdrop-filter: blur(4px); box-shadow: 0 2px 12px rgba(0, 0, 0, .4); padding: 0; padding-inline-start: 4px; transition: transform .12s, background .12s; }
+.video-play:hover { background: rgba(20, 20, 19, .9); transform: scale(1.05); }
+.video-frame.playing .video-play { display: none; }
+.sent-media .video-frame { max-width: 420px; margin: 0; }
+.link-btn.inline { color: #3b82f6; text-decoration: underline; padding: 0 2px; font-size: inherit; }
+@media (max-width: 860px) { .video-frame, .sent-media .video-frame { max-width: 100%; } }
