@@ -245,7 +245,16 @@
         case 'assistant':
           // final blocks for the message being streamed: re-render with full data
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
-          ev.content.forEach((b, i) => { if (b.type === 'thinking' && !b.thinking) return; renderBlock(state.live, key(i), b); });
+          // The SDK emits one `assistant` message per finished block, so its content index is not
+          // the stream index. Match tool blocks by id and text/thinking blocks by the latest
+          // streamed block of that type.
+          for (const b of ev.content) {
+            if (b.type === 'thinking' && !b.thinking) continue;
+            let k = null;
+            if (b.type === 'tool_use') { for (const [kk, n] of state.live.blocks) if (n._toolId === b.id) k = kk; }
+            else { for (const [idx, p] of partial) if (p.type === b.type) k = key(idx); }
+            renderBlock(state.live, k ?? key('final:' + b.type + ':' + (b.id || msgNo)), b);
+          }
           autoscroll(); break;
         case 'tool_results':
           for (const r of ev.content) attachResult(findTool(r.tool_use_id), r);
