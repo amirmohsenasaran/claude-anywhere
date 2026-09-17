@@ -157,10 +157,34 @@
   const PIN_SVG = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
   const CHEV_SVG = '<svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
+  // Right-click on a session row: the Desktop context menu.
+  const ctx = $('#ctx-menu');
+  function showCtxMenu(s, x, y) {
+    ctx.innerHTML = '';
+    const add = (label, hint, fn, cls) => { const b = item(label, '', false, () => { ctx.classList.add('hidden'); fn(); }, { hint }); if (cls) b.classList.add(cls); ctx.appendChild(b); };
+    add('Open', '', () => { location.hash = '#/s/' + s.id; });
+    ctx.appendChild(el('div', 'menu-sep'));
+    add(s.pinned ? 'Unpin' : 'Pin', 'P', () => togglePin(s.id, !s.pinned));
+    add('Rename', 'R', async () => { const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${s.id}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); if (state.current === s.id) $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } });
+    add('Fork', 'F', async () => { try { const r = await api(`/sessions/${s.id}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } });
+    ctx.appendChild(el('div', 'menu-sep'));
+    add(s.archived ? 'Unarchive' : 'Archive', 'A', async () => { try { await api(`/sessions/${s.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (state.current === s.id && !s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } });
+    add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}" from this computer? This cannot be undone.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
+    ctx.classList.remove('hidden');
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+  }
+  document.addEventListener('click', (e) => { if (!ctx.contains(e.target)) ctx.classList.add('hidden'); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctx.classList.add('hidden'); });
+
   function sessionRow(s) {
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : ''));
     a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
+    a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY); });
+    let pressTimer = null; // long-press on the phone
+    a.addEventListener('touchstart', (e) => { pressTimer = setTimeout(() => { const t = e.touches[0]; showCtxMenu(s, t.clientX, t.clientY); }, 550); }, { passive: true });
+    for (const evn of ['touchend', 'touchmove', 'touchcancel']) a.addEventListener(evn, () => clearTimeout(pressTimer), { passive: true });
     if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
@@ -233,28 +257,61 @@
     if (!state.cwd && state.projects[0]) state.cwd = state.projects[0].cwd;
     renderProjectChip();
   }
-  function renderProjectChip() {
+  const folderName = (p) => (p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+  async function renderProjectChip() {
     const p = state.projects.find((x) => x.cwd === state.cwd);
-    $('#project-name').textContent = p ? p.name : (state.cwd ? state.cwd.split(/[\\/]/).pop() : 'Pick a folder');
+    const name = state.cwd ? (p ? p.name : folderName(state.cwd)) : 'No folder';
+    $('#project-name').textContent = name;
+    $('#nb-folder-name').textContent = name;
+    // branch of the chosen folder, for the chip next to it
+    const br = $('#nb-branch'); br.classList.add('hidden');
+    if (state.cwd) { try { const g = await api('/git?cwd=' + encodeURIComponent(state.cwd)); if (g.git && !state.current) { br.textContent = g.branch; br.classList.remove('hidden'); } } catch {} }
   }
-  const menu = $('#project-menu');
-  $('#project-btn').addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); if (!menu.classList.contains('hidden')) renderProjectMenu(); });
-  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.classList.add('hidden'); });
-  function renderProjectMenu() {
+  function pickFolder(cwd) { state.cwd = cwd || ''; localStorage.setItem('cr.cwd', state.cwd); renderProjectChip(); }
+  // Desktop's folder menu: No folder / Recent / Open folder…
+  function renderProjectMenu(menu) {
     menu.innerHTML = '';
-    for (const p of state.projects) {
-      const b = el('button', 'menu-item'); b.type = 'button';
-      b.appendChild(document.createTextNode(p.name)); b.appendChild(el('small', null, p.cwd));
-      b.addEventListener('click', () => { state.cwd = p.cwd; localStorage.setItem('cr.cwd', p.cwd); renderProjectChip(); menu.classList.add('hidden'); });
-      menu.appendChild(b);
-    }
+    menu.appendChild(item('No folder', '', !state.cwd, () => { pickFolder(''); menu.classList.add('hidden'); }));
     menu.appendChild(el('div', 'menu-sep'));
-    const c = el('div', 'menu-item custom');
-    const inp = el('input'); inp.placeholder = 'C:\\path\\to\\folder'; inp.value = '';
-    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { state.cwd = inp.value.trim(); localStorage.setItem('cr.cwd', state.cwd); renderProjectChip(); menu.classList.add('hidden'); } });
-    inp.addEventListener('click', (e) => e.stopPropagation());
-    c.appendChild(inp); menu.appendChild(c);
+    menu.appendChild(el('div', 'menu-title', 'Recent'));
+    for (const p of state.projects.slice(0, 8)) menu.appendChild(item(p.name, '', p.cwd === state.cwd, () => { pickFolder(p.cwd); menu.classList.add('hidden'); }));
+    menu.appendChild(el('div', 'menu-sep'));
+    menu.appendChild(item('Open folder…', '', false, () => { menu.classList.add('hidden'); openFolderBrowser(state.cwd); }));
   }
+  menuFor('#project-btn', '#project-menu', renderProjectMenu);
+  menuFor('#nb-folder', '#nb-folder-menu', renderProjectMenu);
+
+  // Folder browser (the browser cannot open the OS folder dialog): drives → folders → Use this folder.
+  const fb = $('#folder-modal');
+  async function openFolderBrowser(start) {
+    fb.classList.remove('hidden');
+    await browseTo(start || '');
+  }
+  async function browseTo(p) {
+    const list = $('#fb-list'); list.innerHTML = '<div class="muted small pad">Loading…</div>';
+    try {
+      const d = await api('/browse?path=' + encodeURIComponent(p || ''));
+      $('#fb-path').value = d.path || '';
+      $('#fb-use').disabled = !d.path;
+      list.innerHTML = '';
+      if (d.path) { const up = el('button', 'fb-row up'); up.type = 'button'; up.textContent = '..'; up.addEventListener('click', () => browseTo(d.parent || '')); list.appendChild(up); }
+      for (const dir of d.dirs) {
+        const b = el('button', 'fb-row'); b.type = 'button';
+        b.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h3.2l1.6 1.8h6.2A1.5 1.5 0 0 1 17 7.3v7.2a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+        b.appendChild(document.createTextNode(dir.name));
+        // click selects (the path box and "Use this folder" follow it); double-click opens it
+        b.addEventListener('click', () => { list.querySelectorAll('.fb-row.sel').forEach((x) => x.classList.remove('sel')); b.classList.add('sel'); $('#fb-path').value = dir.path; $('#fb-use').disabled = false; });
+        b.addEventListener('dblclick', () => browseTo(dir.path));
+        list.appendChild(b);
+      }
+      if (!d.dirs.length) list.appendChild(el('div', 'muted small pad', 'No subfolders'));
+    } catch (e) { list.innerHTML = ''; list.appendChild(el('div', 'note error', e.message)); }
+  }
+  $('#fb-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') browseTo($('#fb-path').value.trim()); });
+  $('#fb-home').addEventListener('click', async () => { try { const d = await api('/browse'); browseTo(d.home); } catch {} });
+  $('#fb-use').addEventListener('click', () => { const p = $('#fb-path').value.trim(); if (p) { pickFolder(p); fb.classList.add('hidden'); } });
+  $('#fb-close').addEventListener('click', () => fb.classList.add('hidden'));
+  fb.addEventListener('click', (e) => { if (e.target === fb) fb.classList.add('hidden'); });
 
   // ---------- model / permission mode ----------
   const MODELS = [
@@ -444,6 +501,7 @@
     if (block.type === 'text') {
       if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
       node.innerHTML = md(block.text);
+      if (!block.live) attachMediaPreviews(node, block.text);
     } else if (block.type === 'thinking') {
       if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
       node.querySelector('.step-body').textContent = block.thinking || '';
@@ -462,6 +520,21 @@
     }
   }
   const dataUrl = (img) => img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
+  // Desktop shows a player when an answer mentions a video/audio file on the PC, even as a
+  // bare path or in backticks (`out/hasanlu.mp4`). Files that do not exist simply drop out.
+  const MEDIA_PATH = /(?:[A-Za-z]:\\|\.{0,2}[\\/])?(?:[\w .()\-]+[\\/])*[\w .()\-]+\.(mp4|webm|mov|m4v|mp3|wav|m4a|ogg)\b/gi;
+  function attachMediaPreviews(node, text) {
+    if (!text || node.querySelector('video, audio')) return;
+    const seen = new Set();
+    for (const m of text.matchAll(MEDIA_PATH)) {
+      const p = m[0].trim(); if (seen.has(p) || /^https?:/i.test(p)) continue; seen.add(p);
+      if (seen.size > 4) break;
+      const media = el(isAudio(p) ? 'audio' : 'video', isAudio(p) ? 'md-audio' : 'md-video');
+      media.controls = true; media.preload = 'metadata'; media.src = localFileUrl(p);
+      media.addEventListener('error', () => media.remove(), { once: true });
+      node.appendChild(media);
+    }
+  }
   function attachResult(toolNode, result) {
     if (!toolNode) return;
     const b = toolNode.querySelector('.step-body');
@@ -828,8 +901,7 @@
         await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ ...body, ...turnOptions() }) });
         subscribe(state.current, { since: 0 }); // event 0 is our own prompt, already on screen
       } else {
-        if (!state.cwd) throw new Error('Pick a folder first.');
-        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ ...body, cwd: state.cwd, ...turnOptions() }) });
+        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ ...body, cwd: state.cwd || '~', ...turnOptions() }) });
         state.current = r.sessionId;
         history.replaceState(null, '', '#/s/' + r.sessionId);
         app.classList.remove('new');
@@ -865,7 +937,8 @@
       setRunning(false); setElsewhere(false);
       subscribe(id); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
-      usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden');
+      usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
+      input.placeholder = 'How can I help you today?';
     } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
@@ -877,7 +950,8 @@
     $('#chat-title').textContent = 'New session'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
     setRunning(false); setElsewhere(false); renderSessions(); updatePinButton(); restoreDraft(null);
-    $('#session-bar').classList.add('hidden'); $('#session-menu-btn').classList.add('hidden'); usage.context = null; paintUsage();
+    $('#session-bar').classList.add('hidden'); $('#new-bar').classList.remove('hidden'); $('#session-menu-btn').classList.add('hidden'); usage.context = null; paintUsage();
+    input.placeholder = 'Describe a task or ask a question';
     const h = new Date().getHours();
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();

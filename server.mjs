@@ -193,6 +193,28 @@ app.get('/api/sessions/:id/git', async (req, res) => {
   } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
 });
 
+// Folder browser for "Open folder…" (the browser has no native folder dialog).
+app.get('/api/browse', (req, res) => {
+  const raw = String(req.query.path || '');
+  const drives = [];
+  for (const L of 'CDEFGHIJKLMNOPQRSTUVWXYZ') { try { if (fs.existsSync(L + ':\\')) drives.push(L + ':\\'); } catch {} }
+  if (!raw) return res.json({ path: '', parent: null, dirs: drives.map((d) => ({ name: d, path: d })), drives, home: os.homedir() });
+  const p = path.resolve(raw);
+  let entries = [];
+  try { entries = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return res.status(400).json({ error: 'Cannot open ' + p }); }
+  const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('$') && e.name !== 'node_modules').map((e) => ({ name: e.name, path: path.join(p, e.name) })).sort((a, b) => a.name.localeCompare(b.name));
+  const parent = path.dirname(p) === p ? '' : path.dirname(p);
+  res.json({ path: p, parent, dirs, drives, home: os.homedir(), isGit: fs.existsSync(path.join(p, '.git')) });
+});
+
+// Branch of any folder (for the new-session chips).
+app.get('/api/git', async (req, res) => {
+  const cwd = String(req.query.cwd || '');
+  if (!cwd || !fs.existsSync(cwd)) return res.json({ git: false });
+  try { const r = await execFileP('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000, windowsHide: true }); res.json({ git: true, branch: r.stdout.trim() }); }
+  catch { res.json({ git: false }); }
+});
+
 // Context window of a session and the account's plan limits (the Desktop popover).
 app.get('/api/sessions/:id/usage', (req, res) => res.json({ context: contextBySession.get(req.params.id) || null, limits: runsMod.lastLimits }));
 
@@ -242,7 +264,7 @@ app.get('/api/sessions', async (req, res, next) => {
 app.get('/api/projects', async (_req, res, next) => {
   try {
     const seen = new Map();
-    for (const s of await listSessions({ limit: 500 })) if (s.cwd && !seen.has(s.cwd)) seen.set(s.cwd, { cwd: s.cwd, name: path.basename(s.cwd), lastModified: s.lastModified });
+    for (const s of await listSessions({ limit: 500 })) { const k = s.cwd && path.normalize(s.cwd).toLowerCase(); if (k && !seen.has(k)) seen.set(k, { cwd: s.cwd, name: path.basename(s.cwd), lastModified: s.lastModified }); }
     res.json([...seen.values()].sort((a, b) => b.lastModified - a.lastModified));
   } catch (e) { next(e); }
 });
@@ -300,9 +322,10 @@ app.post('/api/sessions/:id/controls', async (req, res, next) => {
 
 app.post('/api/sessions', async (req, res) => {
   const { text: prompt, images } = parseAttachments(req.body);
-  const cwd = String(req.body?.cwd || '').trim();
+  let cwd = String(req.body?.cwd || '').trim();
+  if (!cwd || cwd === '~') cwd = os.homedir(); // "No folder": Desktop runs those from the home directory
   if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
-  if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'Pick a folder that exists on this machine.' });
+  if (!fs.existsSync(cwd)) return res.status(400).json({ error: 'That folder does not exist on this machine.' });
   const { model, permissionMode, effort } = req.body || {};
   const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort });
   try {
