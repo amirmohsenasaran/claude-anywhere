@@ -500,7 +500,7 @@
       const acc = me.account || {};
       $('#sidebar-name').textContent = me.userName;
       $('#sidebar-account').innerHTML = '';
-      const viaToken = acc.source && acc.source !== 'claude login';
+      const viaToken = /\.env/.test(acc.source || '');
       const who = acc.email || (acc.auth === 'oauth_token' ? 'Token from claude setup-token' : acc.loggedIn === false ? 'Not signed in' : 'Signed in');
       $('#sidebar-account').appendChild(document.createTextNode(who));
       if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
