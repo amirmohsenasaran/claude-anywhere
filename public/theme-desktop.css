@@ -262,3 +262,17 @@ body { font-size: 14px; }
 .permission { font-size: 13.5px; }
 .sidebar-user-name { font-size: 13px; } .sidebar-user-plan { font-size: 11px; }
 @media (max-width: 860px) { .prose { font-size: 15px; } .msg.user .msg-body { font-size: 15px; } .composer textarea { font-size: 16px; } .greeting { font-size: 26px; } }
+
+/* ---------- v14: what Desktop shows for sent files, group diff stats, usage banner ---------- */
+.group-diff { margin-inline-start: 8px; font-family: var(--mono); font-size: 12px; }
+.group-diff .add { color: var(--success); } .group-diff .del { color: var(--danger); }
+.sent-card { margin: 8px 0 14px; }
+.sent-caption { margin-bottom: 8px; }
+.sent-media { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.sent-media .md-video { width: 100%; max-width: 420px; margin: 0; }
+.sent-media .md-audio { width: 100%; max-width: 420px; margin: 0; }
+.sent-media .sent-img { max-width: 420px; max-height: 420px; margin: 0; cursor: zoom-in; }
+.sent-file { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; background: var(--chip-bg); color: var(--ink); font-size: 13px; text-decoration: none; }
+.limit-banner { max-width: 48rem; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+.limit-banner .muted { color: var(--ink-3); }
+@media (max-width: 860px) { .sent-media .md-video, .sent-media .sent-img { max-width: 100%; } .limit-banner { font-size: 12.5px; } }

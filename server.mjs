@@ -23,7 +23,7 @@ import { listSessions, getSessionMessages, getSessionInfo, renameSession, forkSe
 import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
 import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
-import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS } from './lib/tail.mjs';
+import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS, sessionFile } from './lib/tail.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -178,6 +178,29 @@ app.delete('/api/sessions/:id', async (req, res, next) => {
   try { if (isLive(req.params.id)) return res.status(409).json({ error: 'Stop the running turn first.' }); await deleteSession(req.params.id); res.json({ ok: true }); } catch (e) { next(e); }
 });
 
+// Lines the session wrote so far (Write / Edit / NotebookEdit inputs), what Desktop's
+// "+19,770 −0" in the session bar counts. Cached by transcript size.
+const lineStatsCache = new Map();
+async function sessionLineStats(id) {
+  let key = 0; try { const f = sessionFile(id); key = f ? fs.statSync(f).size : 0; } catch {}
+  const hit = lineStatsCache.get(id); if (hit && hit.key === key) return hit.value;
+  const count = (s) => (s ? String(s).split('\n').length : 0);
+  let added = 0, removed = 0;
+  try {
+    for (const m of await getSessionMessages(id)) {
+      if (m.type !== 'assistant' || !Array.isArray(m.message?.content)) continue;
+      for (const b of m.message.content) {
+        if (b.type !== 'tool_use') continue;
+        const i = b.input || {};
+        if (b.name === 'Write') added += count(i.content);
+        else if (b.name === 'Edit') { added += count(i.new_string); removed += count(i.old_string); }
+        else if (b.name === 'NotebookEdit') added += count(i.new_source);
+      }
+    }
+  } catch {}
+  const value = { added, removed }; lineStatsCache.set(id, { key, value }); return value;
+}
+
 // Branch and uncommitted diff of the session's folder, for the bar above the composer.
 app.get('/api/sessions/:id/git', async (req, res) => {
   try {
@@ -187,9 +210,16 @@ app.get('/api/sessions/:id/git', async (req, res) => {
     const branch = await run(['rev-parse', '--abbrev-ref', 'HEAD']);
     if (branch === null) return res.json({ git: false });
     const stat = (await run(['diff', '--shortstat', 'HEAD'])) || '';
-    const untracked = ((await run(['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean).length;
-    const added = Number((stat.match(/(\d+) insertion/) || [])[1] || 0), removed = Number((stat.match(/(\d+) deletion/) || [])[1] || 0), files = Number((stat.match(/(\d+) files? changed/) || [])[1] || 0);
-    res.json({ git: true, branch, added, removed, files: files + untracked, dirty: files + untracked > 0 });
+    const untrackedFiles = ((await run(['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean);
+    let added = Number((stat.match(/(\d+) insertion/) || [])[1] || 0), removed = Number((stat.match(/(\d+) deletion/) || [])[1] || 0);
+    const files = Number((stat.match(/(\d+) files? changed/) || [])[1] || 0);
+    // New files are part of the work too: count their lines (text files up to 2 MB), as Desktop does.
+    for (const rel of untrackedFiles.slice(0, 400)) {
+      try { const p = path.join(s.cwd, rel); const st = fs.statSync(p); if (st.size > 2 * 1024 * 1024 || /\.(png|jpe?g|gif|webp|mp4|mp3|wav|zip|pdf|woff2?|ico|exe|dll)$/i.test(rel)) continue; const buf = fs.readFileSync(p); if (buf.includes(0)) continue; added += buf.toString('utf8').split('\n').length - 1; } catch {}
+    }
+    const lines = await sessionLineStats(req.params.id);
+    const dirty = files + untrackedFiles.length > 0;
+    res.json({ git: true, branch, added, removed, files: files + untrackedFiles.length, dirty, sessionAdded: dirty ? added : lines.added, sessionRemoved: dirty ? removed : lines.removed });
   } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
 });
 

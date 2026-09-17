@@ -403,8 +403,10 @@
       bar.classList.remove('hidden');
       $('#sb-project').textContent = state.cwd ? state.cwd.split(/[\\/]/).pop() : '';
       $('#sb-branch').textContent = g.branch;
-      $('#sb-added').textContent = '+' + g.added; $('#sb-removed').textContent = '−' + g.removed;
-      $('#sb-diff').classList.toggle('hidden', !g.dirty);
+      // Desktop counts the lines this session wrote, not just what is uncommitted.
+      const add = g.sessionAdded ?? g.added, del = g.sessionRemoved ?? g.removed;
+      $('#sb-added').textContent = '+' + Number(add).toLocaleString(); $('#sb-removed').textContent = '−' + Number(del).toLocaleString();
+      $('#sb-diff').classList.toggle('hidden', !(add || del));
       $('#sb-pr').classList.toggle('hidden', !g.dirty);
     } catch { bar.classList.add('hidden'); }
   }
@@ -439,6 +441,18 @@
     const row = (name, lim) => { if (!lim || lim.utilization == null) return; const u = Math.round(lim.utilization * (lim.utilization <= 1 ? 100 : 1)); const r = el('div', 'ul-row'); r.innerHTML = `<div class="ul-head"><span>${name}</span><span class="muted">${resetsIn(lim.resets_at)}</span><b>${u}%</b></div><div class="ul-bar${u >= 90 ? ' hot' : ''}"><i style="width:${Math.min(100, u)}%"></i></div>`; list.appendChild(r); };
     if (L) { row('5-hour limit', L.five_hour); row('Weekly · all models', L.seven_day); if (L.seven_day_opus) row('Weekly · Opus', L.seven_day_opus); if (L.seven_day_sonnet) row('Weekly · Sonnet', L.seven_day_sonnet); for (const m of L.model_scoped || []) row('Weekly · ' + m.display_name, m); }
     if (!L) list.appendChild(el('div', 'muted small', 'Limits appear after the first turn from this app.'));
+    paintLimitBanner();
+  }
+  // "Approaching weekly usage limit · Resets Fri, Sep 18, 8:00 PM" above the composer, like Desktop.
+  function paintLimitBanner() {
+    const L = usage.limits?.rate_limits; const bar = $('#limit-banner');
+    let worst = null;
+    if (L) for (const [name, lim] of [['weekly', L.seven_day], ['5-hour', L.five_hour], ...((L.model_scoped || []).map((m) => [m.display_name, m]))]) { if (!lim || lim.utilization == null) continue; const u = lim.utilization * (lim.utilization <= 1 ? 100 : 1); if (u >= 85 && (!worst || u > worst.u)) worst = { name, u, resets: lim.resets_at }; }
+    if (!worst || sessionStorage.getItem('cr.limitDismissed') === String(worst.resets)) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    $('#lb-text').textContent = (worst.u >= 100 ? 'Reached ' : 'Approaching ') + worst.name + ' usage limit';
+    $('#lb-resets').textContent = worst.resets ? 'Resets ' + new Date(worst.resets).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    $('#lb-close').onclick = () => { try { sessionStorage.setItem('cr.limitDismissed', String(worst.resets)); } catch {} bar.classList.add('hidden'); };
   }
   menuFor('#usage-btn', '#usage-pop', async () => { paintUsage(); try { const u = await api(`/sessions/${state.current}/usage`); usage.context = u.context || usage.context; usage.limits = u.limits || usage.limits; paintUsage(); } catch {} });
   $('#usage-compact').addEventListener('click', () => { $('#usage-pop').classList.add('hidden'); input.value = '/compact'; input.dispatchEvent(new Event('input')); submit(); });
@@ -477,26 +491,67 @@
     return { root: m, body, blocks: new Map(), tools: new Map(), group: null };
   }
   // Consecutive tool calls fold into one "Ran 3 commands ›" line, like Desktop.
-  const TOOL_KIND = { Bash: 'command', PowerShell: 'command', Read: 'read', Glob: 'search', Grep: 'search', Edit: 'edit', Write: 'write', NotebookEdit: 'edit', Agent: 'agent', WebFetch: 'web', WebSearch: 'web' };
+  const TOOL_KIND = { Bash: 'command', PowerShell: 'command', Read: 'read', Glob: 'search', Grep: 'search', Edit: 'edit', Write: 'create', NotebookEdit: 'edit', Agent: 'agent', WebFetch: 'fetch', WebSearch: 'browse', SendUserFile: 'sent' };
+  const isSendTool = (n) => n === 'SendUserFile' || /__SendUserFile$/.test(n || '');
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
-  function groupLabel(names) {
-    const c = {}; for (const n of names) { const k = TOOL_KIND[n] || 'tool'; c[k] = (c[k] || 0) + 1; }
-    const parts = [];
-    if (c.command) parts.push('Ran ' + plural(c.command, 'command', 'commands'));
-    if (c.read) parts.push('Read ' + plural(c.read, 'file', 'files'));
-    if (c.search) parts.push('Searched ' + plural(c.search, 'time', 'times'));
-    if (c.edit) parts.push('Edited ' + plural(c.edit, 'file', 'files'));
-    if (c.write) parts.push('Wrote ' + plural(c.write, 'file', 'files'));
-    if (c.agent) parts.push('Ran ' + plural(c.agent, 'agent', 'agents'));
-    if (c.web) parts.push('Fetched ' + plural(c.web, 'page', 'pages'));
-    if (c.tool) parts.push('Used ' + plural(c.tool, 'tool', 'tools'));
+  const baseName = (p) => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+  // Desktop's wording, in the order the tools first happened:
+  // "Fetched 4 pages, browsed the web, ran 15 commands, created hasanlu-doc.txt, used a tool"
+  function groupLabel(names, inputs = []) {
+    const order = []; const c = {}; const files = { create: [], edit: [] };
+    names.forEach((n, i) => { const k = isSendTool(n) ? 'sent' : (TOOL_KIND[n] || 'tool'); if (!c[k]) { c[k] = 0; order.push(k); } c[k]++; const f = inputs[i]?.file_path || inputs[i]?.notebook_path; if (f && (k === 'create' || k === 'edit') && !files[k].includes(baseName(f))) files[k].push(baseName(f)); });
+    if (order.includes('tool')) order.push(order.splice(order.indexOf('tool'), 1)[0]); // "used a tool" goes last, as in Desktop
+    const parts = order.map((k) => {
+      switch (k) {
+        case 'fetch': return 'Fetched ' + plural(c[k], 'page', 'pages');
+        case 'browse': return 'Browsed the web';
+        case 'command': return 'Ran ' + plural(c[k], 'command', 'commands');
+        case 'create': return 'Created ' + (files.create.length === 1 ? files.create[0] : plural(c[k], 'file', 'files'));
+        case 'edit': return 'Edited ' + (files.edit.length === 1 ? files.edit[0] : plural(c[k], 'file', 'files'));
+        case 'read': return 'Read ' + plural(c[k], 'file', 'files');
+        case 'search': return 'Searched ' + plural(c[k], 'time', 'times');
+        case 'agent': return 'Ran ' + plural(c[k], 'agent', 'agents');
+        case 'sent': return 'Sent';
+        default: return c[k] === 1 ? 'Used a tool' : 'Used ' + plural(c[k], 'tool', 'tools');
+      }
+    });
     if (!parts.length) return 'Worked';
     return parts.map((p, i) => i ? p[0].toLowerCase() + p.slice(1) : p).join(', ');
+  }
+  // Lines a group added / removed, from Write and Edit inputs (the "+137 −0" next to Desktop's group line).
+  const lineCount = (s) => { if (!s) return 0; s = String(s); return s.split('\n').length - (s.endsWith('\n') ? 1 : 0); };
+  function groupDiff(names, inputs) {
+    let add = 0, del = 0;
+    names.forEach((n, i) => { const inp = inputs[i] || {}; if (n === 'Write') add += lineCount(inp.content); else if (n === 'Edit') { add += lineCount(inp.new_string); del += lineCount(inp.old_string); } else if (n === 'NotebookEdit') add += lineCount(inp.new_source); });
+    return { add, del };
+  }
+  function paintGroupSummary(g) {
+    if (g._fromCli) return;
+    const s = g.querySelector('summary'); s.innerHTML = '';
+    s.appendChild(document.createTextNode(groupLabel(g._names, g._inputs)));
+    const d = groupDiff(g._names, g._inputs);
+    if (d.add || d.del) { const st = el('span', 'group-diff'); st.innerHTML = `<span class="add">+${d.add.toLocaleString()}</span> <span class="del">−${d.del.toLocaleString()}</span>`; s.appendChild(st); }
+  }
+  // What SendUserFile delivered, shown the way Desktop shows it: caption, then the files inline.
+  function sentCard(input) {
+    const card = el('div', 'sent-card');
+    const files = Array.isArray(input?.files) ? input.files : (input?.path ? [input.path] : []);
+    if (input?.caption) { const cap = el('div', 'prose sent-caption'); cap.dir = 'auto'; cap.innerHTML = md(input.caption); card.appendChild(cap); }
+    const media = el('div', 'sent-media');
+    for (const p of files) {
+      const src = localFileUrl(p);
+      if (isVideo(p)) { const v = el('video', 'md-video'); v.controls = true; v.preload = 'metadata'; v.src = src; media.appendChild(v); }
+      else if (isAudio(p)) { const a = el('audio', 'md-audio'); a.controls = true; a.src = src; media.appendChild(a); }
+      else if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p)) { const im = el('img', 'md-img sent-img'); im.src = src; im.alt = baseName(p); im.loading = 'lazy'; im.addEventListener('click', () => window.open(src, '_blank')); media.appendChild(im); }
+      else { const chip = el('a', 'sent-file'); chip.textContent = baseName(p); chip.title = p; chip.href = src; chip.target = '_blank'; media.appendChild(chip); }
+    }
+    if (files.length) card.appendChild(media);
+    return card;
   }
   function toolGroupFor(msg) {
     if (msg.group && msg.group === msg.body.lastElementChild) return msg.group;
     const g = el('details', 'tool-group'); g.appendChild(el('summary', null, 'Working')); g.appendChild(el('div', 'group-body'));
-    g._names = []; msg.body.appendChild(g); msg.group = g; return g;
+    g._names = []; g._inputs = []; msg.body.appendChild(g); msg.group = g; return g;
   }
   function setGroupSummary(g, text) { if (g) g.querySelector('summary').textContent = text; }
   function renderBlock(msg, index, block) {
@@ -513,13 +568,21 @@
     } else if (block.type === 'tool_use') {
       if (!node) {
         node = stepEl('tool', block.name, ''); node._toolId = block.id;
-        const g = toolGroupFor(msg); g.querySelector('.group-body').appendChild(node); g._names.push(block.name); if (!g._fromCli) setGroupSummary(g, groupLabel(g._names));
+        if (isSendTool(block.name)) msg.group = null; // "Sent ›" is its own line in Desktop
+        const g = toolGroupFor(msg); g.querySelector('.group-body').appendChild(node); g._names.push(block.name); g._inputs.push(block.input || {}); node._groupIndex = g._names.length - 1;
+        paintGroupSummary(g);
         msg.blocks.set(index, node); msg.tools.set(block.id, node);
-      }
+      } else if (node._groupIndex != null && node.parentElement?.parentElement) { const g = node.parentElement.parentElement; g._inputs[node._groupIndex] = block.input || {}; paintGroupSummary(g); }
       node.querySelector('.arg').textContent = toolSummary(block.name, block.input);
       const b = node.querySelector('.step-body'); b.innerHTML = '';
       b.appendChild(el('div', 'label', 'Input'));
       const pre = el('pre', null, typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2)); b.appendChild(pre);
+      // A file sent to the user is shown below its "Sent ›" line, like Desktop, once the input is complete.
+      if (isSendTool(block.name) && block.input && (block.input.files || block.input.path) && !node._sentCard) {
+        node._sentCard = sentCard(block.input);
+        const g = node.parentElement?.parentElement; (g || msg.body).after ? g.after(node._sentCard) : msg.body.appendChild(node._sentCard);
+        msg.group = null; // the next tool starts a new group under the card
+      }
     }
   }
   const dataUrl = (img) => img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
@@ -662,7 +725,7 @@
     $('#live-text').textContent = on ? 'Working in another window' : 'Working';
     $('#composer').classList.toggle('locked', on);
     $('#send').disabled = on;
-    input.placeholder = on ? 'Claude is working on this chat in another window…' : 'How can I help you today?';
+    input.placeholder = on ? 'Claude is working on this chat in another window…' : (state.current ? 'Type / for commands' : 'Describe a task or ask a question');
   }
 
   function subscribe(sessionId, { since = -1 } = {}) {
@@ -714,7 +777,7 @@
         case 'tool_progress': status.tool = ev.tool; if (!status.toolSince) status.toolSince = Date.now() - (ev.elapsed || 0) * 1000; statusPaint(); break;
         case 'usage': if (ev.outputTokens) { status.tokens = ev.outputTokens; statusPaint(); } break;
         case 'tool_summary': { // the CLI's own wording ("Ran 3 commands") for the open group
-          const g = state.live?.group; if (g && ev.summary) { g._fromCli = true; setGroupSummary(g, ev.summary); }
+          const g = state.live?.group; if (g && ev.summary) { g._fromCli = true; setGroupSummary(g, ev.summary); const d = groupDiff(g._names, g._inputs); if (d.add || d.del) { const st = el('span', 'group-diff'); st.innerHTML = `<span class="add">+${d.add.toLocaleString()}</span> <span class="del">−${d.del.toLocaleString()}</span>`; g.querySelector('summary').appendChild(st); } }
           break;
         }
         case 'task': if (ev.summary || ev.description) thread.appendChild(el('div', 'note', (ev.kind === 'task_started' ? 'Started: ' : '') + (ev.summary || ev.description))); statusPaint(); break;
@@ -948,7 +1011,8 @@
       subscribe(id); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
       usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
-      input.placeholder = 'How can I help you today?';
+      input.placeholder = 'Type / for commands';
+      api(`/sessions/${id}/usage`).then((u) => { usage.context = u.context || usage.context; usage.limits = u.limits || usage.limits; paintUsage(); }).catch(() => {});
     } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
