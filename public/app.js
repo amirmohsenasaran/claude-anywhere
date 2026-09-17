@@ -171,6 +171,7 @@
     add(s.archived ? 'Unarchive' : 'Archive', 'A', async () => { try { await api(`/sessions/${s.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (state.current === s.id && !s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } });
     add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}" from this computer? This cannot be undone.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
     ctx.classList.remove('hidden');
+    if (window.matchMedia('(max-width: 860px)').matches) { ctx.style.left = ctx.style.top = ''; return; } // a bottom sheet on the phone
     const r = ctx.getBoundingClientRect();
     ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
   }
@@ -182,9 +183,11 @@
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : ''));
     a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
     a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY); });
-    let pressTimer = null; // long-press on the phone
-    a.addEventListener('touchstart', (e) => { pressTimer = setTimeout(() => { const t = e.touches[0]; showCtxMenu(s, t.clientX, t.clientY); }, 550); }, { passive: true });
+    // Long-press on the phone opens the same menu; the tap that ends it must not open the session.
+    let pressTimer = null, pressed = false;
+    a.addEventListener('touchstart', (e) => { pressed = false; const t = e.touches[0]; pressTimer = setTimeout(() => { pressed = true; showCtxMenu(s, t.clientX, t.clientY); if (navigator.vibrate) navigator.vibrate(10); }, 450); }, { passive: true });
     for (const evn of ['touchend', 'touchmove', 'touchcancel']) a.addEventListener(evn, () => clearTimeout(pressTimer), { passive: true });
+    a.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = false; } });
     if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));

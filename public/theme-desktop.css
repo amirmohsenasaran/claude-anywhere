@@ -223,3 +223,17 @@ button.nb-chip:hover { color: var(--ink); background: var(--bg-3); }
 @media (max-width: 860px) {
   #usage-pop.menu, #mode-menu.menu, #model-menu.menu, #session-menu.menu, #nb-folder-menu.menu, #project-menu.menu { left: 12px !important; right: 12px !important; inset-inline: 12px !important; }
 }
+
+/* ---------- v12: phone top bar in one row; long-press menu as a sheet ---------- */
+@media (max-width: 860px) {
+  .topbar { flex-wrap: nowrap; gap: 6px; padding: 8px 10px; min-height: 52px; }
+  .topbar-title { min-width: 0; flex: 1; gap: 6px; }
+  .topbar-title::before { display: none; }
+  .chat-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .chat-meta { display: none !important; }
+  .topbar-right { display: flex; align-items: center; gap: 2px; flex: none; flex-wrap: nowrap; }
+  .topbar-right .composer-left { position: static; }
+  #live-pill { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ctx-menu.menu { position: fixed; left: 12px !important; right: 12px !important; top: auto !important; bottom: calc(16px + env(safe-area-inset-bottom)) !important; min-width: 0; max-height: 70vh; overflow: auto; }
+  .session-item { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+}
