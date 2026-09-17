@@ -87,7 +87,7 @@ app.post('/api/login', (req, res) => {
 app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
-  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify') && req.query.token === TOKEN;
+  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && req.query.token === TOKEN;
   if (auth !== 'Bearer ' + TOKEN && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
@@ -317,6 +317,27 @@ app.get('/api/notify', (req, res) => {
   bus.on('permission', onPerm); bus.on('turn_done', onDone);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   req.on('close', () => { clearInterval(ping); bus.off('permission', onPerm); bus.off('turn_done', onDone); });
+});
+
+// Images that Claude's answers point at on this PC (a screenshot it saved, a generated
+// share card, `![...](build/icon.png)`): served so the chat can show them, like Desktop.
+// Only image files, and only inside a project folder Claude Code has worked in or the
+// upload/temp folder.
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+app.get('/api/file', async (req, res) => {
+  try {
+    const raw = String(req.query.path || '');
+    const cwd = String(req.query.cwd || '');
+    let p = path.isAbsolute(raw) ? raw : (cwd ? path.resolve(cwd, raw) : '');
+    if (!p) return res.status(400).json({ error: 'No path' });
+    p = path.normalize(p);
+    if (!IMAGE_EXT.test(p) || !fs.existsSync(p) || !fs.statSync(p).isFile()) return res.status(404).json({ error: 'Not an image on this PC' });
+    const roots = new Set([os.tmpdir()]);
+    for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
+    const lower = p.toLowerCase();
+    if (![...roots].some((r) => lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + path.sep) || lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + '/'))) return res.status(403).json({ error: 'Outside the project folders' });
+    res.sendFile(p, { headers: { 'Cache-Control': 'private, max-age=60' } });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
 // LAN / Tailscale addresses of this PC, for the "Phone connection" dialog.

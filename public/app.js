@@ -28,7 +28,16 @@
 
   // ---------- markdown ----------
   marked.setOptions({ breaks: true, gfm: true });
-  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true } });
+  // Images in an answer that point at files on the PC (`![card](out/share.png)`,
+  // `C:\...\shot.png`) are fetched through the server, so they show like in Desktop.
+  const localFileUrl = (href) => `/api/file?token=${encodeURIComponent(state.token || '')}&cwd=${encodeURIComponent(state.cwd || '')}&path=${encodeURIComponent(href)}`;
+  const isWebUrl = (h) => /^(https?:|data:|blob:)/i.test(h || '');
+  const escapeAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  marked.use({ renderer: { image({ href, title, text }) {
+    const src = isWebUrl(href) ? href : localFileUrl(href.replace(/^file:\/\/\/?/i, ''));
+    return `<img src="${escapeAttr(src)}" alt="${escapeAttr(text)}"${title ? ` title="${escapeAttr(title)}"` : ''} loading="lazy" class="md-img">`;
+  } } });
+  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true }, ADD_ATTR: ['loading'] });
   const stripHarness = (t) => String(t || '')
     .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args)[\s\S]*?<\/\1>/g, '')
     .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
