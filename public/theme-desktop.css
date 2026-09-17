@@ -345,3 +345,6 @@ body { font-size: 14px; }
 .app-actions .btn { font-size: 12.5px; padding: 5px 10px; white-space: nowrap; }
 .app-log { margin: 8px 0 0; max-height: 160px; overflow: auto; font-size: 12px; white-space: pre-wrap; background: var(--bg-000); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; direction: ltr; text-align: left; }
 @media (max-width: 860px) { .app-row { flex-wrap: wrap; } .app-actions { flex-direction: row; width: 100%; } }
+.update-banner { border-color: #3b82f6; }
+.update-banner .sb-pr { background: #3b82f6; color: #fff; border: 0; }
+.update-banner .sb-pr:hover { background: #2f6fd6; }

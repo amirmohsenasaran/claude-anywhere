@@ -535,6 +535,28 @@
       catch { log.textContent += '\n(app is restarting…)'; }
     }, 2000);
   });
+  // "A new version is ready" banner: the server notices files newer than what it is running.
+  let updateSnoozed = '';
+  async function checkForUpdate() {
+    let v; try { v = await api('/version'); } catch { return; }
+    const bar = $('#update-banner');
+    const key = (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
+    if (!key || key === updateSnoozed) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    if (v.shellStale) {
+      $('#ub-text').textContent = 'The app shell changed'; $('#ub-detail').textContent = v.shellChanged.slice(0, 3).join(', ') + ' · needs a rebuild (1–3 min)';
+      $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
+    } else {
+      $('#ub-text').textContent = 'A new version is ready'; $('#ub-detail').textContent = v.changed.length + ' file' + (v.changed.length === 1 ? '' : 's') + ' changed' + (v.liveRuns ? ' · waits until Claude is idle' : '');
+      $('#ub-action').textContent = v.inApp ? 'Restart now' : 'Reload'; $('#ub-action').onclick = async () => {
+        if (!v.inApp) return location.reload();
+        try { await api('/restart', { method: 'POST', body: JSON.stringify({}) }); openConnectors(); await waitForServer(() => location.reload()); }
+        catch (e) { $('#ub-detail').textContent = e.message; }
+      };
+    }
+    $('#ub-close').onclick = () => { updateSnoozed = key; bar.classList.add('hidden'); };
+  }
+  setInterval(checkForUpdate, 30000); setTimeout(checkForUpdate, 3000);
   $('#connectors-btn').addEventListener('click', () => { openConnectors(); paintVersion(); });
   $('#connectors-refresh').addEventListener('click', () => { openConnectors(); paintVersion(); });
   $('#connectors-close').addEventListener('click', () => ctModal.classList.add('hidden'));

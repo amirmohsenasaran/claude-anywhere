@@ -590,9 +590,21 @@ function gitInfo() {
   const g = (args) => { try { return execFileSync('git', ['-C', here, ...args], { encoding: 'utf8', timeout: 4000, windowsHide: true }).trim(); } catch { return ''; } };
   return { commit: g(['rev-parse', '--short', 'HEAD']), subject: g(['log', '-1', '--format=%s']), when: g(['log', '-1', '--format=%ci']), dirty: g(['status', '--porcelain']).split('\n').filter(Boolean).length };
 }
+// Files newer than what is running: server/page code since the server started (needs
+// Restart server), Rust sources since the app was built (needs Rebuild app).
+function newerThan(files, since) {
+  const out = [];
+  for (const f of files) { try { if (fs.statSync(f).mtimeMs > since + 1000) out.push(path.relative(here, f).replace(/\\/g, '/')); } catch {} }
+  return out;
+}
+const listDir = (d, ext) => { try { return fs.readdirSync(d).filter((f) => ext.test(f)).map((f) => path.join(d, f)); } catch { return []; } };
 app.get('/api/version', (_req, res) => {
   let exeAt = null; try { exeAt = fs.statSync(process.env.CLAUDE_REMOTE_APP_EXE || '').mtimeMs; } catch {}
-  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: process.env.CLAUDE_REMOTE_APP_EXE || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!process.env.CLAUDE_REMOTE_PARENT_PID });
+  const serverFiles = [path.join(here, 'server.mjs'), path.join(here, 'package.json'), ...listDir(path.join(here, 'lib'), /\.mjs$/), ...listDir(path.join(here, 'public'), /\.(js|css|html|json)$/)];
+  const shellFiles = [...listDir(path.join(here, 'src-tauri', 'src'), /\.rs$/), path.join(here, 'src-tauri', 'Cargo.toml'), path.join(here, 'src-tauri', 'tauri.conf.json')];
+  const changed = newerThan(serverFiles, SERVER_STARTED_AT);
+  const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
+  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: process.env.CLAUDE_REMOTE_APP_EXE || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!process.env.CLAUDE_REMOTE_PARENT_PID, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.
