@@ -220,3 +220,6 @@ button.nb-chip:hover { color: var(--ink); background: var(--bg-3); }
   .modal { padding: 10px; align-items: end; }
   .modal-card { max-height: 88vh; overflow: auto; }
 }
+@media (max-width: 860px) {
+  #usage-pop.menu, #mode-menu.menu, #model-menu.menu, #session-menu.menu, #nb-folder-menu.menu, #project-menu.menu { left: 12px !important; right: 12px !important; inset-inline: 12px !important; }
+}
