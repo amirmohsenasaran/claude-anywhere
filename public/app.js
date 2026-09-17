@@ -434,6 +434,62 @@
     del.classList.add('danger'); m.appendChild(del);
   });
 
+  // ---------- connectors & plugins (Desktop's panel) ----------
+  const ctModal = $('#connectors-modal');
+  const STATUS_WORD = { connected: 'Connected', failed: 'Failed', 'needs-auth': 'Needs sign-in', pending: 'Connecting…', disabled: 'Off' };
+  function toggleEl(on, onChange) {
+    const t = el('button', 'toggle' + (on ? ' on' : '')); t.type = 'button'; t.setAttribute('role', 'switch'); t.setAttribute('aria-checked', String(on));
+    t.appendChild(el('i'));
+    t.addEventListener('click', async () => { const next = !t.classList.contains('on'); t.classList.toggle('on', next); t.setAttribute('aria-checked', String(next)); try { await onChange(next); } catch (e) { t.classList.toggle('on', !next); $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; } });
+    return t;
+  }
+  async function openConnectors() {
+    ctModal.classList.remove('hidden'); $('#connectors-error').hidden = true;
+    $('#connectors-list').innerHTML = '<div class="muted small pad">Loading…</div>'; $('#plugins-list').innerHTML = '';
+    let data;
+    try { data = await api('/connectors?cwd=' + encodeURIComponent(state.cwd || '') + '&sessionId=' + encodeURIComponent(state.current || '')); }
+    catch (e) { $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; return; }
+    const cl = $('#connectors-list'); cl.innerHTML = '';
+    for (const c of data.connectors) {
+      const row = el('div', 'ct-row');
+      const info = el('div', 'ct-info');
+      const name = el('div', 'ct-name'); name.appendChild(document.createTextNode(c.name)); name.appendChild(el('span', 'tag', c.scope));
+      if (c.status) { const st = el('span', 'ct-status ' + c.status, STATUS_WORD[c.status] || c.status); if (c.tools) st.textContent += ' · ' + c.tools + ' tools'; name.appendChild(st); }
+      info.appendChild(name); info.appendChild(el('div', 'ct-desc', (c.type + ' · ' + (c.target || '')).slice(0, 120)));
+      if (c.error) info.appendChild(el('div', 'ct-desc error', c.error.slice(0, 160)));
+      row.appendChild(info);
+      if (!c.builtin) row.appendChild(toggleEl(c.enabled, (on) => api('/connectors/' + encodeURIComponent(c.name), { method: 'POST', body: JSON.stringify({ enabled: on, sessionId: state.current }) })));
+      cl.appendChild(row);
+    }
+    if (!data.connectors.length) cl.appendChild(el('div', 'muted small pad', 'No MCP servers configured on this computer.'));
+    // Enabled plugins first; the rest of the marketplace behind a search box, like /plugin's Discover.
+    const pl = $('#plugins-list'); pl.innerHTML = '';
+    const pluginRow = (p) => {
+      const row = el('div', 'ct-row');
+      const info = el('div', 'ct-info');
+      const name = el('div', 'ct-name'); name.appendChild(document.createTextNode(p.name)); name.appendChild(el('span', 'tag', p.marketplace)); info.appendChild(name);
+      if (p.description) info.appendChild(el('div', 'ct-desc', p.description.slice(0, 140)));
+      row.appendChild(info);
+      row.appendChild(toggleEl(p.enabled, (on) => api('/plugins/' + encodeURIComponent(p.id), { method: 'POST', body: JSON.stringify({ enabled: on }) })));
+      return row;
+    };
+    const on = data.plugins.filter((p) => p.enabled), off = data.plugins.filter((p) => !p.enabled);
+    for (const p of on) pl.appendChild(pluginRow(p));
+    if (!on.length) pl.appendChild(el('div', 'muted small pad', 'No plugins enabled.'));
+    if (off.length) {
+      const d = el('details', 'ct-more'); const s = el('summary', null, `Available in the marketplace (${off.length})`); d.appendChild(s);
+      const search = el('input', 'ct-search'); search.placeholder = 'Search plugins'; search.type = 'search'; d.appendChild(search);
+      const box = el('div', 'ct-list'); d.appendChild(box);
+      const paint = () => { const q = search.value.trim().toLowerCase(); box.innerHTML = ''; off.filter((p) => !q || (p.name + ' ' + p.description).toLowerCase().includes(q)).slice(0, 40).forEach((p) => box.appendChild(pluginRow(p))); };
+      search.addEventListener('input', paint); paint(); pl.appendChild(d);
+    }
+    if (!data.plugins.length) pl.appendChild(el('div', 'muted small pad', 'No plugin marketplaces installed.'));
+  }
+  $('#connectors-btn').addEventListener('click', openConnectors);
+  $('#connectors-refresh').addEventListener('click', openConnectors);
+  $('#connectors-close').addEventListener('click', () => ctModal.classList.add('hidden'));
+  ctModal.addEventListener('click', (e) => { if (e.target === ctModal) ctModal.classList.add('hidden'); });
+
   const fmtK = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
   const resetsIn = (iso) => { if (!iso) return ''; const ms = Date.parse(iso) - Date.now(); if (!(ms > 0)) return 'Resets soon'; const h = Math.floor(ms / 3600000), mnt = Math.floor((ms % 3600000) / 60000); return 'Resets in ' + (h >= 24 ? Math.floor(h / 24) + ' d ' + (h % 24) + ' hr' : h ? h + ' hr ' + mnt + ' min' : mnt + ' min'); };
   let usage = { context: null, limits: null };

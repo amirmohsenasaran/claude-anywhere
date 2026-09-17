@@ -245,8 +245,92 @@ app.get('/api/git', async (req, res) => {
   catch { res.json({ git: false }); }
 });
 
-// Context window of a session and the account's plan limits (the Desktop popover).
-app.get('/api/sessions/:id/usage', (req, res) => res.json({ context: contextBySession.get(req.params.id) || null, limits: runsMod.lastLimits }));
+// ---------- plan limits straight from the account (no turn needed) ----------
+// Same endpoint the CLI uses for the usage popover; works for claude.ai logins and
+// setup-token tokens, not for Console API keys.
+const limitsCache = new Map(); // which -> { at, value }
+function oauthTokenFor(which) {
+  const a = getAuth();
+  if (which === 'token') return a.hasToken && a.tokenKind === 'oauth' ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'auth.json'), 'utf8')).token?.token : null;
+  try { return JSON.parse(fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken || null; } catch { return null; }
+}
+async function fetchLimits(which = activeAccount()) {
+  const hit = limitsCache.get(which); if (hit && Date.now() - hit.at < 60000) return hit.value;
+  const tok = oauthTokenFor(which); if (!tok) return null;
+  // The endpoint rate-limits bursts (429): keep the last good answer and retry later.
+  const stale = hit?.value || null;
+  const fail = () => { limitsCache.set(which, { at: Date.now() - 30000, value: stale }); return stale; };
+  try {
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: 'Bearer ' + tok, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-remote/0.2' }, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return fail();
+    const u = await r.json();
+    const pick = (x) => (x && x.utilization != null ? { utilization: x.utilization, resets_at: x.resets_at } : null);
+    const value = {
+      subscription_type: whoAmI(which)?.plan || null,
+      rate_limits: { five_hour: pick(u.five_hour), seven_day: pick(u.seven_day), seven_day_opus: pick(u.seven_day_opus), seven_day_sonnet: pick(u.seven_day_sonnet), model_scoped: [] },
+      at: Date.now(), which,
+    };
+    limitsCache.set(which, { at: Date.now(), value });
+    return value;
+  } catch { return fail(); }
+}
+
+// Context window of a session and the active account's plan limits (the Desktop popover).
+app.get('/api/sessions/:id/usage', async (req, res) => res.json({ context: contextBySession.get(req.params.id) || null, limits: (await fetchLimits()) || runsMod.lastLimits }));
+app.get('/api/limits', async (req, res) => res.json({ limits: await fetchLimits(req.query.which === 'token' ? 'token' : req.query.which === 'local' ? 'local' : activeAccount()) }));
+
+// ---------- connectors (MCP servers) and plugins, like Desktop's panel ----------
+const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+const normPath = (p) => path.normalize(String(p || '')).replace(/[\\/]+$/, '').toLowerCase();
+function listConnectors(cwd) {
+  const out = []; const disabled = new Set(readPrefs().disabledMcp || []);
+  const add = (name, cfg, scope) => { if (!cfg || out.some((x) => x.name === name)) return; out.push({ name, scope, type: cfg.type || (cfg.command ? 'stdio' : cfg.url ? 'http' : 'unknown'), target: cfg.url || [cfg.command, ...(cfg.args || [])].filter(Boolean).join(' '), enabled: !disabled.has(name) }); };
+  const cj = readJson(path.join(os.homedir(), '.claude.json')) || {};
+  for (const [n, c] of Object.entries(cj.mcpServers || {})) add(n, c, 'user');
+  if (cwd) {
+    for (const [k, v] of Object.entries(cj.projects || {})) if (normPath(k) === normPath(cwd)) for (const [n, c] of Object.entries(v.mcpServers || {})) add(n, c, 'project');
+    const pj = readJson(path.join(cwd, '.mcp.json')); for (const [n, c] of Object.entries(pj?.mcpServers || pj || {})) if (c && typeof c === 'object') add(n, c, '.mcp.json');
+  }
+  out.push({ name: 'claude-remote', scope: 'built-in', type: 'in-process', target: 'SendUserFile — shows files in this chat', enabled: true, builtin: true });
+  return out;
+}
+function listPlugins() {
+  const settings = readJson(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json')) || {};
+  const enabled = settings.enabledPlugins || {};
+  const known = readJson(path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json')) || {};
+  const out = [];
+  for (const [mkt, info] of Object.entries(known)) {
+    const mj = readJson(path.join(info.installLocation || '', '.claude-plugin', 'marketplace.json'));
+    for (const p of mj?.plugins || []) { const id = `${p.name}@${mkt}`; out.push({ id, name: p.name, marketplace: mkt, description: p.description || '', enabled: enabled[id] === true }); }
+  }
+  return out;
+}
+app.get('/api/connectors', async (req, res) => {
+  const cwd = String(req.query.cwd || ''); const sessionId = String(req.query.sessionId || '');
+  const connectors = listConnectors(cwd);
+  const run = runs.get(sessionId);
+  if (run && !run.done && run.query) { try { for (const s of await run.query.mcpServerStatus()) { const c = connectors.find((x) => x.name === s.name); if (c) { c.status = s.status; c.tools = (s.tools || []).length; c.error = s.error; } } } catch {} }
+  res.json({ connectors, plugins: listPlugins() });
+});
+app.post('/api/connectors/:name', async (req, res) => {
+  const name = req.params.name; const enabled = !!req.body?.enabled;
+  const p = readPrefs(); const set = new Set(p.disabledMcp || []);
+  if (enabled) set.delete(name); else set.add(name);
+  p.disabledMcp = [...set]; writePrefs(p);
+  const run = runs.get(String(req.body?.sessionId || ''));
+  if (run && !run.done && run.query) { try { await run.query.toggleMcpServer(name, enabled); } catch (e) { return res.json({ enabled, note: 'Applies to the next turn: ' + e.message }); } }
+  res.json({ enabled });
+});
+// Plugins are switched in Claude Code's own settings file, exactly what `/plugin` does.
+app.post('/api/plugins/:id', (req, res) => {
+  const file = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+  const settings = readJson(file) || {};
+  settings.enabledPlugins = { ...(settings.enabledPlugins || {}), [req.params.id]: !!req.body?.enabled };
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+  res.json({ id: req.params.id, enabled: !!req.body?.enabled });
+});
 
 app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken }));
 
@@ -334,7 +418,7 @@ app.post('/api/sessions/:id/send', async (req, res, next) => {
     const info = await getSessionInfo(id);
     if (!info) return res.status(404).json({ error: 'Session not found' });
     const { model, permissionMode, effort } = req.body || {};
-    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, images, model, permissionMode, effort });
+    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [] });
     res.json({ runId: run.id, sessionId: id });
   } catch (e) { next(e); }
 });
@@ -357,7 +441,7 @@ app.post('/api/sessions', async (req, res) => {
   if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
   if (!fs.existsSync(cwd)) return res.status(400).json({ error: 'That folder does not exist on this machine.' });
   const { model, permissionMode, effort } = req.body || {};
-  const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort });
+  const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [] });
   try {
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Claude Code did not start in time')), 60000));
     const sessionId = await Promise.race([ready, timeout]);
