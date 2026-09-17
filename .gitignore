@@ -3,3 +3,5 @@ node_modules/
 server.log
 data/
 release/
+src-tauri/target/
+src-tauri/gen/

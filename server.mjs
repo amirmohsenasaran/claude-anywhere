@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
-import { runs, pendingPermissions, isLive, startRun, answerPermission } from './lib/runs.mjs';
+import { runs, pendingPermissions, isLive, startRun, answerPermission, bus } from './lib/runs.mjs';
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS } from './lib/tail.mjs';
 import { getAuth, setAuth, classifyToken, authEnv, authSource, verifyEnv } from './lib/auth.mjs';
 
@@ -76,7 +76,7 @@ app.post('/api/login', async (req, res) => {
 app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
-  const viaQuery = req.method === 'GET' && /^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) && req.query.token === TOKEN;
+  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify') && req.query.token === TOKEN;
   if (auth !== 'Bearer ' + TOKEN && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
@@ -275,6 +275,25 @@ app.post('/api/permissions/:reqId', (req, res) => {
   res.json({ ok: true });
 });
 
+// Notification stream for the desktop shell: permission requests and finished turns.
+app.get('/api/notify', (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  const send = (t) => (payload) => res.write(`data: ${JSON.stringify({ t, ...payload })}\n\n`);
+  const onPerm = send('permission'), onDone = send('turn_done');
+  bus.on('permission', onPerm); bus.on('turn_done', onDone);
+  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => { clearInterval(ping); bus.off('permission', onPerm); bus.off('turn_done', onDone); });
+});
+
+// LAN / Tailscale addresses of this PC, for the "Phone connection" dialog.
+app.get('/api/addresses', (_req, res) => {
+  const out = [];
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ name, address: a.address, tailscale: /tailscale/i.test(name) || a.address.startsWith('100.') });
+  }
+  res.json(out.sort((a, b) => Number(b.tailscale) - Number(a.tailscale)));
+});
+
 app.get('/api/runs', (_req, res) => {
   res.json([...runs.values()].filter((r) => !r.done).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));
 });
@@ -284,8 +303,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: String(err?.message || err) });
 });
 
-export { TOKEN, PASSWORD, HOST, PORT };
-export { bus } from './lib/runs.mjs';
+export { TOKEN, PASSWORD, HOST, PORT, bus };
 export function startServer({ host = HOST, port = PORT } = {}) {
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {

@@ -68,21 +68,29 @@ Claude account" on the login page and paste a token from `claude setup-token`
 (or a Console API key); it is proven with one small Haiku request, stored in
 `data/auth.json`, and forgotten on Log out.
 
-## Desktop app (Windows)
+## Desktop app (Windows, Rust + WebView2)
 
 ```
-npm run desktop    # run it as a native window from this folder
-npm run dist       # build release/Claude Remote Setup x.y.z.exe (NSIS installer)
+npm run desktop    # cargo tauri dev: run it as a native window from this folder
+npm run dist       # cargo tauri build: src-tauri/target/release/bundle/nsis/Claude Remote_x.y.z_x64-setup.exe
 ```
 
-The desktop app runs the same server inside itself, opens the chat in its own
-window already signed in, lives in the tray (closing the window hides it),
-can start with Windows, and shows a system notification when Claude asks for
-a permission or finishes a turn while the window is not in front. It listens
-on all interfaces so the phone can reach it: tray → "Phone connection…" shows
-the address (Tailscale first) and the password. Its settings live in
-`%APPDATA%\claude-remote\.env`, and pins / the optional token in
-`%APPDATA%\claude-remote\data\`.
+The shell is a small Tauri (Rust) app on the WebView2 that Windows already
+has, so it is a few megabytes and light on memory. It starts the same Node
+server inside itself (Node 20+ must be installed and on PATH), opens the chat
+in its own window already signed in, lives in the tray (closing the window
+hides it), can start with Windows, and shows a system notification when
+Claude asks for a permission or finishes a turn while the window is not in
+front. It listens on all interfaces so the phone can reach it: tray → "Phone
+connection…" shows the address (Tailscale first) and the password. Its
+settings live in `%APPDATA%\com.arya.claude-remote\.env`, pins and the
+optional token in `%APPDATA%\com.arya.claude-remote\data\`, and the server log
+next to them.
+
+Building needs the Rust toolchain (`rustup`; the GNU toolchain works) and the
+Tauri CLI (`cargo install tauri-cli --version ^2`). The Agent SDK brings its
+own Claude Code binary (`@anthropic-ai/claude-agent-sdk-win32-x64`), so the
+installer is about 250 MB and does not depend on the `claude` CLI.
 
 ## While Claude works
 
