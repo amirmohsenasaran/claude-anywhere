@@ -1,0 +1,379 @@
+/* claude-remote client. Plain JS, no build step. */
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+  const state = {
+    token: null, userName: '', host: '',
+    sessions: [], projects: [], cwd: localStorage.getItem('cr.cwd') || '',
+    current: null,       // session id or null for "new chat"
+    running: false, es: null, lastEventId: -1,
+    live: null,          // streaming assistant message being built
+  };
+  try { state.token = localStorage.getItem('cr.token'); } catch {}
+
+  // ---------- api ----------
+  async function api(path, opts = {}) {
+    const res = await fetch('/api' + path, { ...opts, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token, ...(opts.headers || {}) } });
+    if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  // ---------- markdown ----------
+  marked.setOptions({ breaks: true, gfm: true });
+  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true } });
+  const stripHarness = (t) => String(t || '')
+    .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args)[\s\S]*?<\/\1>/g, '')
+    .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
+    .trim();
+
+  // ---------- login ----------
+  function showLogin(err) {
+    $('#app').classList.add('hidden');
+    $('#login').classList.remove('hidden');
+    const e = $('#login-error'); e.hidden = !err; e.textContent = err || '';
+    $('#login-password').focus();
+  }
+  function logout() { try { localStorage.removeItem('cr.token'); } catch {} state.token = null; showLogin(); }
+  $('#login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#login-password').value }) });
+    if (!res.ok) return showLogin('Wrong password');
+    const data = await res.json();
+    state.token = data.token; try { localStorage.setItem('cr.token', data.token); } catch {}
+    boot();
+  });
+  $('#logout').addEventListener('click', logout);
+
+  // ---------- sidebar ----------
+  const app = $('#app');
+  $('#sidebar-open').addEventListener('click', () => app.classList.add('sidebar-open'));
+  $('#sidebar-close').addEventListener('click', () => app.classList.remove('sidebar-open'));
+  $('#scrim').addEventListener('click', () => app.classList.remove('sidebar-open'));
+
+  function relTime(ms) {
+    const d = Date.now() - ms, m = Math.round(d / 60000), h = Math.round(m / 60), dd = Math.round(h / 24);
+    if (m < 1) return 'now'; if (m < 60) return m + 'm'; if (h < 24) return h + 'h'; if (dd < 7) return dd + 'd';
+    return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  async function loadSessions() {
+    state.sessions = await api('/sessions?limit=200');
+    renderSessions();
+  }
+  function renderSessions() {
+    const list = $('#session-list'); list.innerHTML = '';
+    const groups = new Map();
+    for (const s of state.sessions) { const k = s.project || 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    for (const [name, items] of groups) {
+      const g = el('div', 'project-group');
+      g.appendChild(el('div', 'project-name', name));
+      for (const s of items) {
+        const a = el('a', 'session-item' + (s.id === state.current ? ' active' : ''));
+        a.href = '#/s/' + s.id; a.title = s.title;
+        if (s.live) a.appendChild(el('span', 'dot'));
+        const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
+        a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
+        g.appendChild(a);
+      }
+      list.appendChild(g);
+    }
+    if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
+  }
+
+  // ---------- projects (for new chats) ----------
+  async function loadProjects() {
+    state.projects = await api('/projects');
+    if (!state.cwd && state.projects[0]) state.cwd = state.projects[0].cwd;
+    renderProjectChip();
+  }
+  function renderProjectChip() {
+    const p = state.projects.find((x) => x.cwd === state.cwd);
+    $('#project-name').textContent = p ? p.name : (state.cwd ? state.cwd.split(/[\\/]/).pop() : 'Pick a folder');
+  }
+  const menu = $('#project-menu');
+  $('#project-btn').addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); if (!menu.classList.contains('hidden')) renderProjectMenu(); });
+  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.classList.add('hidden'); });
+  function renderProjectMenu() {
+    menu.innerHTML = '';
+    for (const p of state.projects) {
+      const b = el('button', 'menu-item'); b.type = 'button';
+      b.appendChild(document.createTextNode(p.name)); b.appendChild(el('small', null, p.cwd));
+      b.addEventListener('click', () => { state.cwd = p.cwd; localStorage.setItem('cr.cwd', p.cwd); renderProjectChip(); menu.classList.add('hidden'); });
+      menu.appendChild(b);
+    }
+    menu.appendChild(el('div', 'menu-sep'));
+    const c = el('div', 'menu-item custom');
+    const inp = el('input'); inp.placeholder = 'C:\\path\\to\\folder'; inp.value = '';
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { state.cwd = inp.value.trim(); localStorage.setItem('cr.cwd', state.cwd); renderProjectChip(); menu.classList.add('hidden'); } });
+    inp.addEventListener('click', (e) => e.stopPropagation());
+    c.appendChild(inp); menu.appendChild(c);
+  }
+
+  // ---------- thread rendering ----------
+  const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
+  let stickToBottom = true;
+  scroll.addEventListener('scroll', () => { stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  const autoscroll = () => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; };
+
+  function toolSummary(name, input) {
+    if (!input || typeof input !== 'object') return '';
+    return String(input.command || input.file_path || input.pattern || input.path || input.description || input.url || input.query || input.prompt || input.skill || '').split('\n')[0].slice(0, 200);
+  }
+  function stepEl(kind, name, arg) {
+    const d = el('details', 'step ' + kind);
+    const s = el('summary');
+    s.appendChild(el('span', 'name', name));
+    s.appendChild(el('span', 'arg', arg || ''));
+    const ch = el('span', 'chev'); ch.innerHTML = '<svg viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+    s.appendChild(ch); d.appendChild(s);
+    d.appendChild(el('div', 'step-body'));
+    return d;
+  }
+  function resultText(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) return content.map((b) => b.type === 'text' ? b.text : `[${b.type}]`).join('\n');
+    return JSON.stringify(content, null, 2);
+  }
+
+  // A message element for one assistant API message (text + thinking + tool_use blocks).
+  function assistantMsg() {
+    const m = el('div', 'msg assistant');
+    const av = el('div', 'msg-avatar', '✱'); m.appendChild(av);
+    const body = el('div', 'msg-body'); m.appendChild(body);
+    return { root: m, body, blocks: new Map(), tools: new Map() };
+  }
+  function renderBlock(msg, index, block) {
+    let node = msg.blocks.get(index);
+    if (block.type === 'text') {
+      if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); }
+      node.innerHTML = md(block.text);
+    } else if (block.type === 'thinking') {
+      if (!node) { node = stepEl('thinking', 'Thinking', ''); msg.body.appendChild(node); msg.blocks.set(index, node); }
+      node.querySelector('.step-body').textContent = block.thinking || '';
+      if (!block.thinking) node.classList.add('hidden'); else node.classList.remove('hidden');
+    } else if (block.type === 'tool_use') {
+      if (!node) { node = stepEl('tool', block.name, ''); node._toolId = block.id; msg.body.appendChild(node); msg.blocks.set(index, node); msg.tools.set(block.id, node); }
+      node.querySelector('.arg').textContent = toolSummary(block.name, block.input);
+      const b = node.querySelector('.step-body'); b.innerHTML = '';
+      b.appendChild(el('div', 'label', 'Input'));
+      const pre = el('pre', null, typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2)); b.appendChild(pre);
+    }
+  }
+  function attachResult(toolNode, result) {
+    if (!toolNode) return;
+    const b = toolNode.querySelector('.step-body');
+    b.appendChild(el('div', 'label', result.is_error ? 'Error' : 'Result'));
+    b.appendChild(el('pre', null, resultText(result.content).slice(0, 20000)));
+    if (result.is_error) toolNode.classList.add('error');
+  }
+
+  function userMsg(text) {
+    const m = el('div', 'msg user');
+    m.appendChild(el('div', 'msg-avatar', (state.userName || 'U')[0].toUpperCase()));
+    const b = el('div', 'msg-body', text); b.dir = 'auto'; m.appendChild(b);
+    return m;
+  }
+
+  function renderHistory(messages) {
+    thread.innerHTML = '';
+    const toolNodes = new Map();
+    let group = null; // the assistant row for the current turn
+    for (const m of messages) {
+      if (m.role === 'user') {
+        const results = m.content.filter((b) => b.type === 'tool_result');
+        for (const r of results) attachResult(toolNodes.get(r.tool_use_id), r);
+        const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
+        if (text) { thread.appendChild(userMsg(text)); group = null; }
+      } else if (m.role === 'assistant') {
+        // One assistant row per turn: consecutive assistant API messages share it, like claude.ai.
+        if (!group) group = assistantMsg();
+        let any = false;
+        m.content.forEach((b, i) => {
+          if (b.type === 'thinking' && !b.thinking) return;
+          const key = m.uuid + ':' + i;
+          renderBlock(group, key, b); any = true;
+          if (b.type === 'tool_use') toolNodes.set(b.id, group.blocks.get(key));
+        });
+        if (any && !group.root.isConnected) thread.appendChild(group.root);
+      }
+    }
+  }
+
+  // ---------- live turn ----------
+  function setRunning(on) {
+    state.running = on;
+    $('#send').classList.toggle('running', on);
+    $('#live-pill').classList.toggle('hidden', !on);
+    $('#input').disabled = false;
+  }
+
+  function subscribe(sessionId) {
+    if (state.es) { state.es.close(); state.es = null; }
+    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}`);
+    state.es = es;
+    // partial blocks under construction, by index
+    const partial = new Map();
+    let msgNo = 0;
+    const key = (index) => msgNo + ':' + index;
+    es.onmessage = (e) => {
+      const ev = JSON.parse(e.data);
+      if (ev.i != null) state.lastEventId = ev.i;
+      switch (ev.t) {
+        case 'idle': setRunning(false); es.close(); break;
+        case 'init': $('#model-label').textContent = prettyModel(ev.model); setRunning(true); break;
+        // One assistant row for the whole turn; each API message gets its own key space.
+        case 'msg_start':
+          msgNo += 1; partial.clear();
+          if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
+          break;
+        case 'block_start':
+          if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
+          partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '' });
+          if (ev.block.type === 'tool_use') renderBlock(state.live, key(ev.index), { type: 'tool_use', name: ev.block.name, id: ev.block.id, input: {} });
+          break;
+        case 'delta': {
+          const p = partial.get(ev.index); if (!p || !state.live) break;
+          if (ev.kind === 'text_delta') { p.text += ev.text; renderBlock(state.live, key(ev.index), { type: 'text', text: p.text }); state.live.blocks.get(key(ev.index))?.classList.add('cursor'); }
+          else if (ev.kind === 'thinking_delta') { p.thinking += ev.text; renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: p.thinking }); }
+          else if (ev.kind === 'input_json_delta') { p.json += ev.text; const n = state.live.blocks.get(key(ev.index)); if (n) n.querySelector('.arg').textContent = p.json.slice(0, 200); }
+          autoscroll(); break;
+        }
+        case 'block_stop': { const n = state.live?.blocks.get(key(ev.index)); n?.classList.remove('cursor'); break; }
+        case 'assistant':
+          // final blocks for the message being streamed: re-render with full data
+          if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
+          ev.content.forEach((b, i) => { if (b.type === 'thinking' && !b.thinking) return; renderBlock(state.live, key(i), b); });
+          autoscroll(); break;
+        case 'tool_results':
+          for (const r of ev.content) attachResult(findTool(r.tool_use_id), r);
+          autoscroll(); break;
+        case 'permission': showPermission(ev); autoscroll(); break;
+        case 'permission_resolved': resolvePermissionCard(ev.reqId, ev.behavior); break;
+        case 'result':
+          if (ev.isError) thread.appendChild(el('div', 'note error', ev.text));
+          break;
+        case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
+        case 'stderr': console.warn('[claude]', ev.text); break;
+        case 'done': setRunning(false); state.live = null; es.close(); loadSessions(); break;
+      }
+    };
+    es.onerror = () => { /* EventSource retries by itself with Last-Event-ID */ };
+  }
+  function findTool(id) {
+    for (const d of thread.querySelectorAll('details.step.tool')) if (d._toolId === id) return d;
+    return state.live?.tools.get(id) || null;
+  }
+  function prettyModel(m) {
+    if (!m) return 'Claude';
+    const map = { 'claude-fable-5-1': 'Claude Fable 5.1', 'claude-opus-5': 'Claude Opus 5', 'claude-sonnet-5': 'Claude Sonnet 5' };
+    return map[m] || m.replace(/^claude-/, 'Claude ').replace(/-(\d)-(\d)/, ' $1.$2');
+  }
+
+  function showPermission(ev) {
+    const t = $('#tpl-permission').content.firstElementChild.cloneNode(true);
+    t.dataset.reqId = ev.reqId;
+    t.querySelector('.perm-tool').textContent = ev.tool;
+    t.querySelector('.perm-summary').textContent = ev.summary || '(no summary)';
+    t.querySelector('.perm-input').textContent = JSON.stringify(ev.input, null, 2);
+    if (!ev.canAlways) t.querySelector('[data-act="always"]').remove();
+    t.querySelectorAll('button[data-act]').forEach((b) => b.addEventListener('click', async () => {
+      const act = b.dataset.act;
+      t.querySelectorAll('button').forEach((x) => x.disabled = true);
+      try { await api('/permissions/' + ev.reqId, { method: 'POST', body: JSON.stringify({ behavior: act === 'deny' ? 'deny' : 'allow', always: act === 'always' }) }); }
+      catch (e) { t.querySelector('.perm-result').textContent = e.message; t.querySelector('.perm-result').classList.remove('hidden'); }
+    }));
+    thread.appendChild(t);
+  }
+  function resolvePermissionCard(reqId, behavior) {
+    const card = thread.querySelector(`.permission[data-req-id="${reqId}"]`); if (!card) return;
+    card.querySelector('.permission-actions').remove();
+    const r = card.querySelector('.perm-result'); r.textContent = behavior === 'allow' ? 'Allowed' : 'Denied'; r.classList.remove('hidden');
+  }
+
+  // ---------- composer ----------
+  const input = $('#input'), send = $('#send');
+  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px'; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); } });
+  send.addEventListener('click', () => { if (state.running) stop(); else submit(); });
+
+  async function submit() {
+    const text = input.value.trim(); if (!text) return;
+    input.value = ''; input.style.height = 'auto';
+    thread.appendChild(userMsg(text)); empty.classList.remove('show'); stickToBottom = true; autoscroll();
+    setRunning(true);
+    try {
+      if (state.current) {
+        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text }) });
+        subscribe(state.current);
+      } else {
+        if (!state.cwd) throw new Error('Pick a folder first.');
+        const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ text, cwd: state.cwd }) });
+        state.current = r.sessionId;
+        history.replaceState(null, '', '#/s/' + r.sessionId);
+        $('#chat-title').textContent = text.slice(0, 60);
+        $('#chat-meta').textContent = state.cwd.split(/[\\/]/).pop();
+        $('#project-btn').classList.add('locked');
+        subscribe(r.sessionId);
+      }
+    } catch (e) {
+      thread.appendChild(el('div', 'note error', e.message)); setRunning(false);
+    }
+  }
+  async function stop() { if (state.current) await api(`/sessions/${state.current}/stop`, { method: 'POST' }); }
+
+  // ---------- routing ----------
+  async function openSession(id) {
+    state.current = id; state.live = null;
+    if (state.es) { state.es.close(); state.es = null; }
+    app.classList.remove('sidebar-open');
+    empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
+    renderSessions();
+    try {
+      const [info, messages] = await Promise.all([api('/sessions/' + id), api(`/sessions/${id}/messages`)]);
+      $('#chat-title').textContent = info.title;
+      $('#chat-meta').textContent = [info.project, info.branch].filter(Boolean).join(' · ');
+      state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
+      renderHistory(messages);
+      stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
+      setRunning(false);
+      if (info.live) subscribe(id); else { /* nothing running */ }
+    } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
+    input.focus();
+  }
+  function openNew() {
+    state.current = null; state.live = null;
+    if (state.es) { state.es.close(); state.es = null; }
+    app.classList.remove('sidebar-open');
+    thread.innerHTML = ''; empty.classList.add('show');
+    $('#chat-title').textContent = 'New chat'; $('#chat-meta').textContent = '';
+    $('#project-btn').classList.remove('locked'); renderProjectChip();
+    setRunning(false); renderSessions();
+    const h = new Date().getHours();
+    $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
+    input.focus();
+  }
+  function route() {
+    const m = location.hash.match(/^#\/s\/([0-9a-f-]{36})$/i);
+    if (m) openSession(m[1]); else openNew();
+  }
+  window.addEventListener('hashchange', route);
+
+  // ---------- boot ----------
+  async function boot() {
+    if (!state.token) return showLogin();
+    try {
+      const me = await api('/me');
+      state.userName = me.userName; state.host = me.host;
+      $('#sidebar-name').textContent = me.userName; $('#sidebar-host').textContent = 'Claude Code on ' + me.host;
+      $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
+    } catch { return; }
+    $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+    await Promise.all([loadSessions(), loadProjects()]);
+    route();
+    setInterval(() => { if (!document.hidden) loadSessions().catch(() => {}); }, 30000);
+  }
+  boot();
+})();

@@ -1,0 +1,16 @@
+{
+  "name": "claude-remote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted Claude-style web app that lists, continues and starts local Claude Code sessions from any device.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.274",
+    "dompurify": "^3.4.15",
+    "express": "^5.2.1",
+    "marked": "^18.0.13"
+  }
+}

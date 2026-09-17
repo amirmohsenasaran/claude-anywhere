@@ -1,0 +1,181 @@
+// claude-remote — a small self-hosted bridge between the Claude Agent SDK and a
+// Claude-styled web client, so local Claude Code sessions can be listed,
+// continued and started from another device. Everything runs on this machine;
+// the browser only ever talks to this process.
+//
+// Nothing here touches ~/.claude/settings.json or the Claude Desktop app. The
+// SDK reads the same session transcripts Claude Code writes.
+//
+// By default it listens on localhost only. To reach it from a phone, expose it
+// through Tailscale (`tailscale serve 7777`) or set HOST=0.0.0.0 in .env for
+// your own LAN. It is protected by the shared password in .env.
+
+import express from 'express';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import { runs, pendingPermissions, isLive, startRun, answerPermission } from './lib/runs.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+// ---------- config (.env is optional; real env vars win) ----------
+function loadDotEnv() {
+  const p = path.join(here, '.env');
+  if (!fs.existsSync(p)) return;
+  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+  }
+}
+loadDotEnv();
+
+const PORT = Number(process.env.PORT || 7777);
+const HOST = process.env.HOST || '127.0.0.1';
+const PASSWORD = process.env.REMOTE_PASSWORD || '';
+const USER_NAME = process.env.USER_NAME || 'there';
+if (!PASSWORD || PASSWORD === 'change-me') {
+  console.error('Set REMOTE_PASSWORD in .env before starting (copy .env.example).');
+  process.exit(1);
+}
+const TOKEN = createHash('sha256').update('claude-remote:' + PASSWORD).digest('hex');
+
+// ---------- http ----------
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '2mb' }));
+
+app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked/lib/marked.umd.js')));
+app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
+app.use(express.static(path.join(here, 'public'), { extensions: ['html'] }));
+
+app.post('/api/login', (req, res) => {
+  if (typeof req.body?.password === 'string' && req.body.password === PASSWORD) return res.json({ token: TOKEN, userName: USER_NAME });
+  res.status(401).json({ error: 'Wrong password' });
+});
+
+app.use('/api', (req, res, next) => {
+  const auth = req.get('authorization') || '';
+  // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
+  const viaQuery = req.method === 'GET' && /^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) && req.query.token === TOKEN;
+  if (auth !== 'Bearer ' + TOKEN && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+});
+
+const shape = (s) => ({
+  id: s.sessionId,
+  title: s.customTitle || s.summary || s.firstPrompt || 'Untitled',
+  cwd: s.cwd || '',
+  project: s.cwd ? path.basename(s.cwd) : '',
+  branch: s.gitBranch || '',
+  lastModified: s.lastModified,
+  createdAt: s.createdAt,
+  live: isLive(s.sessionId),
+});
+
+app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine' }));
+
+app.get('/api/sessions', async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+    res.json((await listSessions({ limit, offset })).map(shape));
+  } catch (e) { next(e); }
+});
+
+app.get('/api/projects', async (_req, res, next) => {
+  try {
+    const seen = new Map();
+    for (const s of await listSessions({ limit: 500 })) if (s.cwd && !seen.has(s.cwd)) seen.set(s.cwd, { cwd: s.cwd, name: path.basename(s.cwd), lastModified: s.lastModified });
+    res.json([...seen.values()].sort((a, b) => b.lastModified - a.lastModified));
+  } catch (e) { next(e); }
+});
+
+app.get('/api/sessions/:id', async (req, res, next) => {
+  try {
+    const s = await getSessionInfo(req.params.id);
+    if (!s) return res.status(404).json({ error: 'Not found' });
+    res.json(shape(s));
+  } catch (e) { next(e); }
+});
+
+app.get('/api/sessions/:id/messages', async (req, res, next) => {
+  try {
+    const out = [];
+    for (const m of await getSessionMessages(req.params.id)) {
+      if (m.parent_tool_use_id) continue; // subagent traffic
+      const c = m.message?.content;
+      const content = Array.isArray(c) ? c : [{ type: 'text', text: String(c ?? '') }];
+      out.push({ role: m.type, uuid: m.uuid, timestamp: m.timestamp, content });
+    }
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+app.post('/api/sessions/:id/send', async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const prompt = String(req.body?.text || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Empty message' });
+    if (isLive(id)) return res.status(409).json({ error: 'Claude is still working on this chat.' });
+    const info = await getSessionInfo(id);
+    if (!info) return res.status(404).json({ error: 'Session not found' });
+    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt });
+    res.json({ runId: run.id, sessionId: id });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/sessions', async (req, res) => {
+  const prompt = String(req.body?.text || '').trim();
+  const cwd = String(req.body?.cwd || '').trim();
+  if (!prompt) return res.status(400).json({ error: 'Empty message' });
+  if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'Pick a folder that exists on this machine.' });
+  const { run, ready } = startRun({ cwd, prompt });
+  try {
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Claude Code did not start in time')), 60000));
+    const sessionId = await Promise.race([ready, timeout]);
+    res.json({ runId: run.id, sessionId });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post('/api/sessions/:id/stop', (req, res) => {
+  const run = runs.get(req.params.id);
+  if (run && !run.done) run.abort.abort();
+  res.json({ ok: true });
+});
+
+// Server-sent events for one session's live turn. Replays what the client
+// missed (Last-Event-ID) and then streams; ends when the turn ends.
+app.get('/api/sessions/:id/events', (req, res) => {
+  const run = runs.get(req.params.id);
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  if (!run) { res.write(`data: ${JSON.stringify({ t: 'idle' })}\n\n`); return res.end(); }
+  const since = Number(req.get('last-event-id') ?? req.query.since ?? -1);
+  for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
+  if (run.done) return res.end();
+  run.listeners.add(res);
+  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
+});
+
+app.post('/api/permissions/:reqId', (req, res) => {
+  const { behavior, always } = req.body || {};
+  if (!answerPermission(req.params.reqId, behavior, !!always)) return res.status(404).json({ error: 'No such request (it may have expired).' });
+  res.json({ ok: true });
+});
+
+app.get('/api/runs', (_req, res) => {
+  res.json([...runs.values()].filter((r) => !r.done).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));
+});
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: String(err?.message || err) });
+});
+
+app.listen(PORT, HOST, () => {
+  console.log(`claude-remote listening on http://${HOST}:${PORT}`);
+});
