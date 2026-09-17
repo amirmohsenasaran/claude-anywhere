@@ -33,11 +33,23 @@
   const localFileUrl = (href) => `/api/file?token=${encodeURIComponent(state.token || '')}&cwd=${encodeURIComponent(state.cwd || '')}&path=${encodeURIComponent(href)}`;
   const isWebUrl = (h) => /^(https?:|data:|blob:)/i.test(h || '');
   const escapeAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-  marked.use({ renderer: { image({ href, title, text }) {
-    const src = isWebUrl(href) ? href : localFileUrl(href.replace(/^file:\/\/\/?/i, ''));
-    return `<img src="${escapeAttr(src)}" alt="${escapeAttr(text)}"${title ? ` title="${escapeAttr(title)}"` : ''} loading="lazy" class="md-img">`;
-  } } });
-  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true }, ADD_ATTR: ['loading'] });
+  const isVideo = (h) => /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(h || ''), isAudio = (h) => /\.(mp3|m4a|wav|ogg)(\?|#|$)/i.test(h || '');
+  const mediaSrc = (href) => isWebUrl(href) ? href : localFileUrl(href.replace(/^file:\/\/\/?/i, ''));
+  // Video and audio files an answer points at play inline (Desktop shows a player); images show as images.
+  marked.use({ renderer: {
+    image({ href, title, text }) {
+      if (isVideo(href)) return `<video controls preload="metadata" class="md-video" src="${escapeAttr(mediaSrc(href))}"></video>`;
+      if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
+      return `<img src="${escapeAttr(mediaSrc(href))}" alt="${escapeAttr(text)}"${title ? ` title="${escapeAttr(title)}"` : ''} loading="lazy" class="md-img">`;
+    },
+    link({ href, title, tokens }) {
+      const inner = this.parser.parseInline(tokens);
+      if (isVideo(href)) return `<video controls preload="metadata" class="md-video" src="${escapeAttr(mediaSrc(href))}"></video>`;
+      if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
+      return `<a href="${escapeAttr(href)}"${title ? ` title="${escapeAttr(title)}"` : ''} target="_blank" rel="noopener">${inner}</a>`;
+    },
+  } });
+  const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true }, ADD_TAGS: ['video', 'audio'], ADD_ATTR: ['loading', 'controls', 'preload', 'target'] });
   const stripHarness = (t) => String(t || '')
     .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args)[\s\S]*?<\/\1>/g, '')
     .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
@@ -252,12 +264,13 @@
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', desc: 'Fastest, cheapest' },
   ];
   const EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }];
-  // Same labels as the Claude Desktop mode picker (read from the app itself).
+  // The Claude Desktop mode picker, word for word, in its order (1–5 are its shortcuts).
   const MODES = [
-    { id: 'default', name: 'Manual', desc: 'Ask before file edits and shell commands' },
-    { id: 'acceptEdits', name: 'Accept edits', desc: 'Edit files without asking; still ask before other commands' },
-    { id: 'plan', name: 'Plan', desc: 'Propose an approach without editing source code' },
-    { id: 'auto', name: 'Auto', desc: 'Run with background safety checks; ask only for risky actions' },
+    { id: 'auto', name: 'Auto', desc: 'Claude handles permission decisions' },
+    { id: 'default', name: 'Manual', desc: 'Always ask before making changes' },
+    { id: 'acceptEdits', name: 'Accept edits', desc: 'Automatically accept all file edits' },
+    { id: 'plan', name: 'Plan', desc: 'Create a plan before making changes' },
+    { id: 'bypassPermissions', name: 'Bypass permissions', desc: 'Accepts all permissions' },
   ];
   state.model = localStorage.getItem('cr.model') || MODELS[0].id;
   state.effort = localStorage.getItem('cr.effort') || '';
@@ -268,9 +281,11 @@
     btn.addEventListener('click', (e) => { e.stopPropagation(); const open = m.classList.contains('hidden'); document.querySelectorAll('.menu').forEach((x) => x.classList.add('hidden')); if (open) { render(m); m.classList.remove('hidden'); } });
     document.addEventListener('click', (e) => { if (!m.contains(e.target)) m.classList.add('hidden'); });
   }
-  function item(label, desc, selected, onPick) {
+  function item(label, desc, selected, onPick, { hint = '', tag = '' } = {}) {
     const b = el('button', 'menu-item' + (selected ? ' sel' : '')); b.type = 'button';
-    b.appendChild(document.createTextNode(label)); if (desc) b.appendChild(el('span', 'desc', desc));
+    const t = el('span', 'menu-label'); t.appendChild(document.createTextNode(label)); if (tag) t.appendChild(el('span', 'tag', tag)); b.appendChild(t);
+    if (desc) b.appendChild(el('span', 'desc', desc));
+    if (hint) b.appendChild(el('span', 'hint', hint));
     b.addEventListener('click', onPick); return b;
   }
   function renderModelChip() {
@@ -287,7 +302,7 @@
   }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
-    for (const x of MODELS) m.appendChild(item(x.name, x.desc, x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); pushControls({ model: x.id }); }));
+    MODELS.forEach((x, i) => m.appendChild(item(x.name, '', x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); pushControls({ model: x.id }); }, { hint: x.id === state.model ? '' : String(i + 1), tag: x.id === MODELS[0].id ? 'Default' : '' })));
     m.appendChild(el('div', 'menu-sep'));
     const row = el('div', 'seg-row'); row.appendChild(el('span', null, 'Effort'));
     const seg = el('div', 'seg');
@@ -299,8 +314,14 @@
     row.appendChild(seg); m.appendChild(row);
   });
   menuFor('#mode-btn', '#mode-menu', (m) => {
-    m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Permissions'));
-    for (const x of MODES) m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); pushControls({ permissionMode: x.id }); }));
+    m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Mode'));
+    MODES.forEach((x, i) => m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); pushControls({ permissionMode: x.id }); }, { hint: String(i + 1) })));
+  });
+  // 1–5 while the mode menu is open, like Desktop
+  document.addEventListener('keydown', (e) => {
+    if ($('#mode-menu').classList.contains('hidden') || !/^[1-5]$/.test(e.key)) return;
+    const x = MODES[Number(e.key) - 1]; if (!x) return;
+    e.preventDefault(); state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); $('#mode-menu').classList.add('hidden'); pushControls({ permissionMode: x.id });
   });
   // Shift+Tab cycles the mode, as in the CLI and Desktop.
   document.addEventListener('keydown', (e) => {
@@ -312,6 +333,55 @@
   });
   renderModelChip(); renderModeChip();
   const turnOptions = () => ({ model: state.model, permissionMode: state.mode, ...(state.effort ? { effort: state.effort } : {}) });
+
+  // ---------- session bar (project · branch · +added −removed · Create PR), session ⋮ menu, usage popover ----------
+  async function refreshGit() {
+    const bar = $('#session-bar'); if (!state.current) { bar.classList.add('hidden'); return; }
+    try {
+      const g = await api(`/sessions/${state.current}/git`);
+      if (!g.git) { bar.classList.add('hidden'); return; }
+      bar.classList.remove('hidden');
+      $('#sb-project').textContent = state.cwd ? state.cwd.split(/[\\/]/).pop() : '';
+      $('#sb-branch').textContent = g.branch;
+      $('#sb-added').textContent = '+' + g.added; $('#sb-removed').textContent = '−' + g.removed;
+      $('#sb-diff').classList.toggle('hidden', !g.dirty);
+      $('#sb-pr').classList.toggle('hidden', !g.dirty);
+    } catch { bar.classList.add('hidden'); }
+  }
+  $('#sb-close').addEventListener('click', () => $('#session-bar').classList.add('hidden'));
+  $('#sb-pr').addEventListener('click', () => { input.value = 'Create a pull request for the current changes: commit what is uncommitted with a clear message, push the branch, and open the PR with a title and a short description.'; input.dispatchEvent(new Event('input')); submit(); });
+
+  menuFor('#session-menu-btn', '#session-menu', (m) => {
+    m.innerHTML = '';
+    const s = state.sessions.find((x) => x.id === state.current) || {};
+    m.appendChild(item('Rename', '', false, async () => { m.classList.add('hidden'); const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${state.current}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } }, { hint: 'R' }));
+    m.appendChild(item('Fork', '', false, async () => { m.classList.add('hidden'); try { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } }, { hint: 'F' }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
+    const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
+    del.classList.add('danger'); m.appendChild(del);
+  });
+
+  const fmtK = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+  const resetsIn = (iso) => { if (!iso) return ''; const ms = Date.parse(iso) - Date.now(); if (!(ms > 0)) return 'Resets soon'; const h = Math.floor(ms / 3600000), mnt = Math.floor((ms % 3600000) / 60000); return 'Resets in ' + (h >= 24 ? Math.floor(h / 24) + ' d ' + (h % 24) + ' hr' : h ? h + ' hr ' + mnt + ' min' : mnt + ' min'); };
+  let usage = { context: null, limits: null };
+  function paintUsage() {
+    const c = usage.context, ring = $('#usage-btn');
+    ring.classList.toggle('hidden', !state.current);
+    const pct = c ? Math.round(c.percentage) : 0;
+    ring.style.setProperty('--pct', pct);
+    ring.title = c ? `Context window ${fmtK(c.totalTokens)} / ${fmtK(c.maxTokens)} (${pct}%)` : 'Context window';
+    const pop = $('#usage-pop');
+    pop.querySelector('.uc-value').textContent = c ? `${fmtK(c.totalTokens)} / ${fmtK(c.maxTokens)} (${pct}%)` : 'Unknown until this session runs a turn';
+    pop.querySelector('.uc-bar > i').style.width = pct + '%';
+    const L = usage.limits?.rate_limits; const list = pop.querySelector('.ul-list'); list.innerHTML = '';
+    pop.querySelector('.ul-title').textContent = 'Plan usage limits' + (usage.limits?.subscription_type ? ' · ' + usage.limits.subscription_type[0].toUpperCase() + usage.limits.subscription_type.slice(1) : '');
+    const row = (name, lim) => { if (!lim || lim.utilization == null) return; const u = Math.round(lim.utilization * (lim.utilization <= 1 ? 100 : 1)); const r = el('div', 'ul-row'); r.innerHTML = `<div class="ul-head"><span>${name}</span><span class="muted">${resetsIn(lim.resets_at)}</span><b>${u}%</b></div><div class="ul-bar${u >= 90 ? ' hot' : ''}"><i style="width:${Math.min(100, u)}%"></i></div>`; list.appendChild(r); };
+    if (L) { row('5-hour limit', L.five_hour); row('Weekly · all models', L.seven_day); if (L.seven_day_opus) row('Weekly · Opus', L.seven_day_opus); if (L.seven_day_sonnet) row('Weekly · Sonnet', L.seven_day_sonnet); for (const m of L.model_scoped || []) row('Weekly · ' + m.display_name, m); }
+    if (!L) list.appendChild(el('div', 'muted small', 'Limits appear after the first turn from this app.'));
+  }
+  menuFor('#usage-btn', '#usage-pop', async () => { paintUsage(); try { const u = await api(`/sessions/${state.current}/usage`); usage.context = u.context || usage.context; usage.limits = u.limits || usage.limits; paintUsage(); } catch {} });
+  $('#usage-compact').addEventListener('click', () => { $('#usage-pop').classList.add('hidden'); input.value = '/compact'; input.dispatchEvent(new Event('input')); submit(); });
 
   // ---------- thread rendering ----------
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
@@ -563,6 +633,8 @@
           if (ev.permissionMode) state.mode = ev.permissionMode; if (ev.model) state.model = ev.model; if (ev.effort !== undefined) state.effort = ev.effort;
           renderModeChip(); renderModelChip(); break;
         case 'status': if (ev.permissionMode) { state.mode = ev.permissionMode; renderModeChip(); } break;
+        case 'context': usage.context = ev; paintUsage(); break;
+        case 'limits': usage.limits = ev; paintUsage(); break;
         case 'tool_progress': status.tool = ev.tool; if (!status.toolSince) status.toolSince = Date.now() - (ev.elapsed || 0) * 1000; statusPaint(); break;
         case 'usage': if (ev.outputTokens) { status.tokens = ev.outputTokens; statusPaint(); } break;
         case 'tool_summary': { // the CLI's own wording ("Ran 3 commands") for the open group
@@ -625,7 +697,7 @@
         case 'result':
           if (ev.isError) thread.appendChild(el('div', 'note error', ev.text));
           if (state.live) addActions(state.live, Date.now());
-          state.live = null; statusStop();
+          state.live = null; statusStop(); refreshGit();
           break;
         case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
@@ -793,6 +865,7 @@
       setRunning(false); setElsewhere(false);
       subscribe(id); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
+      usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden');
     } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
@@ -804,6 +877,7 @@
     $('#chat-title').textContent = 'New session'; $('#chat-meta').textContent = '';
     $('#project-btn').classList.remove('locked'); renderProjectChip();
     setRunning(false); setElsewhere(false); renderSessions(); updatePinButton(); restoreDraft(null);
+    $('#session-bar').classList.add('hidden'); $('#session-menu-btn').classList.add('hidden'); usage.context = null; paintUsage();
     const h = new Date().getHours();
     $('#greeting-text').textContent = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (state.userName ? ', ' + state.userName : '');
     input.focus();

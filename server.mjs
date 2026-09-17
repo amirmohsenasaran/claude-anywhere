@@ -17,8 +17,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listSessions, getSessionMessages, getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
-import { runs, pendingPermissions, isLive, startRun, answerPermission, bus } from './lib/runs.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { listSessions, getSessionMessages, getSessionInfo, renameSession, forkSession, deleteSession, tagSession } from '@anthropic-ai/claude-agent-sdk';
+import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
+import * as runsMod from './lib/runs.mjs';
+const execFileP = promisify(execFile);
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS } from './lib/tail.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
@@ -155,7 +159,42 @@ const shape = (s, pinned) => ({
   runStartedAt: isLive(s.sessionId) ? runs.get(s.sessionId).startedAt : null,
   working: isLive(s.sessionId) || Date.now() - s.lastModified < WORKING_WINDOW_MS,
   pinned: !!pinned?.has(s.sessionId),
+  tag: s.tag || '',
+  archived: s.tag === 'archived',
+  context: contextBySession.get(s.sessionId) || null,
 });
+
+// ---------- session menu: rename, fork, archive, delete (the Desktop ⋮ menu) ----------
+app.post('/api/sessions/:id/rename', async (req, res, next) => {
+  try { const title = String(req.body?.title || '').trim().slice(0, 200); if (!title) return res.status(400).json({ error: 'Empty title' }); await renameSession(req.params.id, title); res.json({ ok: true, title }); } catch (e) { next(e); }
+});
+app.post('/api/sessions/:id/fork', async (req, res, next) => {
+  try { const r = await forkSession(req.params.id, req.body?.title ? { title: String(req.body.title).slice(0, 200) } : {}); res.json({ sessionId: r.sessionId }); } catch (e) { next(e); }
+});
+app.post('/api/sessions/:id/archive', async (req, res, next) => {
+  try { await tagSession(req.params.id, req.body?.archived ? 'archived' : null); res.json({ ok: true, archived: !!req.body?.archived }); } catch (e) { next(e); }
+});
+app.delete('/api/sessions/:id', async (req, res, next) => {
+  try { if (isLive(req.params.id)) return res.status(409).json({ error: 'Stop the running turn first.' }); await deleteSession(req.params.id); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+// Branch and uncommitted diff of the session's folder, for the bar above the composer.
+app.get('/api/sessions/:id/git', async (req, res) => {
+  try {
+    const s = await getSessionInfo(req.params.id);
+    if (!s?.cwd || !fs.existsSync(s.cwd)) return res.json({ git: false });
+    const run = (args) => execFileP('git', ['-C', s.cwd, ...args], { timeout: 6000, windowsHide: true }).then((r) => r.stdout.trim()).catch(() => null);
+    const branch = await run(['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (branch === null) return res.json({ git: false });
+    const stat = (await run(['diff', '--shortstat', 'HEAD'])) || '';
+    const untracked = ((await run(['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean).length;
+    const added = Number((stat.match(/(\d+) insertion/) || [])[1] || 0), removed = Number((stat.match(/(\d+) deletion/) || [])[1] || 0), files = Number((stat.match(/(\d+) files? changed/) || [])[1] || 0);
+    res.json({ git: true, branch, added, removed, files: files + untracked, dirty: files + untracked > 0 });
+  } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
+});
+
+// Context window of a session and the account's plan limits (the Desktop popover).
+app.get('/api/sessions/:id/usage', (req, res) => res.json({ context: contextBySession.get(req.params.id) || null, limits: runsMod.lastLimits }));
 
 app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken }));
 
@@ -195,7 +234,8 @@ app.get('/api/sessions', async (req, res, next) => {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
     const pinned = new Set(readPrefs().pinned);
-    res.json((await listSessions({ limit, offset })).map((s) => shape(s, pinned)));
+    const showArchived = req.query.archived === '1';
+    res.json((await listSessions({ limit, offset })).filter((s) => showArchived || s.tag !== 'archived').map((s) => shape(s, pinned)));
   } catch (e) { next(e); }
 });
 
@@ -323,7 +363,7 @@ app.get('/api/notify', (req, res) => {
 // share card, `![...](build/icon.png)`): served so the chat can show them, like Desktop.
 // Only image files, and only inside a project folder Claude Code has worked in or the
 // upload/temp folder.
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|m4v|mp3|m4a|wav|ogg)$/i; // images, plus video/audio that answers link to
 app.get('/api/file', async (req, res) => {
   try {
     const raw = String(req.query.path || '');
@@ -336,7 +376,7 @@ app.get('/api/file', async (req, res) => {
     for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
     const lower = p.toLowerCase();
     if (![...roots].some((r) => lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + path.sep) || lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + '/'))) return res.status(403).json({ error: 'Outside the project folders' });
-    res.sendFile(p, { headers: { 'Cache-Control': 'private, max-age=60' } });
+    res.sendFile(p, { headers: { 'Cache-Control': 'private, max-age=60' }, acceptRanges: true });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 

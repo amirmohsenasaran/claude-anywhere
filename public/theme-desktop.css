@@ -144,3 +144,49 @@ body { font-size: 14px; }
   .topbar { padding: 10px 12px; }
   .session-item { font-size: 14.5px; }
 }
+
+/* ---------- v9: Desktop details — thin scrollbars, session bar, ⋮ menu, usage popover, media ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-3); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+.session-bar { max-width: 48rem; margin: 0 auto 6px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); }
+.sb-project { color: var(--ink-2); }
+.sb-branch { color: var(--ink-2); }
+.sb-spacer { flex: 1; }
+.sb-diff { font-family: var(--mono); font-size: 12.5px; background: var(--bg-3); border-radius: 8px; padding: 3px 8px; }
+.sb-diff .add { color: var(--success); } .sb-diff .del { color: var(--danger); }
+.sb-pr { padding: 5px 10px; border-radius: 8px; background: var(--bg-3); color: var(--ink); font-size: 13px; font-weight: 500; }
+.sb-pr:hover { background: var(--line-2); }
+.icon-btn.small { width: 26px; height: 26px; }
+
+.menu-item { position: relative; }
+.menu-item .menu-label { display: inline-flex; align-items: center; gap: 8px; }
+.menu-item .tag { font-size: 11px; color: var(--ink-3); background: var(--chip-bg); border-radius: 6px; padding: 1px 6px; }
+.menu-item .hint { position: absolute; inset-inline-end: 12px; top: 9px; font-size: 12px; color: var(--ink-3); }
+.menu-item.sel .hint { display: none; }
+.menu-item.danger { color: var(--danger); }
+.menu.menu-top { top: calc(100% + 6px); bottom: auto; }
+
+.usage-ring { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; padding: 0; margin-inline-end: 4px; }
+.usage-ring i { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(var(--accent) calc(var(--pct, 0) * 1%), var(--bg-3) 0); display: block; position: relative; }
+.usage-ring i::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--bg-000); }
+.usage-pop { min-width: 340px; padding: 12px 14px; }
+.uc-head { display: flex; justify-content: space-between; font-size: 13.5px; color: var(--ink-2); }
+.uc-head .uc-value { color: var(--ink); }
+.uc-bar, .ul-bar { height: 6px; border-radius: 6px; background: var(--bg-3); margin: 8px 0 6px; overflow: hidden; }
+.uc-bar > i, .ul-bar > i { display: block; height: 100%; background: #3b82f6; border-radius: 6px; }
+.ul-bar.hot > i { background: var(--danger); }
+.uc-foot { display: flex; justify-content: space-between; font-size: 12.5px; }
+.uc-foot .link-btn { color: #3b82f6; text-decoration: underline; }
+.ul-title { font-size: 13px; color: var(--ink-3); margin: 6px 0 2px; }
+.ul-row { margin: 8px 0; }
+.ul-head { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; }
+.ul-head .muted { margin-inline-start: auto; font-size: 12.5px; }
+.ul-head b { font-weight: 500; }
+
+.prose video.md-video { display: block; width: 100%; max-width: 600px; max-height: 420px; border-radius: 12px; background: #000; margin: .6em 0; }
+.prose audio.md-audio { display: block; width: 100%; max-width: 480px; margin: .6em 0; }

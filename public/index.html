@@ -89,6 +89,12 @@
           <button id="pin-btn" class="icon-btn hidden" aria-label="Pin this chat" title="Pin">
             <svg viewBox="0 0 20 20" width="17" height="17"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
           </button>
+          <div class="composer-left">
+            <button id="session-menu-btn" class="icon-btn hidden" aria-label="Session menu" title="More">
+              <svg viewBox="0 0 20 20" width="18" height="18"><circle cx="10" cy="4.5" r="1.6" fill="currentColor"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/><circle cx="10" cy="15.5" r="1.6" fill="currentColor"/></svg>
+            </button>
+            <div id="session-menu" class="menu menu-end menu-top hidden"></div>
+          </div>
         </div>
       </header>
 
@@ -104,6 +110,14 @@
       </div>
 
       <div class="composer-wrap">
+        <div id="session-bar" class="session-bar hidden">
+          <span id="sb-project" class="sb-project"></span>
+          <span id="sb-branch" class="sb-branch"></span>
+          <span class="sb-spacer"></span>
+          <span id="sb-diff" class="sb-diff hidden"><span id="sb-added" class="add">+0</span> <span id="sb-removed" class="del">−0</span></span>
+          <button id="sb-pr" class="sb-pr hidden" type="button">Create PR</button>
+          <button id="sb-close" class="icon-btn small" type="button" title="Hide"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+        </div>
         <div class="composer" id="composer">
           <div id="attachments" class="attach-strip hidden"></div>
           <textarea id="input" rows="1" placeholder="How can I help you today?" dir="auto"></textarea>
@@ -132,6 +146,17 @@
               <div class="composer-left">
                 <button id="model-btn" class="chip" type="button" title="Model"><span id="model-label">Claude Fable 5.1</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
                 <div id="model-menu" class="menu menu-end hidden"></div>
+              </div>
+              <div class="composer-left">
+                <button id="usage-btn" class="usage-ring hidden" type="button" title="Context window"><i></i></button>
+                <div id="usage-pop" class="menu menu-end usage-pop hidden">
+                  <div class="uc-head"><span>Context window</span><span class="uc-value">…</span></div>
+                  <div class="uc-bar"><i></i></div>
+                  <div class="uc-foot"><span class="muted">Compacts automatically at 97%</span><button id="usage-compact" class="link-btn" type="button">Compact session</button></div>
+                  <div class="menu-sep"></div>
+                  <div class="ul-title">Plan usage limits</div>
+                  <div class="ul-list"></div>
+                </div>
               </div>
               <button id="send" class="send" aria-label="Send">
                 <svg class="ic-send" viewBox="0 0 20 20" width="18" height="18"><path d="M10 16V4M5 9l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
