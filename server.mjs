@@ -26,7 +26,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------- config (.env is optional; real env vars win) ----------
 function loadDotEnv() {
-  const p = path.join(here, '.env');
+  const p = process.env.CLAUDE_REMOTE_ENV_FILE || path.join(here, '.env');
   if (!fs.existsSync(p)) return;
   for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
@@ -82,7 +82,8 @@ app.use('/api', (req, res, next) => {
 });
 
 // ---------- small preferences file: pinned sessions (shared by every device) ----------
-const PREFS_PATH = path.join(here, 'data', 'prefs.json');
+const DATA_DIR = process.env.CLAUDE_REMOTE_DATA_DIR || path.join(here, 'data');
+const PREFS_PATH = path.join(DATA_DIR, 'prefs.json');
 function readPrefs() {
   try { return { pinned: [], ...JSON.parse(fs.readFileSync(PREFS_PATH, 'utf8')) }; } catch { return { pinned: [] }; }
 }
@@ -202,12 +203,24 @@ app.post('/api/sessions/:id/send', async (req, res, next) => {
     const id = req.params.id;
     const prompt = String(req.body?.text || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Empty message' });
-    if (isLive(id)) return res.status(409).json({ error: 'Claude is still working on this chat.' });
+    // Claude is mid-turn here: hand the message over, it runs right after (Desktop behaviour).
+    if (isLive(id)) { const qid = runs.get(id).enqueue(prompt); if (qid) return res.json({ queued: true, id: qid, sessionId: id }); }
     const info = await getSessionInfo(id);
     if (!info) return res.status(404).json({ error: 'Session not found' });
     const { model, permissionMode, effort } = req.body || {};
     const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, model, permissionMode, effort });
     res.json({ runId: run.id, sessionId: id });
+  } catch (e) { next(e); }
+});
+
+// Change permission mode / model / effort while Claude is working; takes effect
+// for the next tool call or model request.
+app.post('/api/sessions/:id/controls', async (req, res, next) => {
+  try {
+    const run = runs.get(req.params.id);
+    if (!run || run.done) return res.json({ applied: {}, live: false });
+    const { permissionMode, model, effort } = req.body || {};
+    res.json({ applied: await run.setControls({ permissionMode, model, effort }), live: true });
   } catch (e) { next(e); }
 });
 
@@ -229,7 +242,7 @@ app.post('/api/sessions', async (req, res) => {
 
 app.post('/api/sessions/:id/stop', (req, res) => {
   const run = runs.get(req.params.id);
-  if (run && !run.done) run.abort.abort();
+  if (run && !run.done) run.stop();
   res.json({ ok: true });
 });
 
@@ -249,8 +262,10 @@ app.get('/api/sessions/:id/events', (req, res) => {
     req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
     return;
   }
-  res.write(`data: ${JSON.stringify({ t: 'tail', working: isWorkingElsewhere(id) })}\n\n`);
-  const stop = tailSession(id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`));
+  // A turn that just finished here also touched the file; that is not "another window".
+  const quietUntil = run?.finishedAt || 0;
+  res.write(`data: ${JSON.stringify({ t: 'tail', working: isWorkingElsewhere(id, quietUntil) })}\n\n`);
+  const stop = tailSession(id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`), { quietUntil });
   req.on('close', () => { clearInterval(ping); if (stop) stop(); });
 });
 
@@ -269,6 +284,16 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: String(err?.message || err) });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`claude-remote listening on http://${HOST}:${PORT}`);
-});
+export { TOKEN, PASSWORD, HOST, PORT };
+export { bus } from './lib/runs.mjs';
+export function startServer({ host = HOST, port = PORT } = {}) {
+  return new Promise((resolve) => {
+    const server = app.listen(port, host, () => {
+      console.log(`claude-remote listening on http://${host}:${port}`);
+      resolve({ server, url: `http://${host}:${port}` });
+    });
+  });
+}
+
+// Run directly (`node server.mjs`): listen. Imported by the desktop app: it calls startServer().
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) startServer();

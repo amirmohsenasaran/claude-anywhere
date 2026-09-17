@@ -11,6 +11,11 @@
     live: null,          // streaming assistant message being built
   };
   try { state.token = localStorage.getItem('cr.token'); } catch {}
+  // The desktop app opens its own window already signed in.
+  try {
+    const u = new URL(location.href);
+    if (u.searchParams.get('auto')) { state.token = u.searchParams.get('auto'); localStorage.setItem('cr.token', state.token); u.searchParams.delete('auto'); history.replaceState(null, '', u.pathname + u.search + u.hash); }
+  } catch {}
 
   // ---------- api ----------
   async function api(path, opts = {}) {
@@ -161,11 +166,12 @@
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', desc: 'Fastest, cheapest' },
   ];
   const EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }];
+  // Same labels and order as the Claude Desktop mode picker.
   const MODES = [
-    { id: 'default', name: 'Default', desc: 'Asks before edits and commands' },
-    { id: 'acceptEdits', name: 'Accept edits', desc: 'File edits run without asking; commands still ask' },
-    { id: 'auto', name: 'Auto', desc: 'Claude approves routine actions itself and asks you only for the risky ones' },
-    { id: 'plan', name: 'Plan', desc: 'Read-only: Claude plans, does not change anything' },
+    { id: 'default', name: 'Manual', desc: 'Ask before file edits and shell commands' },
+    { id: 'acceptEdits', name: 'Edit automatically', desc: 'Edit files without asking; still ask before other commands' },
+    { id: 'plan', name: 'Plan', desc: 'Propose an approach without editing source code' },
+    { id: 'auto', name: 'Auto', desc: 'Run with background safety checks; ask only for risky actions' },
   ];
   state.model = localStorage.getItem('cr.model') || MODELS[0].id;
   state.effort = localStorage.getItem('cr.effort') || '';
@@ -186,22 +192,37 @@
     $('#model-label').textContent = mdl.name + (state.effort ? ' · ' + state.effort : '');
   }
   function renderModeChip() { $('#mode-name').textContent = (MODES.find((x) => x.id === state.mode) || MODES[0]).name; }
+  // A change made while Claude is working is pushed to the running process and
+  // takes effect for the next tool call / model request, like Shift+Tab in the CLI.
+  async function pushControls(patch) {
+    if (!state.current || !state.running) return;
+    try { await api(`/sessions/${state.current}/controls`, { method: 'POST', body: JSON.stringify(patch) }); }
+    catch (e) { thread.appendChild(el('div', 'note error', e.message)); }
+  }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
-    for (const x of MODELS) m.appendChild(item(x.name, x.desc, x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); }));
+    for (const x of MODELS) m.appendChild(item(x.name, x.desc, x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); pushControls({ model: x.id }); }));
     m.appendChild(el('div', 'menu-sep'));
     const row = el('div', 'seg-row'); row.appendChild(el('span', null, 'Effort'));
     const seg = el('div', 'seg');
     for (const x of [{ id: '', name: 'Auto' }, ...EFFORTS]) {
       const b = el('button', x.id === state.effort ? 'on' : '', x.name); b.type = 'button';
-      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = x.id; if (x.id) localStorage.setItem('cr.effort', x.id); else localStorage.removeItem('cr.effort'); renderModelChip(); render(m); });
+      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = x.id; if (x.id) localStorage.setItem('cr.effort', x.id); else localStorage.removeItem('cr.effort'); renderModelChip(); render(m); pushControls({ effort: x.id }); });
       seg.appendChild(b);
     }
     row.appendChild(seg); m.appendChild(row);
   });
   menuFor('#mode-btn', '#mode-menu', (m) => {
     m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Permissions'));
-    for (const x of MODES) m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); }));
+    for (const x of MODES) m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); pushControls({ permissionMode: x.id }); }));
+  });
+  // Shift+Tab cycles the mode, as in the CLI and Desktop.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && e.shiftKey && !$('#app').classList.contains('hidden')) {
+      e.preventDefault();
+      const i = MODES.findIndex((x) => x.id === state.mode);
+      state.mode = MODES[(i + 1) % MODES.length].id; localStorage.setItem('cr.mode', state.mode); renderModeChip(); pushControls({ permissionMode: state.mode });
+    }
   });
   renderModelChip(); renderModeChip();
   const turnOptions = () => ({ model: state.model, permissionMode: state.mode, ...(state.effort ? { effort: state.effort } : {}) });
@@ -245,9 +266,10 @@
       if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); }
       node.innerHTML = md(block.text);
     } else if (block.type === 'thinking') {
-      if (!node) { node = stepEl('thinking', 'Thinking', ''); msg.body.appendChild(node); msg.blocks.set(index, node); }
+      if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); }
       node.querySelector('.step-body').textContent = block.thinking || '';
-      if (!block.thinking) node.classList.add('hidden'); else node.classList.remove('hidden');
+      if (!block.thinking && !block.live) node.classList.add('hidden'); else node.classList.remove('hidden');
+      if (block.live) { node.open = true; node.classList.add('live'); node.querySelector('.name').textContent = 'Thinking'; }
     } else if (block.type === 'tool_use') {
       if (!node) { node = stepEl('tool', block.name, ''); node._toolId = block.id; msg.body.appendChild(node); msg.blocks.set(index, node); msg.tools.set(block.id, node); }
       node.querySelector('.arg').textContent = toolSummary(block.name, block.input);
@@ -264,11 +286,44 @@
     if (result.is_error) toolNode.classList.add('error');
   }
 
-  function userMsg(text) {
-    const m = el('div', 'msg user');
+  function userMsg(text, { queued = false, id = null } = {}) {
+    const m = el('div', 'msg user' + (queued ? ' queued' : ''));
+    if (id) m.dataset.promptId = id;
     m.appendChild(el('div', 'msg-avatar', (state.userName || 'U')[0].toUpperCase()));
     const b = el('div', 'msg-body', text); b.dir = 'auto'; m.appendChild(b);
+    if (queued) m.appendChild(el('div', 'queued-label', 'Queued · sends when Claude finishes'));
     return m;
+  }
+
+  // ---------- live status line (the Desktop "✱ Thinking… 12s · 1.2k tokens" row) ----------
+  const VERBS = ['Thinking', 'Pondering', 'Considering', 'Working', 'Reasoning', 'Composing', 'Sketching', 'Puzzling', 'Brewing', 'Cooking', 'Musing', 'Mulling'];
+  const status = { el: null, verb: VERBS[0], tool: null, toolSince: 0, startedAt: 0, tokens: 0, waiting: false, timer: null, verbTimer: null };
+  function statusStart() {
+    if (!status.el) {
+      status.el = el('div', 'status-line');
+      status.el.innerHTML = '<span class="spark spin">✱</span><span class="shimmer"></span><span class="status-meta"></span>';
+    }
+    thread.appendChild(status.el);
+    status.startedAt = status.startedAt || Date.now(); status.tokens = 0; status.tool = null; status.waiting = false;
+    status.verb = VERBS[Math.floor(Math.random() * VERBS.length)];
+    clearInterval(status.timer); status.timer = setInterval(statusPaint, 1000);
+    clearInterval(status.verbTimer); status.verbTimer = setInterval(() => { if (!status.tool && !status.waiting) { status.verb = VERBS[Math.floor(Math.random() * VERBS.length)]; statusPaint(); } }, 6000);
+    statusPaint();
+  }
+  function statusPaint() {
+    if (!status.el) return;
+    const secs = Math.max(0, Math.round((Date.now() - status.startedAt) / 1000));
+    let text = status.verb + '…';
+    if (status.waiting) text = 'Waiting for your approval';
+    else if (status.tool) text = (status.tool === 'Bash' || status.tool === 'PowerShell' ? 'Running ' : status.tool === 'Read' || status.tool === 'Grep' || status.tool === 'Glob' ? 'Reading with ' : status.tool === 'Agent' ? 'Running agent ' : 'Using ') + status.tool + '…';
+    status.el.querySelector('.shimmer').textContent = text;
+    const tok = status.tokens >= 1000 ? (status.tokens / 1000).toFixed(1) + 'k' : String(status.tokens);
+    status.el.querySelector('.status-meta').textContent = `${secs}s` + (status.tokens ? ` · ↓ ${tok} tokens` : '') + (status.tool && status.toolSince ? ` · ${Math.round((Date.now() - status.toolSince) / 1000)}s in tool` : '');
+    if (!status.el.isConnected) thread.appendChild(status.el); else if (thread.lastElementChild !== status.el) thread.appendChild(status.el);
+  }
+  function statusStop() {
+    clearInterval(status.timer); clearInterval(status.verbTimer); status.timer = status.verbTimer = null;
+    status.el?.remove(); status.startedAt = 0; status.tool = null; status.waiting = false;
   }
 
   function renderHistory(messages) {
@@ -299,10 +354,16 @@
   // ---------- live turn ----------
   function setRunning(on) {
     state.running = on;
-    $('#send').classList.toggle('running', on);
     $('#live-pill').classList.toggle('hidden', !on && !state.elsewhere);
-    if (on) { $('#live-pill').classList.remove('elsewhere'); $('#live-text').textContent = 'Working'; }
+    if (on) { $('#live-pill').classList.remove('elsewhere'); $('#live-text').textContent = 'Working'; statusStart(); } else statusStop();
     $('#input').disabled = false;
+    paintSendButton();
+  }
+  // While Claude works the button is Stop, unless there is text typed: then it sends (queues) it.
+  function paintSendButton() {
+    const hasText = !!$('#input').value.trim();
+    $('#send').classList.toggle('running', state.running && !hasText);
+    $('#send').title = state.running && !hasText ? 'Stop' : state.running ? 'Send (queued until Claude finishes)' : 'Send';
   }
   // Another window (VS Code, terminal, Claude Desktop) is mid-turn on this session.
   function setElsewhere(on) {
@@ -336,8 +397,34 @@
           state.live = null; thread.appendChild(userMsg(text)); autoscroll(); break;
         }
         case 'mode': break;
-        case 'prompt': state.live = null; thread.appendChild(userMsg(ev.text)); autoscroll(); break;
-        case 'init': mode = 'run'; setRunning(true); break;
+        case 'queued': {
+          if (ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`)) break;
+          // our own ghost bubble, posted a moment ago and not yet tagged with its id
+          const mine = [...thread.querySelectorAll('.msg.user.queued:not([data-prompt-id])')].find((n) => n.querySelector('.msg-body').textContent === ev.text);
+          if (mine) { mine.dataset.promptId = ev.id; break; }
+          thread.appendChild(userMsg(ev.text, { queued: true, id: ev.id })); autoscroll(); break;
+        }
+        case 'prompt': {
+          state.live = null;
+          const q = ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`);
+          if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); }
+          else thread.appendChild(userMsg(ev.text, { id: ev.id }));
+          if (state.running) { status.startedAt = Date.now(); statusStart(); }
+          autoscroll(); break;
+        }
+        case 'init':
+          mode = 'run'; setRunning(true);
+          if (ev.controls) { if (ev.controls.permissionMode) state.mode = ev.controls.permissionMode; if (ev.controls.model) state.model = ev.controls.model; state.effort = ev.controls.effort || ''; renderModeChip(); renderModelChip(); }
+          break;
+        case 'controls':
+          if (ev.permissionMode) state.mode = ev.permissionMode; if (ev.model) state.model = ev.model; if (ev.effort !== undefined) state.effort = ev.effort;
+          renderModeChip(); renderModelChip(); break;
+        case 'status': if (ev.permissionMode) { state.mode = ev.permissionMode; renderModeChip(); } break;
+        case 'tool_progress': status.tool = ev.tool; if (!status.toolSince) status.toolSince = Date.now() - (ev.elapsed || 0) * 1000; statusPaint(); break;
+        case 'usage': if (ev.outputTokens) { status.tokens = ev.outputTokens; statusPaint(); } break;
+        case 'tool_summary': break;
+        case 'task': if (ev.summary || ev.description) thread.appendChild(el('div', 'note', (ev.kind === 'task_started' ? 'Started: ' : '') + (ev.summary || ev.description))); statusPaint(); break;
+        case 'note': thread.appendChild(el('div', 'note', ev.text)); statusPaint(); break;
         // One assistant row for the whole turn; each API message gets its own key space.
         case 'msg_start':
           msgNo += 1; partial.clear();
@@ -345,17 +432,25 @@
           break;
         case 'block_start':
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
-          partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '' });
-          if (ev.block.type === 'tool_use') renderBlock(state.live, key(ev.index), { type: 'tool_use', name: ev.block.name, id: ev.block.id, input: {} });
+          partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '', since: Date.now() });
+          if (ev.block.type === 'tool_use') { renderBlock(state.live, key(ev.index), { type: 'tool_use', name: ev.block.name, id: ev.block.id, input: {} }); status.tool = ev.block.name; status.toolSince = 0; }
+          if (ev.block.type === 'thinking') { renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: '', live: true }); status.verb = 'Thinking'; }
+          if (ev.block.type === 'text') { status.tool = null; status.verb = 'Writing'; }
+          statusPaint(); autoscroll();
           break;
         case 'delta': {
           const p = partial.get(ev.index); if (!p || !state.live) break;
           if (ev.kind === 'text_delta') { p.text += ev.text; renderBlock(state.live, key(ev.index), { type: 'text', text: p.text }); state.live.blocks.get(key(ev.index))?.classList.add('cursor'); }
-          else if (ev.kind === 'thinking_delta') { p.thinking += ev.text; renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: p.thinking }); }
+          else if (ev.kind === 'thinking_delta') { p.thinking += ev.text; renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: p.thinking, live: true }); }
           else if (ev.kind === 'input_json_delta') { p.json += ev.text; const n = state.live.blocks.get(key(ev.index)); if (n) n.querySelector('.arg').textContent = p.json.slice(0, 200); }
           autoscroll(); break;
         }
-        case 'block_stop': { const n = state.live?.blocks.get(key(ev.index)); n?.classList.remove('cursor'); break; }
+        case 'block_stop': {
+          const n = state.live?.blocks.get(key(ev.index)); n?.classList.remove('cursor');
+          const p = partial.get(ev.index);
+          if (n && p?.type === 'thinking') { n.open = false; n.classList.remove('live'); n.querySelector('.name').textContent = 'Thought for ' + Math.max(1, Math.round((Date.now() - p.since) / 1000)) + 's'; if (!p.thinking) n.classList.add('hidden'); }
+          break;
+        }
         case 'assistant':
           // final blocks for the message being streamed: re-render with full data
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
@@ -377,11 +472,13 @@
           autoscroll(); break;
         case 'tool_results':
           for (const r of ev.content) attachResult(findTool(r.tool_use_id), r);
+          status.tool = null; status.toolSince = 0; statusPaint();
           autoscroll(); break;
-        case 'permission': showPermission(ev); autoscroll(); break;
-        case 'permission_resolved': resolvePermissionCard(ev.reqId, ev.behavior); break;
+        case 'permission': showPermission(ev); status.waiting = true; statusPaint(); autoscroll(); break;
+        case 'permission_resolved': resolvePermissionCard(ev.reqId, ev.behavior); status.waiting = false; statusPaint(); break;
         case 'result':
           if (ev.isError) thread.appendChild(el('div', 'note error', ev.text));
+          state.live = null; statusStop();
           break;
         case 'error': thread.appendChild(el('div', 'note error', ev.text)); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
@@ -436,14 +533,26 @@
   input.addEventListener('input', () => {
     input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px';
     try { if (input.value) localStorage.setItem(draftKey(state.current), input.value); else localStorage.removeItem(draftKey(state.current)); } catch {}
+    paintSendButton();
   });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); } });
-  send.addEventListener('click', () => { if (state.running) stop(); else submit(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); }
+    if (e.key === 'Escape' && state.running) { e.preventDefault(); stop(); }
+  });
+  send.addEventListener('click', () => { if (state.running && !input.value.trim()) stop(); else submit(); });
 
   async function submit() {
     const text = input.value.trim(); if (!text) return;
     input.value = ''; input.style.height = 'auto'; try { localStorage.removeItem(draftKey(state.current)); } catch {}
-    thread.appendChild(userMsg(text)); empty.classList.remove('show'); stickToBottom = true; autoscroll();
+    empty.classList.remove('show'); stickToBottom = true;
+    // Claude is mid-turn on this chat: the message is queued and runs right after, like Desktop.
+    if (state.running && state.current) {
+      const ghost = userMsg(text, { queued: true }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
+      try { const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ text }) }); if (r.id) ghost.dataset.promptId = r.id; }
+      catch (e) { ghost.remove(); thread.appendChild(el('div', 'note error', e.message)); }
+      return;
+    }
+    thread.appendChild(userMsg(text)); autoscroll();
     setRunning(true);
     try {
       if (state.current) {

@@ -5,12 +5,57 @@
   "type": "module",
   "description": "Self-hosted Claude-style web app that lists, continues and starts local Claude Code sessions from any device.",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "desktop": "electron .",
+    "dist": "electron-builder --win nsis"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.274",
     "dompurify": "^3.4.15",
     "express": "^5.2.1",
     "marked": "^18.0.13"
+  },
+  "devDependencies": {
+    "electron": "^41.7.1",
+    "electron-builder": "^26.15.3"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "com.arya.claude-remote",
+    "productName": "Claude Remote",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "server.mjs",
+      "lib/**",
+      "public/**",
+      "desktop/**",
+      "build/icon.png",
+      "package.json",
+      "node_modules/**",
+      "!node_modules/electron/**",
+      "!node_modules/.cache/**"
+    ],
+    "asarUnpack": [
+      "node_modules/@anthropic-ai/claude-agent-sdk/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }

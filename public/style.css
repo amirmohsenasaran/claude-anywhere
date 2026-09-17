@@ -347,3 +347,24 @@ code, pre { font-family: var(--mono); font-size: 13px; }
   .msg.user .msg-body { max-width: 92%; }
   .greeting { font-size: 27px; }
 }
+
+/* ---------- v5: live status line, thinking in progress, queued messages ---------- */
+.status-line { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px 40px; font-size: 14px; color: var(--ink-2); min-height: 24px; }
+.status-line .spark.spin { display: inline-block; animation: spin 1.6s linear infinite; font-size: 15px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.shimmer {
+  background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink) 45%, var(--ink-3) 90%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer 1.8s linear infinite; font-weight: 500;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.status-meta { font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.step.thinking.live > summary .name { background: linear-gradient(90deg, var(--ink-3), var(--ink), var(--ink-3)); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
+.step.thinking.live .step-body { color: var(--ink-3); font-size: 13.5px; line-height: 1.55; max-height: 240px; overflow: auto; }
+.step.thinking > summary { color: var(--ink-3); }
+.step.thinking > summary .name { color: var(--ink-3); font-weight: 500; }
+.msg.user.queued { opacity: .55; }
+.msg.user.queued .msg-body { border: 1px dashed var(--line-2); background: transparent; }
+.queued-label { font-size: 11.5px; color: var(--ink-3); margin: 4px 6px 0 0; text-align: end; width: 100%; }
+.msg.user { flex-wrap: wrap; }
+@media (max-width: 860px) { .status-line { margin-inline-start: 36px; font-size: 13.5px; } }
