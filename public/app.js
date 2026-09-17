@@ -875,7 +875,14 @@
   }
   $('#attach-btn').addEventListener('click', () => $('#file-input').click());
   $('#file-input').addEventListener('change', () => { addFiles([...$('#file-input').files]); $('#file-input').value = ''; });
-  input.addEventListener('paste', (e) => { const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); addFiles(files); } });
+  // Paste: a screenshot from the clipboard (Windows, Android, iOS) arrives as items, sometimes as files.
+  function pastedFiles(e) {
+    const out = [...(e.clipboardData?.files || [])];
+    if (!out.length) for (const it of e.clipboardData?.items || []) { if (it.kind === 'file') { const f = it.getAsFile(); if (f) out.push(f); } }
+    return out;
+  }
+  input.addEventListener('paste', (e) => { const files = pastedFiles(e); if (files.length) { e.preventDefault(); addFiles(files); } });
+  document.addEventListener('paste', (e) => { if (e.target === input || $('#app').classList.contains('hidden')) return; const files = pastedFiles(e); if (files.length) { e.preventDefault(); addFiles(files); input.focus(); } });
   for (const evn of ['dragover', 'dragenter']) document.addEventListener(evn, (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); $('#composer').classList.add('drop'); } });
   document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) $('#composer').classList.remove('drop'); });
   document.addEventListener('drop', (e) => { $('#composer').classList.remove('drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles([...e.dataTransfer.files]); } });
