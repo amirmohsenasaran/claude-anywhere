@@ -169,10 +169,14 @@
 
   // Right-click on a session row: the Desktop context menu.
   const ctx = $('#ctx-menu');
-  function showCtxMenu(s, x, y) {
+  function showCtxMenu(s, x, y, kind = 'session', group = null) {
     ctx.innerHTML = '';
     const add = (label, hint, fn, cls) => { const b = item(label, '', false, () => { ctx.classList.add('hidden'); fn(); }, { hint }); if (cls) b.classList.add(cls); ctx.appendChild(b); };
     add('Open', '', () => { location.hash = '#/s/' + s.id; });
+    ctx.appendChild(el('div', 'menu-sep'));
+    const gk = group || groupKey(s); const lk = kind === 'pinned' ? 'pinned' : 'session';
+    add('Move up', '', () => nudge(lk, gk, s.id, -1));
+    add('Move down', '', () => nudge(lk, gk, s.id, 1));
     ctx.appendChild(el('div', 'menu-sep'));
     add(s.pinned ? 'Unpin' : 'Pin', 'P', () => togglePin(s.id, !s.pinned));
     add('Rename', 'R', async () => { const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${s.id}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); if (state.current === s.id) $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } });
@@ -188,14 +192,14 @@
   document.addEventListener('click', (e) => { if (!ctx.contains(e.target)) ctx.classList.add('hidden'); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctx.classList.add('hidden'); });
 
-  function sessionRow(s) {
+  function sessionRow(s, kind = 'session', group = null) {
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : ''));
     a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
-    a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY); });
+    a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY, kind, group); });
     // Long-press on the phone opens the same menu; the tap that ends it must not open the session.
     let pressTimer = null, pressed = false;
-    a.addEventListener('touchstart', (e) => { pressed = false; const t = e.touches[0]; pressTimer = setTimeout(() => { pressed = true; showCtxMenu(s, t.clientX, t.clientY); if (navigator.vibrate) navigator.vibrate(10); }, 450); }, { passive: true });
+    a.addEventListener('touchstart', (e) => { pressed = false; const t = e.touches[0]; pressTimer = setTimeout(() => { pressed = true; showCtxMenu(s, t.clientX, t.clientY, kind, group); if (navigator.vibrate) navigator.vibrate(10); }, 450); }, { passive: true });
     for (const evn of ['touchend', 'touchmove', 'touchcancel']) a.addEventListener(evn, () => clearTimeout(pressTimer), { passive: true });
     a.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = false; } });
     if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
@@ -206,13 +210,71 @@
     a.appendChild(pin);
     return a;
   }
+  // ---------- a sidebar that keeps its order ----------
+  // Nothing re-sorts itself when a session is written to. New projects go to the bottom,
+  // new sessions to the top of their project, once; after that only drag-and-drop
+  // (or Move up / Move down on the phone) changes the order. Saved on the server.
+  state.order = { projects: [], sessions: {}, pinned: [] };
+  const groupKey = (s) => (s.cwd || s.project || 'Other').replace(/[\\/]+$/, '').toLowerCase();
+  function applyOrder() {
+    const o = state.order; let changed = false;
+    const groups = new Map();
+    for (const s of state.sessions) { const k = groupKey(s); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    for (const k of groups.keys()) if (!o.projects.includes(k)) { o.projects.push(k); changed = true; }
+    for (const [k, items] of groups) {
+      const known = o.sessions[k] || (o.sessions[k] = []);
+      const fresh = items.filter((s) => !known.includes(s.id)).sort((a, b) => (b.createdAt || b.lastModified) - (a.createdAt || a.lastModified)).map((s) => s.id);
+      if (fresh.length) { known.unshift(...fresh); changed = true; }
+    }
+    const pinnedNow = state.sessions.filter((s) => s.pinned).map((s) => s.id);
+    for (const id of pinnedNow) if (!o.pinned.includes(id)) { o.pinned.push(id); changed = true; }
+    if (changed) saveOrder();
+  }
+  let saveTimer = null;
+  function saveOrder() { clearTimeout(saveTimer); saveTimer = setTimeout(() => api('/order', { method: 'POST', body: JSON.stringify(state.order) }).catch(() => {}), 400); }
+  const byOrder = (list, order, key) => list.slice().sort((a, b) => { const ia = order.indexOf(key(a)), ib = order.indexOf(key(b)); return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib); });
+
+  // drag & drop (mouse): rows within their group, project headers among projects
+  let drag = null;
+  function makeDraggable(node, kind, id, group) {
+    node.draggable = true;
+    node.addEventListener('dragstart', (e) => { drag = { kind, id, group }; node.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', id); } catch {} });
+    node.addEventListener('dragend', () => { node.classList.remove('dragging'); drag = null; document.querySelectorAll('.drop-before, .drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
+    node.addEventListener('dragover', (e) => {
+      if (!drag || drag.kind !== kind || drag.group !== group || drag.id === id) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      const r = node.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+      node.classList.toggle('drop-before', !after); node.classList.toggle('drop-after', after);
+    });
+    node.addEventListener('dragleave', () => node.classList.remove('drop-before', 'drop-after'));
+    node.addEventListener('drop', (e) => {
+      if (!drag || drag.kind !== kind || drag.group !== group || drag.id === id) return;
+      e.preventDefault();
+      const r = node.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+      moveInOrder(kind, group, drag.id, id, after); drag = null;
+    });
+  }
+  function orderList(kind, group) { return kind === 'project' ? state.order.projects : kind === 'pinned' ? state.order.pinned : (state.order.sessions[group] || (state.order.sessions[group] = [])); }
+  function moveInOrder(kind, group, id, targetId, after) {
+    const list = orderList(kind, group);
+    const from = list.indexOf(id); if (from < 0) return; list.splice(from, 1);
+    let to = list.indexOf(targetId); if (to < 0) to = list.length; if (after) to += 1;
+    list.splice(to, 0, id); saveOrder(); renderSessions();
+  }
+  function nudge(kind, group, id, dir) {
+    const list = orderList(kind, group); const i = list.indexOf(id); const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    list.splice(i, 1); list.splice(j, 0, id); saveOrder(); renderSessions();
+  }
+
   function renderSessions() {
+    applyOrder();
     const list = $('#session-list'); list.innerHTML = '';
-    const pinned = state.sessions.filter((s) => s.pinned);
+    const pinned = byOrder(state.sessions.filter((s) => s.pinned), state.order.pinned, (s) => s.id);
     if (pinned.length) {
       const g = el('details', 'project-group'); g.open = !collapsed.has('__pinned');
       const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, 'Pinned')); sm.appendChild(el('span', 'cnt', String(pinned.length))); g.appendChild(sm);
-      for (const s of pinned) g.appendChild(sessionRow(s));
+      for (const s of pinned) { const row = sessionRow(s, 'pinned', '__pinned'); makeDraggable(row, 'pinned', s.id, '__pinned'); g.appendChild(row); }
       g.addEventListener('toggle', () => rememberCollapsed('__pinned', !g.open));
       list.appendChild(g);
     }
@@ -220,9 +282,12 @@
     const groups = new Map();
     for (const s of state.sessions) {
       if (q && !(s.title + ' ' + s.project + ' ' + s.branch).toLowerCase().includes(q)) continue;
-      const k = s.project || 'Other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s);
+      const k = groupKey(s); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s);
     }
-    for (const [name, items] of groups) {
+    const keys = byOrder([...groups.keys()], state.order.projects, (k) => k);
+    for (const k of keys) {
+      const items = byOrder(groups.get(k), state.order.sessions[k] || [], (s) => s.id);
+      const name = items[0].project || 'Other';
       const g = el('details', 'project-group'); g.open = q ? true : !collapsed.has(name);
       const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, name)); sm.appendChild(el('span', 'cnt', String(items.length)));
       // "+" on the project row: a new session in that folder, like Desktop
@@ -230,14 +295,27 @@
       add.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
       add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); state.cwd = items[0].cwd; localStorage.setItem('cr.cwd', state.cwd); location.hash = '#/'; renderProjectChip(); });
       sm.appendChild(add);
-      sm.title = items[0].cwd; g.appendChild(sm);
-      for (const s of items) g.appendChild(sessionRow(s));
+      sm.title = items[0].cwd + '\nDrag to reorder projects'; g.appendChild(sm);
+      makeDraggable(sm, 'project', k, '__projects');
+      sm.addEventListener('contextmenu', (e) => { e.preventDefault(); showProjectMenu(k, name, e.clientX, e.clientY); });
+      for (const s of items) { const row = sessionRow(s, 'session', k); makeDraggable(row, 'session', s.id, k); g.appendChild(row); }
       g.addEventListener('toggle', () => { if (!q) rememberCollapsed(name, !g.open); });
       list.appendChild(g);
     }
     if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
     if (q && !groups.size) list.appendChild(el('div', 'muted small pad', 'No sessions match.'));
     updatePinButton();
+  }
+  function showProjectMenu(k, name, x, y) {
+    ctx.innerHTML = '';
+    const add = (label, hint, fn) => { const b = item(label, '', false, () => { ctx.classList.add('hidden'); fn(); }, { hint }); ctx.appendChild(b); };
+    ctx.appendChild(el('div', 'menu-title', name));
+    add('Move up', '', () => nudge('project', '__projects', k, -1));
+    add('Move down', '', () => nudge('project', '__projects', k, 1));
+    ctx.classList.remove('hidden');
+    if (isPhone()) { ctx.style.left = ctx.style.top = ''; return; }
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
   }
   // search (magnifier in the sidebar), back / forward
   $('#search-btn').addEventListener('click', () => {
@@ -1226,6 +1304,7 @@
     let me;
     try { me = await refreshMe(); } catch { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+    try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
     await Promise.all([loadSessions(), loadProjects()]);
     route();
     // First time on this device: ask which account to use (local or token).

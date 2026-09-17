@@ -358,6 +358,17 @@ app.post('/api/accounts/token', async (req, res) => {
 });
 app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete('token'); res.json({ active: 'local' }); });
 
+// Sidebar order (projects, sessions within each project, pinned), shared by every device.
+// The list never re-sorts itself: new items slot in once, then only drag-and-drop moves them.
+app.get('/api/order', (_req, res) => { const p = readPrefs(); res.json(p.order || { projects: [], sessions: {}, pinned: [] }); });
+app.post('/api/order', (req, res) => {
+  const o = req.body || {};
+  const p = readPrefs();
+  p.order = { projects: Array.isArray(o.projects) ? o.projects.slice(0, 500) : [], sessions: o.sessions && typeof o.sessions === 'object' ? o.sessions : {}, pinned: Array.isArray(o.pinned) ? o.pinned.slice(0, 500) : [] };
+  writePrefs(p);
+  res.json(p.order);
+});
+
 app.post('/api/sessions/:id/pin', (req, res) => {
   const p = readPrefs();
   const set = new Set(p.pinned);

@@ -348,3 +348,12 @@ body { font-size: 14px; }
 .update-banner { border-color: #3b82f6; }
 .update-banner .sb-pr { background: #3b82f6; color: #fff; border: 0; }
 .update-banner .sb-pr:hover { background: #2f6fd6; }
+
+/* ---------- v20: fixed sidebar order, drag & drop ---------- */
+.session-item.dragging, .project-group > summary.dragging { opacity: .4; }
+.session-item.drop-before { box-shadow: inset 0 2px 0 #3b82f6; }
+.session-item.drop-after { box-shadow: inset 0 -2px 0 #3b82f6; }
+.project-group > summary.drop-before { box-shadow: inset 0 2px 0 #3b82f6; }
+.project-group > summary.drop-after { box-shadow: inset 0 -2px 0 #3b82f6; }
+.project-group > summary { cursor: grab; }
+.project-group > summary:active { cursor: grabbing; }
