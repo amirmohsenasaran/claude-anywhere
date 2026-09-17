@@ -11,6 +11,7 @@
 // your own LAN. It is protected by the shared password in .env.
 
 import express from 'express';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -76,9 +77,28 @@ function writePrefs(p) {
 
 // Which Claude account the CLI on this machine is signed in as. Read from the
 // same files Claude Code keeps its login in; nothing secret leaves this function.
+let whoCache = { at: 0, value: null };
 function whoAmI() {
+  if (Date.now() - whoCache.at < 60000 && whoCache.value) return whoCache.value;
+  // Preferred: ask the CLI itself, with this process's env, so a token set in .env
+  // (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY) is reported the way it will be used.
+  try {
+    const raw = execFileSync('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+    const j = JSON.parse(raw);
+    const value = {
+      email: j.email || '', name: '', org: j.orgName || '', plan: j.subscriptionType || '',
+      auth: j.authMethod || (j.loggedIn ? 'unknown' : 'none'), loggedIn: !!j.loggedIn,
+      source: process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'CLAUDE_CODE_OAUTH_TOKEN' : process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY' : 'claude login',
+      projectsDir: j.projectsDirectory || '',
+    };
+    whoCache = { at: Date.now(), value };
+    return value;
+  } catch {}
+  return whoAmIFromFiles();
+}
+function whoAmIFromFiles() {
   const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const out = { email: '', name: '', org: '', plan: '' };
+  const out = { email: '', name: '', org: '', plan: '', source: 'claude login' };
   try {
     const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
     const a = j.oauthAccount || {};

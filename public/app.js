@@ -460,10 +460,12 @@
       const acc = me.account || {};
       $('#sidebar-name').textContent = me.userName;
       $('#sidebar-account').innerHTML = '';
-      $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'api-key' ? 'API key' : 'Not signed in')));
+      const viaToken = acc.source && acc.source !== 'claude login';
+      const who = acc.email || (acc.auth === 'oauth_token' ? 'Token from claude setup-token' : acc.loggedIn === false ? 'Not signed in' : 'Signed in');
+      $('#sidebar-account').appendChild(document.createTextNode(who));
       if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
-      $('#sidebar-host').textContent = 'Claude Code on ' + me.host;
-      $('#sidebar-user').title = [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?')].filter(Boolean).join('\n');
+      $('#sidebar-host').textContent = (viaToken ? 'Token from .env (' + acc.source + ') · ' : 'Machine login · ') + me.host;
+      $('#sidebar-user').title = [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?'), 'Source: ' + (acc.source || '?'), acc.projectsDir && 'Sessions: ' + acc.projectsDir].filter(Boolean).join('\n');
       $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
     } catch { return; }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
