@@ -149,6 +149,17 @@ only hides the window; the server, and the phone, keep running.
 
 ## Updating from the phone
 
+**Rebuild app** closes the window, compiles (1–3 minutes) and opens it again.
+The chat does not stop: the server is its own process and stays up, so a turn
+in flight keeps running and the phone and browser keep working — the log is at
+`/api/rebuild/log`, which the App panel shows live. The window has to go
+because the running app holds files in `target/release`; cargo fails with
+"used by another process" otherwise, even if the exe is renamed aside.
+
+**Restart server** only reloads the server code, and needs Claude to be idle
+(it would kill a running turn), so it answers 409 while one is in flight.
+
+
 Open Connectors & plugins (plug icon at the top) → **App**:
 
 - **Restart server** — picks up new server and page code (`server.mjs`, `lib/`,
