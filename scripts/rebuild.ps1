@@ -1,5 +1,5 @@
-# Rebuild the desktop app and relaunch it. Started detached by the server
-# (POST /api/rebuild) so it survives the app restart.
+# Rebuild the desktop app and relaunch it. Started by the server
+# (POST /api/rebuild); it outlives the window it closes.
 #
 # The window has to go away while it builds: the running app holds files in
 # target/release, and cargo fails with "used by another process" even if the
