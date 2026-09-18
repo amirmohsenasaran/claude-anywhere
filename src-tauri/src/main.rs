@@ -76,6 +76,10 @@ fn main() {
                 .title("Claude")
                 .inner_size(1200.0, 820.0)
                 .min_inner_size(380.0, 600.0)
+                // No Windows caption bar: the page draws the title bar and the
+                // minimise / maximise / close buttons itself, as Claude Desktop does.
+                .decorations(false)
+                .shadow(true)
                 .visible(!hidden)
                 .build()?;
             let _ = win.set_title("Claude");

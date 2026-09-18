@@ -1065,6 +1065,34 @@
     if (state.tasks.find((x) => x.id === t.id)?.status === 'running') o.timer = setInterval(load, 2000);
   }
 
+  // ---------- the window's own title bar (native app only) ----------
+  // The Tauri window is frameless, like Claude Desktop's: the header row is the
+  // drag handle and the three buttons at the top right belong to the page.
+  (function titleBar() {
+    const T = window.__TAURI__;
+    if (!T?.window?.getCurrentWindow) return;
+    const win = T.window.getCurrentWindow();
+    const root = document.documentElement;
+    root.classList.add('in-app');
+    const paintMax = async () => { try { root.classList.toggle('maximized', await win.isMaximized()); } catch {} };
+    paintMax();
+    window.addEventListener('resize', paintMax);
+    $('#win-min').addEventListener('click', () => win.minimize().catch(() => {}));
+    $('#win-max').addEventListener('click', async () => { try { await win.toggleMaximize(); } catch {} paintMax(); });
+    $('#win-close').addEventListener('click', () => win.close().catch(() => {}));
+    // Dragging: anywhere in the header or the top of the sidebar that is not a control.
+    const DRAG_ZONES = '.topbar, .sidebar-top, .tp-head';
+    const NO_DRAG = 'button, a, input, textarea, select, .menu, .chip, [role="button"], .pill';
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || !e.target.closest(DRAG_ZONES) || e.target.closest(NO_DRAG)) return;
+      win.startDragging().catch(() => {});
+    });
+    document.addEventListener('dblclick', async (e) => {
+      if (!e.target.closest(DRAG_ZONES) || e.target.closest(NO_DRAG)) return;
+      try { await win.toggleMaximize(); } catch {} paintMax();
+    });
+  })();
+
   // ---------- Changes: the files this folder has changed, and their diffs (Desktop's Changes pane) ----------
   const changesPanel = $('#changes-panel'), chList = $('#ch-list'), chDiff = $('#ch-diff');
   let changesOpen = false, changesData = null, changesFile = null;

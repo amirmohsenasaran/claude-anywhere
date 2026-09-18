@@ -119,6 +119,18 @@ installer is about 250 MB and does not depend on the `claude` CLI.
   running until they finish or you stop them, and the session process stays up
   until then. Finished tasks stay listed with their result until cleared.
 
+## The window
+
+The app window has no Windows title bar, like Claude Desktop's. The page draws
+its own: the header row (and the top of the sidebar) is the drag handle,
+double-clicking it maximises, and minimise / maximise / close sit at the top
+right. They only appear inside the app; in a browser the page looks unchanged.
+
+The buttons talk to the window through Tauri, and the page is served over http,
+which counts as a remote origin, so the window commands are granted to it in
+`src-tauri/capabilities/window-controls.json` — nothing else is. Closing still
+only hides the window; the server, and the phone, keep running.
+
 ## Sidebar dots, Changes, Rewind
 
 - **Dots.** A session that is waiting for your approval gets a pulsing dot;

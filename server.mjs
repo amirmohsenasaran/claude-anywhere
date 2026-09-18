@@ -79,7 +79,10 @@ function parseAttachments(body) {
 
 app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked/lib/marked.umd.js')));
 app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
-app.use(express.static(path.join(here, 'public'), { extensions: ['html'] }));
+// The app's own WebView caches hard: without this it keeps serving the page it
+// first loaded, so "Restart server" and a rebuild would look like nothing happened.
+// `no-cache` still allows 304s - it only forces a revalidation.
+app.use(express.static(path.join(here, 'public'), { extensions: ['html'], setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
 app.get('/api/config', (_req, res) => res.json({ passwordRequired: PASSWORD_REQUIRED, userName: USER_NAME }));
 
