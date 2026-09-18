@@ -69,6 +69,23 @@ folder — modified, added, deleted, renamed — with per-file line counts. Tap 
 file for its diff with old and new line numbers; untracked files show as fully
 added. It refreshes when a turn ends.
 
+## Preview
+
+*Preview* in the session menu shows whatever the project's dev server is
+serving, inside the app — and therefore on your phone, which cannot reach the
+PC's localhost by itself.
+
+- The port list is every local server that is listening, with the process
+  behind it, so you pick "5173 · Node" rather than remembering a number.
+- Everything is proxied through the app's own origin, so relative URLs,
+  absolute ones and the hot-reload socket all keep working, and a page that
+  sets `X-Frame-Options` still appears.
+- The path box takes any route (`/settings`, `/api/health`), and the arrow
+  opens the same page in a full tab.
+- Localhost only, by construction: the proxy takes a port, and the host is
+  always `127.0.0.1`. It is a window onto what is already running on your
+  machine, never a way to browse the internet through it.
+
 ## Watching your other windows
 
 Open a session that VS Code, a terminal or Claude Desktop is working on and the
@@ -147,7 +164,9 @@ worth doing:
 - The PR bar's monitoring (CI failures, review comments, auto-merge).
 - Per-session git worktrees.
 - Keep computer awake.
-- Terminal, browser and preview panes; split view.
+- Preview tools for Claude itself: reading the previewed page's console,
+  network errors and DOM, the way Claude Desktop's `preview_*` tools do.
+- Terminal and browser panes; split view.
 - macOS and Linux shells (the web client already works everywhere; only the
   native window is Windows-only).
 

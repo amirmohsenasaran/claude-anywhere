@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Preview panel.** Whatever the project's dev server is serving, shown inside
+  the app and therefore on your phone, which cannot reach the PC's localhost by
+  itself. Ports are discovered with the process behind them; everything is
+  proxied through the app's own origin so relative and absolute URLs, redirects
+  and the hot-reload socket keep working, and frame-busting headers are dropped.
+  Localhost only, by construction.
+
 ### Fixed
 
 - **Rebuild app never started anything.** The server spawned its script with

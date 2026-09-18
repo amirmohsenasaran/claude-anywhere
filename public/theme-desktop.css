@@ -491,3 +491,21 @@ button.sb-diff:hover { background: var(--bg-3); }
   .in-app .tasks-panel .tp-head { padding-inline-end: 12px; padding-top: calc(var(--titlebar-h) - 10px); }
 }
 #tp-clear.btn.small { font-size: 12px; padding: 3px 9px; }
+
+/* ---------- v27: the preview panel ---------- */
+.preview-panel { width: 520px; }
+.preview-panel .tp-head { gap: 6px; }
+.pv-path { flex: 1; min-width: 60px; font-family: var(--mono); font-size: 12px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); color: var(--ink); direction: ltr; }
+.pv-path:focus { outline: none; border-color: var(--line-2); }
+#pv-port.chip { flex: none; }
+.pv-frame { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+#pv-note:empty { display: none; }
+@media (max-width: 860px) { .preview-panel { width: auto; } .preview-panel .tp-head { flex-wrap: wrap; } }
+
+/* v28: a narrow app window has ~240px of header left once the window buttons
+   take their 150; the live pill alone wanted all of it, so there it keeps the
+   dot and drops the words (the title attribute still says them). */
+@media (max-width: 700px) {
+  .in-app #live-pill { max-width: 34px; padding: 0 9px; overflow: hidden; }
+  .in-app #live-pill #live-text { display: none; }
+}

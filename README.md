@@ -49,7 +49,8 @@ in the other room, or a browser on your Mac, over your own private network.
 | Answer a permission prompt away from the desk | no | yes, with a notification |
 | Where your code goes | stays on the machine | stays on the machine; there is no server of ours |
 | Source | closed | MIT, ~4,000 lines you can read and change |
-| Panes: terminal, browser, preview, worktrees | yes | not yet |
+| Preview of your dev server | yes, on that machine | yes, and on your phone |
+| Panes: terminal, browser, worktrees | yes | not yet |
 | macOS and Linux app | yes | web client only; the native window is Windows |
 | Support | Anthropic | an issue tracker and me |
 
@@ -72,6 +73,8 @@ Use Desktop at the desk. Use this when you are not at it.
   with elapsed time, live output and its own Stop; send one to the background
   and let Claude carry on.
 - **Changes panel**: every file that differs from `HEAD`, with per-file diffs.
+- **Preview**: the project's dev server inside the app, proxied so your phone
+  can see a server that only listens on the PC — hot reload included.
 - **Rewind to here** on any earlier message: a fork of the session up to just
   before it, with the message back in the composer to change and resend.
 - **Watches your other windows**: a session being worked on in VS Code, a
@@ -162,6 +165,8 @@ behaviours that are easy to get wrong.
 Near term, in the order they are likely to happen:
 
 - [ ] Sidebar filters: group by date or state, show archived, sort.
+- [ ] Preview tools for Claude: the previewed page's console, network errors
+      and DOM, so it can fix what it is looking at.
 - [ ] A file browser, and search inside transcripts.
 - [ ] Keyboard shortcuts and a command palette (⌘K), for the Mac browser.
 - [ ] The PR bar's monitoring: CI failures, review comments, auto-merge.

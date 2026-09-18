@@ -25,6 +25,7 @@ import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, cont
 import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS, sessionFile } from './lib/tail.mjs';
+import { parsePreviewUrl, portFromReferer, proxyRequest, proxyUpgrade, listLocalPorts } from './lib/preview.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -85,6 +86,30 @@ function parseAttachments(body) {
   return { text, images };
 }
 
+// ---------- preview: the project's own dev server, shown inside the app ----------
+// The frame cannot send an Authorization header, and neither can the requests the
+// previewed page makes, so the panel asks for a cookie first and everything under
+// /preview rides on that. Localhost only, by construction: the port is all the
+// proxy takes, and the host is always 127.0.0.1.
+const PREVIEW_COOKIE = 'ca_preview';
+const cookieOf = (req, name) => (req.headers.cookie || '').split(';').map((c) => c.trim()).find((c) => c.startsWith(name + '='))?.slice(name.length + 1);
+const previewAllowed = (req) => knownToken(cookieOf(req, PREVIEW_COOKIE) || '') || knownToken(String(req.query?.token || ''));
+app.use((req, res, next) => {
+  const hit = parsePreviewUrl(req.path);
+  if (hit) {
+    if (!previewAllowed(req)) return res.status(401).send('Open the preview from the app first.');
+    const qs = req.originalUrl.includes('?') ? '?' + req.originalUrl.split('?').slice(1).join('?') : '';
+    return proxyRequest(req, res, hit.port, hit.rest + qs);
+  }
+  // A previewed page asking for an absolute path (/assets/app.js) lands here;
+  // its referer says which dev server meant to answer it.
+  if (!req.path.startsWith('/api/')) {
+    const port = portFromReferer(req.headers.referer || '');
+    if (port && previewAllowed(req)) return proxyRequest(req, res, port, req.originalUrl);
+  }
+  next();
+});
+
 app.use('/vendor/marked.js', express.static(path.join(here, 'node_modules/marked/lib/marked.umd.js')));
 app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompurify/dist/purify.min.js')));
 // The app's own WebView caches hard: without this it keeps serving the page it
@@ -107,6 +132,15 @@ app.use('/api', (req, res, next) => {
   if (!knownToken(auth.replace(/^Bearer /, '')) && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
+
+// Signed in, so the cookie the frame will ride on can be handed out.
+app.get('/api/preview/grant', (req, res) => {
+  // Lax, not None: the frame is same-origin, so this is enough, and it never
+  // travels to anyone else's site.
+  res.setHeader('Set-Cookie', `${PREVIEW_COOKIE}=${TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+  res.json({ ok: true });
+});
+app.get('/api/preview/ports', async (_req, res) => res.json({ ports: await listLocalPorts({ self: PORT }) }));
 
 // ---------- small preferences file: pinned sessions (shared by every device) ----------
 const DATA_DIR = envOf('DATA_DIR') || path.join(here, 'data');
@@ -817,6 +851,14 @@ export { TOKEN, PASSWORD, PASSWORD_REQUIRED, HOST, PORT, bus };
 export function startServer({ host = HOST, port = PORT } = {}) {
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
+      // Hot reload is a WebSocket, and express never sees an upgrade.
+      server.on('upgrade', (req, socket, head) => {
+        const hit = parsePreviewUrl((req.url || '').split('?')[0]);
+        if (!hit) return;
+        if (!knownToken(cookieOf(req, PREVIEW_COOKIE) || '')) return socket.destroy();
+        const qs = (req.url || '').includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
+        proxyUpgrade(req, socket, head, hit.port, hit.rest + qs);
+      });
       console.log(`claude-anywhere listening on http://${host}:${port}`);
       resolve({ server, url: `http://${host}:${port}` });
     });

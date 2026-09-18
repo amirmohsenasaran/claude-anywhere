@@ -528,6 +528,7 @@
     m.appendChild(item('Rename', '', false, async () => { m.classList.add('hidden'); const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${state.current}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } }, { hint: 'R' }));
     m.appendChild(item('Fork', '', false, async () => { m.classList.add('hidden'); try { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } }, { hint: 'F' }));
     m.appendChild(item('Changes', '', false, () => { m.classList.add('hidden'); openChanges(); }));
+    m.appendChild(item('Preview', 'Show this project\'s dev server, here and on your phone', false, () => { m.classList.add('hidden'); openPreview(); }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
     const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
@@ -1023,7 +1024,7 @@
     clearInterval(tasksTimer); tasksTimer = null;
     if (running.length && tasksOpen) tasksTimer = setInterval(() => { for (const t of running) { const n = tpList.querySelector(`[data-task="${t.id}"] .tp-elapsed`); if (n) n.textContent = fmtDur(Date.now() - t.startedAt); } }, 1000);
   }
-  function openTasks() { if (changesOpen) closeChanges(); tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
+  function openTasks() { if (changesOpen) closeChanges(); if (previewOpen) closePreview(); tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
   function closeTasks() { tasksOpen = false; tasksPanel.classList.add('hidden'); app.classList.remove('tasks-open'); for (const [, o] of outputOpen) clearInterval(o.timer); outputOpen.clear(); paintTasks(); }
   $('#tasks-bar').addEventListener('click', () => tasksOpen ? closeTasks() : openTasks());
   $('#tp-close').addEventListener('click', closeTasks);
@@ -1136,10 +1137,65 @@
     });
   })();
 
+  // ---------- Preview: whatever this project's dev server is serving ----------
+  // The page is proxied through our own origin, so the phone can see a server
+  // that only listens on the PC's localhost, and hot reload keeps working.
+  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note');
+  let previewOpen = false, pvPort = 0, pvPorts = [];
+  const pvKey = () => 'cr.preview.' + (state.cwd || 'any');
+  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: $('#pv-path').value })); } catch {} }
+  function pvRecall() { try { return JSON.parse(localStorage.getItem(pvKey()) || '{}'); } catch { return {}; } }
+
+  async function openPreview() {
+    if (tasksOpen) closeTasks();
+    if (changesOpen) closeChanges();
+    previewOpen = true; pvPanel.classList.remove('hidden'); app.classList.add('panel-open');
+    // The frame cannot send our token, so the server hands out a cookie first.
+    try { await api('/preview/grant'); } catch (e) { pvNote.textContent = e.message; }
+    const saved = pvRecall();
+    if (saved.path) $('#pv-path').value = saved.path;
+    await loadPorts();
+    const pick = saved.port && pvPorts.some((p) => p.port === saved.port) ? saved.port : (pvPorts.find((p) => p.port >= 3000 && p.port <= 9999) || pvPorts[0])?.port;
+    if (pick) usePort(pick); else { pvNote.textContent = 'Nothing is listening on this machine yet. Start the dev server and press refresh.'; pvNote.classList.remove('hidden'); }
+  }
+  function closePreview() { previewOpen = false; pvPanel.classList.add('hidden'); app.classList.remove('panel-open'); pvFrame.src = 'about:blank'; }
+  $('#pv-close').addEventListener('click', closePreview);
+
+  async function loadPorts() {
+    try { const r = await api('/preview/ports'); pvPorts = r.ports || []; }
+    catch (e) { pvPorts = []; pvNote.textContent = e.message; }
+  }
+  function usePort(port) {
+    pvPort = port;
+    const found = pvPorts.find((p) => p.port === port);
+    $('#pv-port-name').textContent = port + (found?.label ? ' · ' + found.label : '');
+    show();
+  }
+  function show() {
+    if (!pvPort) return;
+    let p = $('#pv-path').value.trim() || '/';
+    if (!p.startsWith('/')) p = '/' + p;
+    pvNote.classList.add('hidden'); pvFrame.classList.remove('hidden');
+    pvFrame.src = '/preview/' + pvPort + p;
+    pvRemember();
+  }
+  $('#pv-reload').addEventListener('click', () => { loadPorts(); show(); });
+  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + ($('#pv-path').value || '/'), '_blank'); });
+  $('#pv-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); show(); } });
+  pvFrame.addEventListener('load', () => { pvNote.classList.add('hidden'); });
+  menuFor('#pv-port', '#pv-port-menu', (m) => {
+    m.innerHTML = '';
+    if (!pvPorts.length) { m.appendChild(el('div', 'muted small pad', 'Nothing is listening.')); return; }
+    m.appendChild(el('div', 'menu-title', 'Listening on this machine'));
+    for (const p of pvPorts) {
+      m.appendChild(item(String(p.port), p.label || p.process || '', p.port === pvPort, () => { m.classList.add('hidden'); usePort(p.port); }));
+    }
+  });
+
   // ---------- Changes: the files this folder has changed, and their diffs (Desktop's Changes pane) ----------
   const changesPanel = $('#changes-panel'), chList = $('#ch-list'), chDiff = $('#ch-diff');
   let changesOpen = false, changesData = null, changesFile = null;
-  function openChanges() { if (tasksOpen) closeTasks(); changesOpen = true; changesPanel.classList.remove('hidden'); app.classList.add('panel-open'); showChangesList(); loadChanges(); }
+  function openChanges() { if (tasksOpen) closeTasks(); if (previewOpen) closePreview(); changesOpen = true; changesPanel.classList.remove('hidden'); app.classList.add('panel-open'); showChangesList(); loadChanges(); }
   function closeChanges() { changesOpen = false; changesFile = null; changesPanel.classList.add('hidden'); app.classList.remove('panel-open'); }
   $('#ch-close').addEventListener('click', closeChanges);
   $('#ch-refresh').addEventListener('click', () => loadChanges());
@@ -1516,7 +1572,7 @@
 
   // ---------- routing ----------
   async function openSession(id) {
-    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges();
+    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (previewOpen) closePreview();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open'); app.classList.remove('new');
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
