@@ -63,6 +63,13 @@
       <div class="sidebar-section">
         <div class="sidebar-search"><input id="search-input" type="search" placeholder="Search sessions" autocomplete="off" /></div>
         <div class="sidebar-label">Recents</div>
+        <div id="select-bar" class="select-bar hidden">
+          <span id="select-count">0 selected</span>
+          <button id="select-pin" type="button" data-needs="1">Pin</button>
+          <button id="select-archive" type="button" data-needs="1">Archive</button>
+          <button id="select-delete" type="button" class="danger" data-needs="1">Delete</button>
+          <button id="select-done" type="button" title="Clear selection">Done</button>
+        </div>
         <div id="session-list" class="session-list"><div class="muted small pad">Loading…</div></div>
       </div>
 
