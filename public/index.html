@@ -131,7 +131,7 @@
           <span id="sb-project" class="sb-project"></span>
           <span id="sb-branch" class="sb-branch"></span>
           <span class="sb-spacer"></span>
-          <span id="sb-diff" class="sb-diff hidden"><span id="sb-added" class="add">+0</span> <span id="sb-removed" class="del">−0</span></span>
+          <button id="sb-diff" class="sb-diff hidden" type="button" title="Changes"><span id="sb-added" class="add">+0</span> <span id="sb-removed" class="del">−0</span></button>
           <button id="sb-pr" class="sb-pr hidden" type="button">Create PR</button>
           <button id="sb-close" class="icon-btn small" type="button" title="Hide"><svg viewBox="0 0 20 20" width="14" height="14"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
         </div>
@@ -208,6 +208,21 @@
         <div class="composer-foot">Claude can make mistakes. Tools run on <span id="foot-host">your computer</span>.</div>
       </div>
     </main>
+
+    <aside id="changes-panel" class="tasks-panel changes-panel hidden" aria-label="Changes">
+      <div class="tp-head">
+        <button id="ch-back" class="icon-btn small hidden" type="button" title="All files"><svg viewBox="0 0 20 20" width="15" height="15"><path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <span class="tp-title">Changes</span>
+        <span id="ch-meta" class="muted"></span>
+        <span id="ch-stat" class="sb-diff ch-stat"></span>
+        <span class="sb-spacer"></span>
+        <button id="ch-refresh" class="icon-btn small" type="button" title="Refresh"><svg viewBox="0 0 20 20" width="15" height="15"><path d="M16 10a6 6 0 1 1-1.8-4.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 4v4h-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button id="ch-close" class="icon-btn small" type="button" title="Close"><svg viewBox="0 0 20 20" width="15" height="15"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+      </div>
+      <div id="ch-file" class="ch-file"></div>
+      <div id="ch-list" class="tp-list ch-list"></div>
+      <div id="ch-diff" class="ch-diffwrap hidden"></div>
+    </aside>
 
     <aside id="tasks-panel" class="tasks-panel hidden" aria-label="Tasks">
       <div class="tp-head">

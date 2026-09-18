@@ -178,6 +178,7 @@
     add('Move up', '', () => nudge(lk, gk, s.id, -1));
     add('Move down', '', () => nudge(lk, gk, s.id, 1));
     ctx.appendChild(el('div', 'menu-sep'));
+    add(s.unread || s.failed ? 'Mark as read' : 'Mark as unread', '', async () => { try { await api(`/sessions/${s.id}/${s.unread || s.failed ? 'read' : 'unread'}`, { method: 'POST' }); loadSessions(); } catch {} });
     add(s.pinned ? 'Unpin' : 'Pin', 'P', () => togglePin(s.id, !s.pinned));
     add('Rename', 'R', async () => { const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${s.id}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); if (state.current === s.id) $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } });
     add('Fork', 'F', async () => { try { const r = await api(`/sessions/${s.id}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } });
@@ -194,7 +195,8 @@
 
   function sessionRow(s, kind = 'session', group = null) {
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
-    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : ''));
+    const attn = s.needsInput ? 'needs-input' : s.failed ? 'failed' : s.unread ? 'unread' : '';
+    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : '') + (attn ? ' ' + attn : ''));
     a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
     a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY, kind, group); });
     // Long-press on the phone opens the same menu; the tap that ends it must not open the session.
@@ -202,7 +204,8 @@
     a.addEventListener('touchstart', (e) => { pressed = false; const t = e.touches[0]; pressTimer = setTimeout(() => { pressed = true; showCtxMenu(s, t.clientX, t.clientY, kind, group); if (navigator.vibrate) navigator.vibrate(10); }, 450); }, { passive: true });
     for (const evn of ['touchend', 'touchmove', 'touchcancel']) a.addEventListener(evn, () => clearTimeout(pressTimer), { passive: true });
     a.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = false; } });
-    if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
+    if (attn) { const d = el('span', 'dot ' + attn); d.title = attn === 'needs-input' ? 'Needs your input' : attn === 'failed' ? 'The last turn failed' : 'Finished while you were away'; a.appendChild(d); }
+    else if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
     const pin = el('button', 'pin'); pin.type = 'button'; pin.title = s.pinned ? 'Unpin' : 'Pin'; pin.innerHTML = PIN_SVG;
@@ -524,6 +527,7 @@
     const s = state.sessions.find((x) => x.id === state.current) || {};
     m.appendChild(item('Rename', '', false, async () => { m.classList.add('hidden'); const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${state.current}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } }, { hint: 'R' }));
     m.appendChild(item('Fork', '', false, async () => { m.classList.add('hidden'); try { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } }, { hint: 'F' }));
+    m.appendChild(item('Changes', '', false, () => { m.classList.add('hidden'); openChanges(); }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
     const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
@@ -830,9 +834,10 @@
     if (result.is_error) toolNode.classList.add('error');
   }
 
-  function userMsg(text, { queued = false, id = null, images = [] } = {}) {
+  function userMsg(text, { queued = false, id = null, images = [], uuid = null } = {}) {
     const m = el('div', 'msg user' + (queued ? ' queued' : ''));
     if (id) m.dataset.promptId = id;
+    if (uuid) m.dataset.uuid = uuid;
     m.appendChild(el('div', 'msg-avatar', (state.userName || 'U')[0].toUpperCase()));
     const b = el('div', 'msg-body'); b.dir = 'auto';
     if (images.length) {
@@ -843,8 +848,28 @@
     if (text) b.appendChild(el('div', 'msg-text', text));
     m.appendChild(b);
     if (queued) m.appendChild(el('div', 'queued-label', 'Queued · Claude reads it after the current step'));
+    if (uuid && !queued) {
+      // Rewind: a new session that stops just before this message, with the message back in the composer to change and resend.
+      const row = el('div', 'msg-actions user-actions');
+      const rw = el('button'); rw.type = 'button'; rw.title = 'Rewind to here'; rw.className = 'rewind';
+      rw.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M4 10a6 6 0 1 1 1.8 4.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 6v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Rewind to here</span>';
+      rw.addEventListener('click', () => rewindTo(uuid, text));
+      row.appendChild(rw); m.appendChild(row);
+    }
     return m;
   }
+  async function rewindTo(uuid, text) {
+    if (!state.current) return;
+    try {
+      const r = await api(`/sessions/${state.current}/rewind`, { method: 'POST', body: JSON.stringify({ uuid }) });
+      pendingPrefill = text || '';
+      await loadSessions();
+      if (r.sessionId) location.hash = '#/s/' + r.sessionId;
+      else { if (r.cwd) { state.cwd = r.cwd; localStorage.setItem('cr.cwd', r.cwd); } location.hash = '#/'; }
+    } catch (e) { toast(e.message); }
+  }
+  let pendingPrefill = '';
+  async function markRead(id) { try { await api(`/sessions/${id}/read`, { method: 'POST' }); const s = state.sessions.find((x) => x.id === id); if (s && (s.unread || s.failed)) { s.unread = false; s.failed = false; renderSessions(); } } catch {} }
 
   // ---------- live status line (the Desktop "✱ Thinking… 12s · 1.2k tokens" row) ----------
   const VERBS = ['Thinking', 'Pondering', 'Considering', 'Working', 'Reasoning', 'Composing', 'Sketching', 'Puzzling', 'Brewing', 'Cooking', 'Musing', 'Mulling'];
@@ -900,7 +925,7 @@
         for (const r of results) attachResult(toolNodes.get(r.tool_use_id), r);
         const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
         const images = m.content.filter((b) => b.type === 'image');
-        if (text || images.length) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text, { images })); group = null; }
+        if (text || images.length) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text, { images, uuid: m.uuid })); group = null; }
       } else if (m.role === 'assistant') {
         // One assistant row per turn: consecutive assistant API messages share it, like Desktop.
         if (!group) group = assistantMsg();
@@ -955,7 +980,7 @@
     clearInterval(tasksTimer); tasksTimer = null;
     if (running.length && tasksOpen) tasksTimer = setInterval(() => { for (const t of running) { const n = tpList.querySelector(`[data-task="${t.id}"] .tp-elapsed`); if (n) n.textContent = fmtDur(Date.now() - t.startedAt); } }, 1000);
   }
-  function openTasks() { tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
+  function openTasks() { if (changesOpen) closeChanges(); tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
   function closeTasks() { tasksOpen = false; tasksPanel.classList.add('hidden'); app.classList.remove('tasks-open'); for (const [, o] of outputOpen) clearInterval(o.timer); outputOpen.clear(); paintTasks(); }
   $('#tasks-bar').addEventListener('click', () => tasksOpen ? closeTasks() : openTasks());
   $('#tp-close').addEventListener('click', closeTasks);
@@ -1038,6 +1063,84 @@
     };
     await load();
     if (state.tasks.find((x) => x.id === t.id)?.status === 'running') o.timer = setInterval(load, 2000);
+  }
+
+  // ---------- Changes: the files this folder has changed, and their diffs (Desktop's Changes pane) ----------
+  const changesPanel = $('#changes-panel'), chList = $('#ch-list'), chDiff = $('#ch-diff');
+  let changesOpen = false, changesData = null, changesFile = null;
+  function openChanges() { if (tasksOpen) closeTasks(); changesOpen = true; changesPanel.classList.remove('hidden'); app.classList.add('panel-open'); showChangesList(); loadChanges(); }
+  function closeChanges() { changesOpen = false; changesFile = null; changesPanel.classList.add('hidden'); app.classList.remove('panel-open'); }
+  $('#ch-close').addEventListener('click', closeChanges);
+  $('#ch-refresh').addEventListener('click', () => loadChanges());
+  $('#ch-back').addEventListener('click', () => showChangesList());
+  $('#sb-diff').addEventListener('click', () => changesOpen ? closeChanges() : openChanges());
+  function showChangesList() { changesFile = null; chDiff.classList.add('hidden'); chList.classList.remove('hidden'); $('#ch-back').classList.add('hidden'); $('#ch-file').textContent = ''; }
+  async function loadChanges() {
+    if (!state.current) return;
+    try {
+      changesData = await api(`/sessions/${state.current}/changes`);
+      paintChanges();
+      if (changesFile) loadDiff(changesFile);
+    } catch (e) { chList.innerHTML = ''; chList.appendChild(el('div', 'muted small pad', e.message)); }
+  }
+  const fmtN = (n) => Number(n || 0).toLocaleString();
+  function paintChanges() {
+    const d = changesData; chList.innerHTML = '';
+    if (!d || !d.git) { $('#ch-meta').textContent = ''; chList.appendChild(el('div', 'muted small pad', 'This folder is not a git repository.')); return; }
+    $('#ch-meta').textContent = d.branch + ' · ' + d.files.length + (d.files.length === 1 ? ' file' : ' files');
+    $('#ch-stat').innerHTML = d.files.length ? `<span class="add">+${fmtN(d.added)}</span> <span class="del">−${fmtN(d.removed)}</span>` : '';
+    if (!d.files.length) { chList.appendChild(el('div', 'muted small pad', 'No uncommitted changes.')); return; }
+    for (const f of d.files) {
+      const row = el('button', 'ch-row'); row.type = 'button'; row.title = f.path;
+      const st = el('span', 'ch-st st-' + (f.status === '?' ? 'A' : f.status), f.status === '?' ? 'A' : f.status);
+      const name = el('span', 'ch-name');
+      const i = f.path.lastIndexOf('/');
+      if (i >= 0) name.appendChild(el('span', 'ch-dir', f.path.slice(0, i + 1)));
+      name.appendChild(el('span', 'ch-base', f.path.slice(i + 1)));
+      const n = el('span', 'ch-n');
+      n.innerHTML = f.binary ? '<span class="muted">binary</span>' : `<span class="add">+${fmtN(f.added)}</span> <span class="del">−${fmtN(f.removed)}</span>`;
+      row.appendChild(st); row.appendChild(name); row.appendChild(n);
+      row.addEventListener('click', () => loadDiff(f.path));
+      chList.appendChild(row);
+    }
+  }
+  async function loadDiff(rel) {
+    changesFile = rel;
+    chList.classList.add('hidden'); chDiff.classList.remove('hidden'); $('#ch-back').classList.remove('hidden');
+    $('#ch-file').textContent = rel; $('#ch-file').title = rel;
+    chDiff.innerHTML = ''; chDiff.appendChild(el('div', 'muted small pad', 'Loading…'));
+    try {
+      const r = await api(`/sessions/${state.current}/changes/diff?path=${encodeURIComponent(rel)}`);
+      chDiff.innerHTML = '';
+      if (r.binary) { chDiff.appendChild(el('div', 'muted small pad', 'Binary file.')); return; }
+      if (r.missing) { chDiff.appendChild(el('div', 'muted small pad', 'The file is gone.')); return; }
+      if (!r.diff) { chDiff.appendChild(el('div', 'muted small pad', 'No differences.')); return; }
+      chDiff.appendChild(renderDiff(r.diff));
+      if (r.truncated) chDiff.appendChild(el('div', 'muted small pad', 'Showing the first 4,000 lines.'));
+    } catch (e) { chDiff.innerHTML = ''; chDiff.appendChild(el('div', 'muted small pad', e.message)); }
+  }
+  // A unified diff as rows: old/new line numbers, then the line. Hunk headers stay as dividers.
+  function renderDiff(text) {
+    const pre = el('div', 'diff');
+    let o = 0, n = 0;
+    for (const raw of text.split('\n')) {
+      if (raw.startsWith('diff --git') || raw.startsWith('index ') || raw.startsWith('--- ') || raw.startsWith('+++ ') || raw.startsWith('new file') || raw.startsWith('deleted file') || raw.startsWith('similarity') || raw.startsWith('rename ') || raw.startsWith('old mode') || raw.startsWith('new mode')) continue;
+      const line = el('div', 'dl');
+      if (raw.startsWith('@@')) {
+        const m = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/); if (m) { o = Number(m[1]); n = Number(m[2]); }
+        line.className = 'dl hunk'; line.appendChild(el('span', 'no', '')); line.appendChild(el('span', 'no', '')); line.appendChild(el('span', 'tx', m ? '@@ ' + (m[3] || '').trim() : raw));
+        pre.appendChild(line); continue;
+      }
+      if (raw.startsWith('\\')) continue; // "No newline at end of file"
+      const kind = raw[0] === '+' ? 'add' : raw[0] === '-' ? 'del' : 'ctx';
+      line.classList.add(kind);
+      line.appendChild(el('span', 'no', kind === 'add' ? '' : String(o)));
+      line.appendChild(el('span', 'no', kind === 'del' ? '' : String(n)));
+      line.appendChild(el('span', 'tx', raw.slice(1)));
+      if (kind !== 'add') o++; if (kind !== 'del') n++;
+      pre.appendChild(line);
+    }
+    return pre;
   }
 
   // ---------- live turn ----------
@@ -1175,6 +1278,8 @@
           if (ev.isError) authNote(ev.text);
           if (state.live) addActions(state.live, Date.now());
           state.live = null; statusStop(); refreshGit();
+          if (document.visibilityState === 'visible') markRead(sessionId); // finished in front of you: no dot
+          if (changesOpen) loadChanges();
           break;
         case 'error': authNote(ev.text); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
@@ -1232,7 +1337,9 @@
   const input = $('#input'), send = $('#send');
   // Unsent text survives a refresh, per chat.
   const draftKey = (id) => 'cr.draft.' + (id || 'new');
+  function applyPrefill() { if (!pendingPrefill) return false; input.value = pendingPrefill; pendingPrefill = ''; input.dispatchEvent(new Event('input')); input.focus(); return true; }
   function restoreDraft(id) {
+    if (applyPrefill()) return;
     let v = ''; try { v = localStorage.getItem(draftKey(id)) || ''; } catch {}
     input.value = v; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px';
   }
@@ -1339,7 +1446,7 @@
 
   // ---------- routing ----------
   async function openSession(id) {
-    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks();
+    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open'); app.classList.remove('new');
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
@@ -1365,6 +1472,7 @@
       }
       stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
       setRunning(false); setElsewhere(false);
+      markRead(id);
       subscribe(id); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
       usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
@@ -1374,7 +1482,7 @@
     input.focus();
   }
   function openNew() {
-    state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks();
+    state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
     thread.innerHTML = ''; empty.classList.add('show'); app.classList.add('new');

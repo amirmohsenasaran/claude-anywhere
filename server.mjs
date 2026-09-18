@@ -148,8 +148,23 @@ function whoAmIFromFiles() {
   return out;
 }
 
+// What a session's sidebar dot says: waiting for you, failed, or finished while you were
+// elsewhere. Unread survives a restart; the other two are about the live process.
+const ATTN_PATH = path.join(DATA_DIR, 'attention.json');
+let attention = {};
+try { attention = JSON.parse(fs.readFileSync(ATTN_PATH, 'utf8')) || {}; } catch {}
+const saveAttention = () => { try { fs.writeFileSync(ATTN_PATH, JSON.stringify(attention)); } catch {} };
+const attn = (id) => attention[id] || (attention[id] = {});
+bus.on('permission', ({ sessionId }) => { if (sessionId) { attn(sessionId).needsInput = true; saveAttention(); } });
+bus.on('permission_resolved', ({ sessionId }) => { if (sessionId && attention[sessionId]) { delete attention[sessionId].needsInput; saveAttention(); } });
+bus.on('turn_done', ({ sessionId, isError }) => { if (!sessionId) return; const a = attn(sessionId); a.unread = true; a.failed = !!isError; delete a.needsInput; a.at = Date.now(); saveAttention(); });
+const isWaiting = (id) => [...pendingPermissions.values()].some((p) => p.run.sessionId === id);
+
 const shape = (s, pinned) => ({
   id: s.sessionId,
+  needsInput: isWaiting(s.sessionId) || (isLive(s.sessionId) && !!attention[s.sessionId]?.needsInput),
+  failed: !!attention[s.sessionId]?.failed,
+  unread: !!attention[s.sessionId]?.unread,
   title: s.customTitle || s.summary || s.firstPrompt || 'Untitled',
   cwd: s.cwd || '',
   project: s.cwd ? path.basename(s.cwd) : '',
@@ -222,6 +237,74 @@ app.get('/api/sessions/:id/git', async (req, res) => {
     const dirty = files + untrackedFiles.length > 0;
     res.json({ git: true, branch, added, removed, files: files + untrackedFiles.length, dirty, sessionAdded: dirty ? added : lines.added, sessionRemoved: dirty ? removed : lines.removed });
   } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
+});
+
+// Changes: what is different from HEAD in the session's folder (Desktop's Changes pane).
+const gitIn = (cwd, args, opts = {}) => execFileP('git', ['-C', cwd, ...args], { timeout: 8000, windowsHide: true, maxBuffer: 16 * 1024 * 1024, ...opts }).then((r) => r.stdout).catch(() => null);
+const BINARY_EXT = /\.(png|jpe?g|gif|webp|avif|ico|mp4|mov|webm|mp3|wav|ogg|zip|gz|7z|pdf|woff2?|ttf|otf|exe|dll|so|dylib|bin|pyc|class|jar)$/i;
+async function sessionCwd(id) {
+  const s = await getSessionInfo(id).catch(() => null);
+  if (s?.cwd) return s.cwd;
+  const run = runs.get(id); const init = run?.events.find((e) => e.t === 'init');
+  return init?.cwd || null;
+}
+app.get('/api/sessions/:id/changes', async (req, res) => {
+  try {
+    const cwd = await sessionCwd(req.params.id);
+    if (!cwd || !fs.existsSync(cwd)) return res.json({ git: false });
+    const branch = (await gitIn(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']))?.trim();
+    if (branch == null) return res.json({ git: false });
+    const files = new Map();
+    const status = (await gitIn(cwd, ['diff', '--name-status', '-M', 'HEAD'])) || '';
+    for (const line of status.split('\n')) { if (!line.trim()) continue; const [st, a, b] = line.split('\t'); const p = b || a; files.set(p, { path: p, status: st[0], from: b ? a : undefined, added: 0, removed: 0, binary: BINARY_EXT.test(p) }); }
+    const numstat = (await gitIn(cwd, ['diff', '--numstat', '-M', 'HEAD'])) || '';
+    for (const line of numstat.split('\n')) { if (!line.trim()) continue; const [a, d, ...rest] = line.split('\t'); let p = rest.join('\t'); const m = p.match(/^(.*)\{(.*) => (.*)\}(.*)$/); if (m) p = m[1] + m[3] + m[4]; else if (p.includes(' => ')) p = p.split(' => ').pop(); const f = files.get(p) || files.get(rest.join('\t')); if (f) { if (a === '-') f.binary = true; else { f.added = Number(a); f.removed = Number(d); } } }
+    const untracked = ((await gitIn(cwd, ['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean);
+    for (const p of untracked.slice(0, 500)) {
+      const f = { path: p, status: '?', added: 0, removed: 0, binary: BINARY_EXT.test(p) };
+      try { const full = path.join(cwd, p); const st = fs.statSync(full); if (!f.binary && st.size <= 2 * 1024 * 1024) { const buf = fs.readFileSync(full); if (buf.includes(0)) f.binary = true; else { const t = buf.toString('utf8'); f.added = t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; } } } catch {}
+      files.set(p, f);
+    }
+    const list = [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
+    res.json({ git: true, branch, cwd, files: list, added: list.reduce((n, f) => n + f.added, 0), removed: list.reduce((n, f) => n + f.removed, 0) });
+  } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
+});
+app.get('/api/sessions/:id/changes/diff', async (req, res) => {
+  try {
+    const cwd = await sessionCwd(req.params.id);
+    const rel = String(req.query.path || '');
+    if (!cwd || !rel || rel.includes('..')) return res.status(400).json({ error: 'Bad path' });
+    const MAX_LINES = 4000;
+    if (BINARY_EXT.test(rel)) return res.json({ path: rel, binary: true, diff: '' });
+    let diff = await gitIn(cwd, ['diff', '--no-color', '-M', 'HEAD', '--', rel]);
+    if (!diff) {
+      // untracked: show the whole file as added
+      const full = path.join(cwd, rel);
+      if (!fs.existsSync(full)) return res.json({ path: rel, diff: '', missing: true });
+      const buf = fs.readFileSync(full);
+      if (buf.includes(0)) return res.json({ path: rel, binary: true, diff: '' });
+      const lines = buf.toString('utf8').split('\n'); if (lines[lines.length - 1] === '') lines.pop();
+      diff = ['--- /dev/null', '+++ b/' + rel, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => '+' + l)].join('\n');
+    }
+    const lines = diff.split('\n'); const truncated = lines.length > MAX_LINES;
+    res.json({ path: rel, diff: (truncated ? lines.slice(0, MAX_LINES) : lines).join('\n'), truncated });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+// Rewind: a new session that is this one up to just before the chosen message, so the
+// message can be edited and sent again. The original session is left as it was.
+app.post('/api/sessions/:id/rewind', async (req, res, next) => {
+  try {
+    const uuid = String(req.body?.uuid || '');
+    const msgs = (await getSessionMessages(req.params.id)).filter((m) => !m.parent_tool_use_id);
+    const idx = msgs.findIndex((m) => m.uuid === uuid);
+    if (idx < 0) return res.status(404).json({ error: 'That message is not in the transcript.' });
+    const info = await getSessionInfo(req.params.id).catch(() => null);
+    if (idx === 0) return res.json({ sessionId: null, cwd: info?.cwd || null }); // nothing before it: start fresh in the same folder
+    const title = ((info?.customTitle || info?.summary || info?.firstPrompt || 'Session').slice(0, 160)) + ' · rewound';
+    const r = await forkSession(req.params.id, { upToMessageId: msgs[idx - 1].uuid, title });
+    res.json({ sessionId: r.sessionId, cwd: info?.cwd || null });
+  } catch (e) { next(e); }
 });
 
 // Folder browser for "Open folder…" (the browser has no native folder dialog).
@@ -368,6 +451,10 @@ app.post('/api/order', (req, res) => {
   writePrefs(p);
   res.json(p.order);
 });
+
+// Opening a session (or finishing a turn while looking at it) clears its dot; the menu can set it back.
+app.post('/api/sessions/:id/read', (req, res) => { const a = attention[req.params.id]; if (a) { delete a.unread; delete a.failed; saveAttention(); } res.json({ ok: true }); });
+app.post('/api/sessions/:id/unread', (req, res) => { attn(req.params.id).unread = true; saveAttention(); res.json({ ok: true }); });
 
 app.post('/api/sessions/:id/pin', (req, res) => {
   const p = readPrefs();
@@ -599,10 +686,10 @@ app.post('/api/permissions/:reqId', (req, res) => {
 app.get('/api/notify', (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   const send = (t) => (payload) => res.write(`data: ${JSON.stringify({ t, ...payload })}\n\n`);
-  const onPerm = send('permission'), onDone = send('turn_done');
-  bus.on('permission', onPerm); bus.on('turn_done', onDone);
+  const onPerm = send('permission'), onDone = send('turn_done'), onResolved = send('permission_resolved');
+  bus.on('permission', onPerm); bus.on('turn_done', onDone); bus.on('permission_resolved', onResolved);
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-  req.on('close', () => { clearInterval(ping); bus.off('permission', onPerm); bus.off('turn_done', onDone); });
+  req.on('close', () => { clearInterval(ping); bus.off('permission', onPerm); bus.off('turn_done', onDone); bus.off('permission_resolved', onResolved); });
 });
 
 // Images that Claude's answers point at on this PC (a screenshot it saved, a generated

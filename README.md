@@ -119,6 +119,22 @@ installer is about 250 MB and does not depend on the `claude` CLI.
   running until they finish or you stop them, and the session process stays up
   until then. Finished tasks stay listed with their result until cleared.
 
+## Sidebar dots, Changes, Rewind
+
+- **Dots.** A session that is waiting for your approval gets a pulsing dot;
+  one whose last turn failed a red one; one that finished while you were not
+  looking at it a blue one (Desktop's unread dot). Opening the session clears
+  it; the long-press / right-click menu has *Mark as unread* / *Mark as read*.
+  Unread survives a restart (`data/attention.json`).
+- **Changes.** The `+n −m` in the bar above the composer (and *Changes* in the
+  session menu) opens a panel on the right listing every file that differs
+  from `HEAD` in the session's folder, modified / added / deleted / renamed,
+  with per-file counts; tap a file for its diff with old/new line numbers.
+  Untracked files show as fully added. Refreshes when a turn ends.
+- **Rewind to here** under any earlier message of yours: a new session that is
+  this one up to just before that message, with the message back in the
+  composer to change and send again. The original session is untouched.
+
 ## Updating from the phone
 
 Open Connectors & plugins (plug icon at the top) → **App**:
