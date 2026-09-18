@@ -1,8 +1,9 @@
-// Claude Anywhere — native Windows shell (Tauri 2, WebView2).
+// Claude Anywhere — native shell (Tauri 2: WebView2 on Windows, WKWebView on macOS,
+// WebKitGTK on Linux).
 //
 // It starts the Node server that talks to the Claude Agent SDK, opens the chat
-// in a native window already signed in, lives in the tray, can start with
-// Windows, and turns permission requests / finished turns into system
+// in a native window already signed in, lives in the tray, can start with the
+// machine, and turns permission requests / finished turns into system
 // notifications. The phone keeps talking to the same server.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -88,9 +89,11 @@ fn main() {
                 .title("Claude")
                 .inner_size(1200.0, 820.0)
                 .min_inner_size(380.0, 600.0)
-                // No Windows caption bar: the page draws the title bar and the
-                // minimise / maximise / close buttons itself, as Claude Desktop does.
-                .decorations(false)
+                // On Windows there is no caption bar: the page draws the title bar and
+                // the minimise / maximise / close buttons itself, as Claude Desktop
+                // does. macOS and Linux keep their own — the traffic lights belong
+                // where every other window on that machine puts them.
+                .decorations(!cfg!(windows))
                 .shadow(true)
                 .visible(!hidden)
                 .build()?;
@@ -158,7 +161,10 @@ fn ensure_env_file(env_file: &Path, server_root: &Path) -> std::io::Result<()> {
         fs::copy(&dev, env_file)?;
         return Ok(());
     }
-    let user = std::env::var("USERNAME").unwrap_or_else(|_| "there".into());
+    // USERNAME on Windows, USER everywhere else; the greeting says it back to you.
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "there".into());
     fs::write(
         env_file,
         format!("# Optional app password. Empty = no password (keep the PC on a network you trust).\nREMOTE_PASSWORD=\nHOST=0.0.0.0\nPORT=7777\nUSER_NAME={user}\n"),
@@ -373,25 +379,53 @@ fn supervise_server(app: AppHandle) {
     });
 }
 
-// node.exe from PATH, or the usual install folder; resolved here so the log says which one ran.
+// Node from PATH, or the usual install folder; resolved here so the log says which one
+// ran. A macOS app launched from Finder gets a bare PATH with no Homebrew in it, and a
+// Linux one started from a desktop entry is not much better, so the known places are
+// tried as well.
+const NODE_BIN: &str = if cfg!(windows) { "node.exe" } else { "node" };
+
 fn find_node() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| {
             std::env::split_paths(&p)
-                .map(|d| d.join("node.exe"))
+                .map(|d| d.join(NODE_BIN))
                 .collect()
         })
         .unwrap_or_default();
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        candidates.push(Path::new(&pf).join("nodejs").join("node.exe"));
-    }
-    if let Ok(la) = std::env::var("LOCALAPPDATA") {
-        candidates.push(
-            Path::new(&la)
-                .join("Programs")
-                .join("nodejs")
-                .join("node.exe"),
-        );
+    if cfg!(windows) {
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            candidates.push(Path::new(&pf).join("nodejs").join(NODE_BIN));
+        }
+        if let Ok(la) = std::env::var("LOCALAPPDATA") {
+            candidates.push(
+                Path::new(&la)
+                    .join("Programs")
+                    .join("nodejs")
+                    .join(NODE_BIN),
+            );
+        }
+    } else {
+        for dir in [
+            "/opt/homebrew/bin", // Apple silicon Homebrew
+            "/usr/local/bin",    // Intel Homebrew, and most manual installs
+            "/usr/bin",
+            "/snap/bin",
+        ] {
+            candidates.push(Path::new(dir).join(NODE_BIN));
+        }
+        // nvm and fnm keep versions under the home directory; take the newest that is there.
+        if let Some(home) = std::env::var_os("HOME") {
+            let versions = Path::new(&home).join(".nvm").join("versions").join("node");
+            if let Ok(entries) = fs::read_dir(&versions) {
+                let mut dirs: Vec<PathBuf> =
+                    entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+                dirs.sort();
+                for d in dirs.into_iter().rev() {
+                    candidates.push(d.join("bin").join(NODE_BIN));
+                }
+            }
+        }
     }
     candidates.into_iter().find(|p| p.is_file())
 }

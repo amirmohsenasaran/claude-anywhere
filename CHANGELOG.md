@@ -15,6 +15,42 @@ All notable changes to this project are documented here. The format follows
   deletes them together (Delete asks once), the right-click menu on a picked row
   acts on all of them, and dragging one picked row moves the whole block within
   its project. Escape clears the pick.
+- **Group, sort and filter the session list.** The funnel in the sidebar groups
+  by project (your own dragged order, still the default), by date, or by
+  activity; sorts manually, by most recent or by name; and can show archived
+  sessions alongside the rest. Drag-and-drop belongs to the manual project
+  order, so it switches off in the other views instead of quietly doing nothing.
+- **Search inside transcripts.** The magnifier still filters titles as you type;
+  **Search inside** also reads every transcript on this computer, newest first,
+  under a time budget, and says if it ran out of time before the oldest ones.
+  Matching sessions show the number of hits and the first one in context.
+- **A file browser.** The session menu opens the folder Claude is working in:
+  folders, files with sizes, text as text and images as images. Read-only, and
+  only inside a folder some session has worked in.
+- **Per-session git worktrees.** Make a second checkout of the repository on its
+  own branch, beside the repository rather than inside it, and start a session
+  there. Removing one leaves the branch alone and refuses while a turn is
+  running in it.
+- **The pull request for this branch, watched.** Its number, whether the checks
+  pass, whether a review asked for changes, whether auto-merge is on — with the
+  failing checks each linked to their run, the latest review comments, and a
+  switch for *merge when the checks pass*. All of it from the `gh` CLI already
+  signed in on this machine; the app holds no GitHub token.
+- **Keep this computer awake**, off, while Claude is working, or always. The
+  middle one means a long turn started from your phone does not die because the
+  PC went to sleep, and the machine sleeps again the moment the turn ends.
+- **A command palette and shortcuts.** Ctrl/Cmd+K lists everything the app can
+  do, and the sessions themselves, so one box both runs a thing and goes to a
+  chat. Ctrl/Cmd+F searches, Ctrl/Cmd+B shows or hides the list, Ctrl/Cmd+N
+  starts a session.
+- **macOS and Linux builds of the native window.** The shell finds Node where
+  those machines actually keep it, keeps the system title bar instead of drawing
+  its own, and is built and released for both alongside Windows. They are not
+  signed yet, so the first launch needs right-click → Open.
+- **The sidebar and the right-hand panels can be dragged wider or narrower.**
+  A handle on the sidebar's inner edge and on the inner edge of the Tasks,
+  Changes and Preview panels; double-click puts the default back. Remembered
+  per device. The phone layout is unchanged.
 - **Preview panel.** Whatever the project's dev server is serving, shown inside
   the app and therefore on your phone, which cannot reach the PC's localhost by
   itself. Ports are discovered with the process behind them; everything is
