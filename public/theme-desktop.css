@@ -456,6 +456,14 @@ button.sb-diff:hover { background: var(--bg-3); }
 .in-app.maximized .win-controls .ic-max { display: none; }
 .in-app.maximized .win-controls .ic-restore { display: block; }
 /* room for the buttons, and a header that is comfortable to grab */
-.in-app .topbar { padding-inline-end: 150px; }
+.in-app .topbar { padding-inline-end: 146px; }
 .in-app .topbar, .in-app .sidebar-top { -webkit-user-select: none; user-select: none; }
 .in-app .tasks-panel .tp-head { padding-inline-end: 150px; }
+
+
+/* ---------- v24: the header row is one line, whatever else is in it ---------- */
+.topbar-right { display: flex; align-items: center; gap: 4px; flex: none; flex-wrap: nowrap; }
+.topbar { flex-wrap: nowrap; }
+.topbar-title { min-width: 0; }
+.chat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#attach-menu { min-width: 260px; }

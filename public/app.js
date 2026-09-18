@@ -639,7 +639,13 @@
     $('#ub-close').onclick = () => { updateSnoozed = key; bar.classList.add('hidden'); };
   }
   setInterval(checkForUpdate, 30000); setTimeout(checkForUpdate, 3000);
-  $('#connectors-btn').addEventListener('click', () => { openConnectors(); paintVersion(); });
+  // Desktop keeps connectors in the composer's + menu; so do we, and the header stays clean.
+  menuFor('#attach-btn', '#attach-menu', (m) => {
+    m.innerHTML = '';
+    m.appendChild(item('Upload from this computer', 'Images, video, audio, documents. Pasting and dropping work too.', false, () => { m.classList.add('hidden'); $('#file-input').click(); }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('Connectors & plugins', 'MCP servers this computer can use, and the app itself.', false, () => { m.classList.add('hidden'); openConnectors(); paintVersion(); }));
+  });
   $('#connectors-refresh').addEventListener('click', () => { openConnectors(); paintVersion(); });
   $('#connectors-close').addEventListener('click', () => ctModal.classList.add('hidden'));
   ctModal.addEventListener('click', (e) => { if (e.target === ctModal) ctModal.classList.add('hidden'); });
@@ -1419,7 +1425,6 @@
     }
     renderPending();
   }
-  $('#attach-btn').addEventListener('click', () => $('#file-input').click());
   $('#file-input').addEventListener('change', () => { addFiles([...$('#file-input').files]); $('#file-input').value = ''; });
   // Paste: a screenshot from the clipboard (Windows, Android, iOS) arrives as items, sometimes as files.
   function pastedFiles(e) {
