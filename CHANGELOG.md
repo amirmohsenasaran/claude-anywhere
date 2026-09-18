@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   deletes them together (Delete asks once), the right-click menu on a picked row
   acts on all of them, and dragging one picked row moves the whole block within
   its project. Escape clears the pick.
+- **The sidebar and the right-hand panels can be dragged wider or narrower.**
+  A handle on the sidebar's inner edge and on the inner edge of the Tasks,
+  Changes and Preview panels; double-click puts the default back. Remembered
+  per device. The phone layout is unchanged.
 - **Preview panel.** Whatever the project's dev server is serving, shown inside
   the app and therefore on your phone, which cannot reach the PC's localhost by
   itself. Ports are discovered with the process behind them; everything is
