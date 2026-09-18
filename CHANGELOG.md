@@ -17,6 +17,16 @@ All notable changes to this project are documented here. The format follows
   outlives the window it closes.
 - The App panel says when a rebuild log is from, instead of showing a finished
   log from an hour ago as if it had just happened.
+- **Rebuild now waits for the window to actually exit** before compiling, and
+  starts whatever binary the build produced instead of a hard-coded name — the
+  rename made that name wrong, so a failed build left no window at all. A build
+  that fails on a locked file (os error 32, a leftover from the compile before
+  it) clears that crate's build directory and goes again once.
+- **Restart server queues instead of refusing** while Claude is working: the
+  server exits the moment the last turn ends and the window reloads itself. It
+  used to answer 409 and leave the update banner up with nothing to press.
+- The page retries for 45 seconds while the server is coming back, instead of
+  showing "fetch failed" until the whole app was closed and reopened.
 
 ## [0.3.0] — 2026-09-18
 
