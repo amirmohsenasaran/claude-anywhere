@@ -765,7 +765,15 @@ app.post('/api/rebuild', (_req, res) => {
   child.unref();
   res.json({ ok: true, log: REBUILD_LOG });
 });
-app.get('/api/rebuild/log', (_req, res) => { let text = ''; try { text = fs.readFileSync(REBUILD_LOG, 'utf8'); } catch {} res.json({ text, liveRuns: liveCount() }); });
+app.get('/api/rebuild/log', (_req, res) => {
+  let text = '', at = 0;
+  try { text = fs.readFileSync(REBUILD_LOG, 'utf8'); at = fs.statSync(REBUILD_LOG).mtimeMs; } catch {}
+  const done = /\]\s*done\s*$/.test(text.trim());
+  // A log that has not been written to for two minutes is not a live build either,
+  // whatever it says - the script was killed, or the machine restarted under it.
+  const running = !!text.trim() && !done && Date.now() - at < 120000;
+  res.json({ text, at, done, running, failed: done && /build FAILED/.test(text), liveRuns: liveCount() });
+});
 
 app.get('/api/runs', (_req, res) => {
   res.json([...runs.values()].filter((r) => !r.done).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));

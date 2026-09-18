@@ -592,8 +592,36 @@
       $('#app-version').textContent = v.commit ? v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : '') : 'unknown';
       $('#app-version-desc').textContent = [v.subject, v.when && 'committed ' + relTime(Date.parse(v.when)) + ' ago', 'server up ' + relTime(v.serverStartedAt), v.appBuiltAt && 'app built ' + relTime(v.appBuiltAt) + ' ago', v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
       $('#app-restart').disabled = !v.inApp;
+      paintRebuildLog();
     } catch (e) { $('#app-version').textContent = '?'; $('#app-version-desc').textContent = e.message; }
   }
+  // The panel is opened long after a rebuild as often as during one.
+  async function paintRebuildLog() {
+    const log = $('#app-log');
+    let j; try { j = await api('/rebuild/log'); } catch { return; }
+    if (!j.text || !j.text.trim()) { log.classList.add('hidden'); return; }
+    log.classList.remove('hidden');
+    if (j.running || j.at === undefined) { log.classList.remove('old'); log.textContent = j.text; if (j.running) followRebuild(); return; } // an older server does not report when it is from
+    log.classList.add('old');
+    log.textContent = 'Last rebuild · ' + relTime(j.at) + ' ago' + (j.failed ? ' · failed' : '') + '\n' + j.text;
+  }
+  let rebuildPoll = null;
+  function followRebuild() {
+    if (rebuildPoll) return;
+    const log = $('#app-log');
+    rebuildPoll = setInterval(async () => {
+      try {
+        const r = await fetch('/api/rebuild/log', { headers: { Authorization: 'Bearer ' + state.token }, cache: 'no-store' });
+        if (!r.ok) throw 0;
+        const j = await r.json();
+        log.classList.remove('old');
+        log.textContent = j.text || 'Starting…';
+        log.scrollTop = log.scrollHeight;
+        if (j.done) { clearInterval(rebuildPoll); rebuildPoll = null; if (!j.failed) setTimeout(() => location.reload(), 1500); }
+      } catch { log.textContent += '\n(the app is restarting…)'; }
+    }, 2000);
+  }
+
   async function waitForServer(then) {
     const log = $('#app-log'); log.classList.remove('hidden'); log.textContent = 'Restarting the server…';
     for (let i = 0; i < 60; i++) {
@@ -609,13 +637,10 @@
     catch (e) { btn.disabled = false; $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; }
   });
   $('#app-rebuild').addEventListener('click', async () => {
-    if (!confirm('Rebuild the Windows app now? It waits until Claude is idle, then the app closes and comes back in 1–3 minutes.')) return;
-    const log = $('#app-log'); log.classList.remove('hidden'); log.textContent = 'Starting…';
+    if (!confirm('Rebuild the Windows app now? The window closes and comes back in 1–3 minutes. The chat keeps running while it builds.')) return;
+    const log = $('#app-log'); log.classList.remove('hidden'); log.classList.remove('old'); log.textContent = 'Starting…';
     try { await api('/rebuild', { method: 'POST', body: JSON.stringify({}) }); } catch (e) { log.textContent = e.message; return; }
-    const poll = setInterval(async () => {
-      try { const r = await fetch('/api/rebuild/log', { headers: { Authorization: 'Bearer ' + state.token }, cache: 'no-store' }); if (!r.ok) throw 0; const j = await r.json(); log.textContent = j.text || 'Waiting…'; log.scrollTop = log.scrollHeight; if (/\] done$/m.test(j.text || '')) { clearInterval(poll); setTimeout(() => location.reload(), 1500); } }
-      catch { log.textContent += '\n(app is restarting…)'; }
-    }, 2000);
+    followRebuild();
   });
   // "A new version is ready" banner: the server notices files newer than what it is running.
   let updateSnoozed = '';
