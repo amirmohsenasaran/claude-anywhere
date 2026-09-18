@@ -23,6 +23,11 @@ All notable changes to this project are documented here. The format follows
   there; markdown images had no handler at all. All of them now open in a
   lightbox that scales a small image up to fit (never past 3x), shows it at its
   own size on a second tap, and closes on Escape or a tap outside.
+- **The app's own `PORT` no longer leaks into what Claude runs.** A session that
+  started a dev server inherited `PORT=7777` and `HOST=0.0.0.0` from the app, so
+  the project's dev server took the app's port while the app was closed for a
+  rebuild — and the phone's bookmark stopped working. Our variables are stripped
+  from the environment Claude Code is given.
 - **Rebuild app could never finish, and the reason had no name.** On the GNU
   toolchain tauri-build copies `WebView2Loader.dll` into `target/release` on
   every build; the running app has that DLL loaded, and so does every
