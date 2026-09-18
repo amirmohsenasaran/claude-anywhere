@@ -411,3 +411,15 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .prose img.md-img { max-width: 100%; max-height: 520px; border-radius: 10px; border: 1px solid var(--line); display: block; margin: .6em 0; cursor: zoom-in; }
 
 .boot-note { position: fixed; inset-block-start: 12px; inset-inline-end: 12px; z-index: 90; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; font-size: 13px; color: var(--ink-2); }
+
+/* An image, as big as the window allows; tap it again for its own size. */
+.lightbox { position: fixed; inset: 0; z-index: 80; display: grid; grid-template-rows: auto 1fr; background: rgba(0, 0, 0, .92); backdrop-filter: blur(3px); overflow: auto; }
+.lightbox.hidden { display: none; }
+.lightbox .lb-bar { background: linear-gradient(rgba(0, 0, 0, .55), transparent); display: flex; align-items: center; gap: 8px; padding: 10px 14px; padding-top: calc(10px + env(safe-area-inset-top)); color: #f2f1ee; position: sticky; top: 0; }
+.lightbox .lb-name { font-size: 13px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; }
+.lightbox .icon-btn { color: #f2f1ee; }
+.lightbox .icon-btn:hover { background: rgba(255, 255, 255, .14); }
+.lightbox img { justify-self: center; align-self: center; max-width: calc(100% - 32px); max-height: calc(100vh - 90px); border-radius: 8px; cursor: zoom-in; }
+.lightbox.zoom { place-items: start center; }
+.lightbox.zoom img { max-width: none; max-height: none; cursor: zoom-out; border-radius: 0; }
+.in-app #lb-open { display: none; } /* a new tab is not a thing inside the app window */

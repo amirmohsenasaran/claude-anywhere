@@ -806,7 +806,7 @@
       const src = localFileUrl(p);
       if (isVideo(p)) media.appendChild(videoEl(src));
       else if (isAudio(p)) { const a = el('audio', 'md-audio'); a.controls = true; a.src = src; media.appendChild(a); }
-      else if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p)) { const im = el('img', 'md-img sent-img'); im.src = src; im.alt = baseName(p); im.loading = 'lazy'; im.addEventListener('click', () => window.open(src, '_blank')); media.appendChild(im); }
+      else if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p)) { const im = el('img', 'md-img sent-img'); im.src = src; im.alt = baseName(p); im.loading = 'lazy'; im.addEventListener('click', () => openImage(src, baseName(p))); media.appendChild(im); }
       else { const chip = el('a', 'sent-file'); chip.textContent = baseName(p); chip.title = p; chip.href = src; chip.target = '_blank'; media.appendChild(chip); }
     }
     if (files.length) card.appendChild(media);
@@ -886,7 +886,7 @@
     const b = el('div', 'msg-body'); b.dir = 'auto';
     if (images.length) {
       const strip = el('div', 'msg-images');
-      for (const img of images) { const im = el('img'); im.src = typeof img === 'string' ? img : dataUrl(img); im.alt = 'attachment'; im.addEventListener('click', () => window.open(im.src, '_blank')); strip.appendChild(im); }
+      for (const img of images) { const im = el('img'); im.src = typeof img === 'string' ? img : dataUrl(img); im.alt = 'attachment';  strip.appendChild(im); }
       b.appendChild(strip);
     }
     if (text) b.appendChild(el('div', 'msg-text', text));
@@ -1136,6 +1136,41 @@
       try { await win.toggleMaximize(); } catch {} paintMax();
     });
   })();
+
+  // ---------- images, full size ----------
+  // One listener for the whole thread: markdown images, attachments and the
+  // cards Claude sends all end up here, including the ones added later.
+  const lb = $('#lightbox'), lbImg = $('#lb-img');
+  // Fit to the window, and grow a small one to meet it - "bigger" is the point.
+  // Not past 3x, though: a thumbnail blown up any further is just mush.
+  function fitImage() {
+    if (lb.classList.contains('zoom')) { lbImg.style.width = ''; return; }
+    const nw = lbImg.naturalWidth, nh = lbImg.naturalHeight;
+    if (!nw || !nh) return;
+    const scale = Math.min((window.innerWidth * 0.92) / nw, (window.innerHeight - 90) / nh, 3);
+    lbImg.style.width = Math.round(nw * scale) + 'px';
+  }
+  function openImage(src, name) {
+    if (!src) return;
+    lbImg.style.width = '';
+    lbImg.src = src; $('#lb-name').textContent = name || '';
+    $('#lb-open').href = src;
+    lb.classList.remove('hidden', 'zoom');
+    if (lbImg.complete) fitImage();
+    $('#lb-close').focus();
+  }
+  function closeImage() { lb.classList.add('hidden'); lbImg.removeAttribute('src'); lbImg.style.width = ''; }
+  lbImg.addEventListener('load', fitImage);
+  window.addEventListener('resize', () => { if (!lb.classList.contains('hidden')) fitImage(); });
+  lb.addEventListener('click', (e) => { if (e.target === lb || e.target.closest('#lb-close')) closeImage(); });
+  lbImg.addEventListener('click', (e) => { e.stopPropagation(); lb.classList.toggle('zoom'); fitImage(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lb.classList.contains('hidden')) { e.stopPropagation(); closeImage(); } }, true);
+  document.addEventListener('click', (e) => {
+    const im = e.target.closest('#thread img.md-img, #thread .msg-images img, #thread .sent-img');
+    if (!im || lb.contains(im)) return;
+    e.preventDefault();
+    openImage(im.currentSrc || im.src, im.alt || '');
+  });
 
   // ---------- Preview: whatever this project's dev server is serving ----------
   // The page is proxied through our own origin, so the phone can see a server

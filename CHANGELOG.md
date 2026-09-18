@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Images in a session open full size again.** They called `window.open`,
+  which does nothing inside the app's WebView, so tapping one left it sitting
+  there; markdown images had no handler at all. All of them now open in a
+  lightbox that scales a small image up to fit (never past 3x), shows it at its
+  own size on a second tap, and closes on Escape or a tap outside.
 - **Rebuild app never started anything.** The server spawned its script with
   `detached: true`, and a detached PowerShell child on Windows gets no console
   and exits immediately, silently — so the panel sat on an empty log, which the
