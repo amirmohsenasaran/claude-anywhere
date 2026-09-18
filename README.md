@@ -173,14 +173,15 @@ behaviours that are easy to get wrong.
 
 Near term, in the order they are likely to happen:
 
-- [ ] Sidebar filters: group by date or state, show archived, sort.
+- [x] Sidebar filters: group by date or state, show archived, sort.
+- [x] A file browser, and search inside transcripts.
+- [x] Keyboard shortcuts and a command palette (⌘K), for the Mac browser.
+- [x] The PR bar's monitoring: CI failures, review comments, auto-merge.
+- [x] Per-session git worktrees, and *Keep computer awake*.
+- [x] macOS and Linux shells, so the native window is not Windows-only.
 - [ ] Preview tools for Claude: the previewed page's console, network errors
       and DOM, so it can fix what it is looking at.
-- [ ] A file browser, and search inside transcripts.
-- [ ] Keyboard shortcuts and a command palette (⌘K), for the Mac browser.
-- [ ] The PR bar's monitoring: CI failures, review comments, auto-merge.
-- [ ] Per-session git worktrees, and *Keep computer awake*.
-- [ ] A macOS shell, so the native window is not Windows-only.
+- [ ] Terminal pane and split view.
 
 Bigger, and deliberately further out:
 
@@ -190,8 +191,6 @@ Bigger, and deliberately further out:
       tools. The transcript format and the tool protocol are Claude Code's, so
       this needs a translation layer rather than a switch — it is an intention,
       not a promise, and it will land behind a flag first.
-- [ ] Shared sessions: a link that lets a teammate watch a run without
-      touching your machine.
 
 Ideas and arguments about the order belong in
 [Discussions](https://github.com/aryasadeghy/claude-anywhere/discussions).

@@ -26,6 +26,10 @@ import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS, sessionFile } from './lib/tail.mjs';
 import { parsePreviewUrl, portFromReferer, proxyRequest, proxyUpgrade, listLocalPorts } from './lib/preview.mjs';
+import { searchTranscripts } from './lib/search.mjs';
+import * as worktrees from './lib/worktrees.mjs';
+import * as pr from './lib/pr.mjs';
+import * as awake from './lib/awake.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -355,15 +359,51 @@ app.post('/api/sessions/:id/rewind', async (req, res, next) => {
 // Folder browser for "Open folder…" (the browser has no native folder dialog).
 app.get('/api/browse', (req, res) => {
   const raw = String(req.query.path || '');
+  // The folder picker wants directories only; the file browser asks for both.
+  const withFiles = req.query.files === '1';
   const drives = [];
   for (const L of 'CDEFGHIJKLMNOPQRSTUVWXYZ') { try { if (fs.existsSync(L + ':\\')) drives.push(L + ':\\'); } catch {} }
-  if (!raw) return res.json({ path: '', parent: null, dirs: drives.map((d) => ({ name: d, path: d })), drives, home: os.homedir() });
+  if (!drives.length) drives.push('/'); // no lettered drives: macOS or Linux, where the root is the only one
+  if (!raw) return res.json({ path: '', parent: null, dirs: drives.map((d) => ({ name: d, path: d })), files: [], drives, home: os.homedir() });
   const p = path.resolve(raw);
   let entries = [];
   try { entries = fs.readdirSync(p, { withFileTypes: true }); } catch (e) { return res.status(400).json({ error: 'Cannot open ' + p }); }
-  const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('$') && e.name !== 'node_modules').map((e) => ({ name: e.name, path: path.join(p, e.name) })).sort((a, b) => a.name.localeCompare(b.name));
+  const hidden = (n) => n.startsWith('.') || n.startsWith('$');
+  const dirs = entries.filter((e) => e.isDirectory() && !hidden(e.name) && e.name !== 'node_modules').map((e) => ({ name: e.name, path: path.join(p, e.name) })).sort((a, b) => a.name.localeCompare(b.name));
+  const files = withFiles ? entries.filter((e) => e.isFile() && !hidden(e.name)).map((e) => { let size = 0; try { size = fs.statSync(path.join(p, e.name)).size; } catch {} return { name: e.name, path: path.join(p, e.name), size }; }).sort((a, b) => a.name.localeCompare(b.name)) : [];
   const parent = path.dirname(p) === p ? '' : path.dirname(p);
-  res.json({ path: p, parent, dirs, drives, home: os.homedir(), isGit: fs.existsSync(path.join(p, '.git')) });
+  res.json({ path: p, parent, dirs, files, drives, home: os.homedir(), isGit: fs.existsSync(path.join(p, '.git')) });
+});
+
+// Read a text file for the file browser. Images already go through /api/file; this uses
+// the same roots, so nothing outside a folder some session ran in can be read.
+app.get('/api/fs/read', async (req, res) => {
+  try {
+    const p = path.normalize(String(req.query.path || ''));
+    if (!p || !path.isAbsolute(p)) return res.status(400).json({ error: 'No path' });
+    if (!(await insideProjectRoots(p))) return res.status(403).json({ error: 'Outside the project folders' });
+    let st;
+    try { st = fs.statSync(p); } catch { return res.status(404).json({ error: 'Not on this PC' }); }
+    if (!st.isFile()) return res.status(400).json({ error: 'Not a file' });
+    if (IMAGE_EXT.test(p)) return res.json({ path: p, size: st.size, image: true });
+    const MAX = 512 * 1024;
+    const fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(Math.min(st.size, MAX));
+    fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd);
+    if (buf.includes(0)) return res.json({ path: p, size: st.size, binary: true });
+    res.json({ path: p, size: st.size, truncated: st.size > MAX, text: buf.toString('utf8') });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+// Text anywhere in a session's transcript. Newest transcripts first, under a time
+// budget: `truncated` says the older ones were not reached.
+app.get('/api/search', async (req, res, next) => {
+  try {
+    const r = searchTranscripts(String(req.query.q || ''), { budgetMs: Math.min(Number(req.query.budget) || 8000, 20000) });
+    const known = new Map();
+    for (const s of await listSessions({ limit: 500 })) known.set(s.sessionId, s);
+    res.json({ ...r, hits: r.hits.filter((h) => known.has(h.id)).map((h) => ({ ...h, title: known.get(h.id).customTitle || known.get(h.id).summary || 'Untitled', cwd: known.get(h.id).cwd || '' })) });
+  } catch (e) { next(e); }
 });
 
 // Branch of any folder (for the new-session chips).
@@ -373,6 +413,73 @@ app.get('/api/git', async (req, res) => {
   try { const r = await execFileP('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000, windowsHide: true }); res.json({ git: true, branch: r.stdout.trim() }); }
   catch { res.json({ git: false }); }
 });
+
+// ---------- per-session worktrees ----------
+// The ones we made are recorded in prefs, so the file browser trusts a fresh worktree
+// before any transcript mentions it.
+const listWorktrees = () => readPrefs().worktrees || [];
+app.get('/api/worktrees', async (req, res) => {
+  const cwd = String(req.query.cwd || '');
+  if (!cwd || !fs.existsSync(cwd)) return res.json({ git: false, worktrees: [] });
+  try { res.json({ git: true, ...(await worktrees.listFor(cwd, listWorktrees())) }); }
+  catch (e) {
+    // "not a git repository" is the ordinary answer for a folder outside one, not a fault worth quoting.
+    const why = worktrees.cliError(e);
+    res.json({ git: false, worktrees: [], ...(/not a git repository/i.test(why) ? {} : { error: why }) });
+  }
+});
+app.post('/api/worktrees', async (req, res) => {
+  try {
+    const cwd = String(req.body?.cwd || '');
+    if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'That folder is not on this machine.' });
+    const made = await worktrees.add(cwd, req.body?.branch);
+    const p = readPrefs();
+    p.worktrees = [...listWorktrees().filter((w) => !worktrees.sameDir(w.path, made.path)), { ...made, createdAt: Date.now() }];
+    writePrefs(p);
+    res.json(made);
+  } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : worktrees.cliError(e) }); }
+});
+app.delete('/api/worktrees', async (req, res) => {
+  try {
+    const dir = String(req.body?.path || '');
+    const known = listWorktrees().find((w) => worktrees.sameDir(w.path, dir));
+    if (!known) return res.status(400).json({ error: 'That is not a worktree this app made.' });
+    if ([...runs.values()].some((r) => !r.done && r.cwd && worktrees.sameDir(r.cwd, dir))) return res.status(409).json({ error: 'Claude is working in that worktree. Stop the turn first.' });
+    await worktrees.remove(known, { force: !!req.body?.force });
+    const p = readPrefs(); p.worktrees = listWorktrees().filter((w) => !worktrees.sameDir(w.path, dir)); writePrefs(p);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: worktrees.cliError(e) }); }
+});
+
+// ---------- the pull request for a session's branch ----------
+app.get('/api/sessions/:id/pr', async (req, res) => {
+  const cwd = await sessionCwd(req.params.id);
+  if (!cwd || !fs.existsSync(cwd)) return res.json({ has: false });
+  res.json(req.query.fresh === '1' ? (pr.forget(cwd), await pr.cached(cwd)) : await pr.cached(cwd));
+});
+app.post('/api/sessions/:id/pr/auto-merge', async (req, res) => {
+  try {
+    const cwd = await sessionCwd(req.params.id);
+    if (!cwd) return res.status(400).json({ error: 'No folder for this session.' });
+    await pr.setAutoMerge(cwd, req.body?.on !== false, req.body?.method);
+    pr.forget(cwd);
+    res.json(await pr.cached(cwd));
+  } catch (e) { res.status(500).json({ error: worktrees.cliError(e) }); }
+});
+
+// ---------- keep this computer awake ----------
+const syncAwake = () => awake.sync(readPrefs().awake || 'off', liveCount() > 0);
+app.get('/api/awake', (_req, res) => res.json(awake.state(readPrefs().awake || 'off')));
+app.post('/api/awake', (req, res) => {
+  const mode = ['off', 'working', 'always'].includes(req.body?.mode) ? req.body.mode : 'off';
+  const p = readPrefs(); p.awake = mode; writePrefs(p);
+  syncAwake();
+  res.json(awake.state(mode));
+});
+// A turn ending is the moment to let go; the timer catches one starting, and anything
+// that ended without saying so.
+bus.on('turn_done', () => syncAwake());
+setInterval(() => syncAwake(), 30000).unref();
 
 // ---------- plan limits straight from the account (no turn needed) ----------
 // Same endpoint the CLI uses for the usage popover; works for claude.ai logins and
@@ -742,6 +849,15 @@ app.get('/api/notify', (req, res) => {
 // Only image files, and only inside a project folder Claude Code has worked in or the
 // upload/temp folder.
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|m4v|mp3|m4a|wav|ogg)$/i; // images, plus video/audio that answers link to
+// A folder some session has worked in, or the temp folder. The file browser and the
+// image route share it, so widening one never quietly widens the other.
+async function insideProjectRoots(p) {
+  const roots = new Set([os.tmpdir()]);
+  for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
+  for (const w of listWorktrees()) roots.add(path.normalize(w.path)); // a worktree is newer than any transcript that names it
+  const lower = path.normalize(p).toLowerCase();
+  return [...roots].some((r) => { const base = r.toLowerCase().replace(/[\\/]+$/, ''); return lower === base || lower.startsWith(base + path.sep) || lower.startsWith(base + '/'); });
+}
 app.get('/api/file', async (req, res) => {
   try {
     const raw = String(req.query.path || '');
@@ -750,10 +866,7 @@ app.get('/api/file', async (req, res) => {
     if (!p) return res.status(400).json({ error: 'No path' });
     p = path.normalize(p);
     if (!IMAGE_EXT.test(p) || !fs.existsSync(p) || !fs.statSync(p).isFile()) return res.status(404).json({ error: 'Not an image on this PC' });
-    const roots = new Set([os.tmpdir()]);
-    for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
-    const lower = p.toLowerCase();
-    if (![...roots].some((r) => lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + path.sep) || lower.startsWith(r.toLowerCase().replace(/[\\/]+$/, '') + '/'))) return res.status(403).json({ error: 'Outside the project folders' });
+    if (!(await insideProjectRoots(p))) return res.status(403).json({ error: 'Outside the project folders' });
     res.sendFile(p, { headers: { 'Cache-Control': 'private, max-age=60' }, acceptRanges: true });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
@@ -787,7 +900,7 @@ app.get('/api/version', (_req, res) => {
   const shellFiles = [...listDir(path.join(here, 'src-tauri', 'src'), /\.rs$/), path.join(here, 'src-tauri', 'Cargo.toml'), path.join(here, 'src-tauri', 'tauri.conf.json')];
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
-  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
+  res.json({ ...gitInfo(), platform: process.platform, serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.
@@ -810,6 +923,9 @@ bus.on('turn_done', () => { if (restartQueued) setTimeout(() => { if (!liveCount
 // The Rust shell changed (rare): a script closes the window, rebuilds and relaunches.
 const REBUILD_LOG = path.join(DATA_DIR, 'rebuild.log');
 app.post('/api/rebuild', (_req, res) => {
+  // The rebuild script is PowerShell and knows how the Windows app locks its own files.
+  // Elsewhere, rebuild the app the way you built it: cargo tauri build.
+  if (process.platform !== 'win32') return res.status(400).json({ error: 'Rebuilding from the app is a Windows thing. Run: npx tauri build' });
   const script = path.join(here, 'scripts', 'rebuild.ps1');
   if (!fs.existsSync(script)) return res.status(400).json({ error: 'scripts/rebuild.ps1 is missing' });
   fs.mkdirSync(DATA_DIR, { recursive: true });

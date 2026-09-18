@@ -120,19 +120,25 @@ and the plugins from `~/.claude/settings.json`.
 
 ## The native window
 
-The Windows app is a small Tauri (Rust) shell on the WebView2 that Windows
-already has: a few megabytes, light on memory. It starts the same Node server
-inside itself, opens the chat already signed in, lives in the tray (closing the
-window hides it), can start with Windows, and raises a system notification when
-Claude asks for a permission or finishes a turn while the window is not in
-front.
+The app is a small Tauri (Rust) shell on the webview the machine already has —
+WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux: a few megabytes,
+light on memory. It starts the same Node server inside itself, opens the chat
+already signed in, lives in the tray (closing the window hides it), can start
+with the machine, and raises a system notification when Claude asks for a
+permission or finishes a turn while the window is not in front.
 
-It has **no Windows title bar**. The page draws its own: the header row and the
-top of the sidebar drag the window, double-clicking maximises, and minimise,
-maximise and close sit at the top right. In a browser those buttons do not
-appear.
+On Windows it has **no title bar**. The page draws its own: the header row and
+the top of the sidebar drag the window, double-clicking maximises, and minimise,
+maximise and close sit at the top right. macOS and Linux keep their own title
+bar, because a Mac without its traffic lights in the usual place is a Mac nobody
+can close. In a browser none of those buttons appear.
 
-Its settings live in `%APPDATA%\com.arya.claude-anywhere\.env`, its data (pins,
+*Rebuild app* is Windows-only, because the script that does it knows how the
+Windows app locks its own files; elsewhere the button is not shown and the way
+to rebuild is `npx tauri build`.
+
+Its settings live in `%APPDATA%\com.arya.claude-anywhere\.env` (on macOS
+`~/Library/Application Support/com.arya.claude-anywhere/.env`), its data (pins,
 order, attention marks, an optional token) next to them. Point
 `CLAUDE_ANYWHERE_SERVER_DIR` at a checkout and the app serves that working copy,
 which is what makes the next section work.
@@ -152,23 +158,83 @@ From *Connectors & plugins* → **App**:
 A banner appears by itself when the files on disk are newer than what is
 running, and says which one you need.
 
+## Finding things
+
+The magnifier filters the list by title as you type. **Search inside** also asks
+the server to read the transcripts themselves — every session on this computer,
+newest first, under a time budget. Matching sessions grow a second line with the
+number of hits and the first one in context, and the note says if the oldest
+transcripts were not reached before the budget ran out.
+
+The funnel next to it groups the list by **project** (your own dragged order,
+the default), by **date** (today, yesterday, previous 7 and 30 days, then by
+month) or by **activity** (needs input, working, failed, unread, archived,
+idle); sorts manually, by most recent, or by name; and shows archived sessions
+alongside the rest, dimmed. Drag-and-drop belongs to the manual project order,
+so it is switched off in the other views rather than quietly doing nothing.
+
+## Files
+
+The session menu opens a read-only browser of the folder Claude is working in:
+folders, files with their sizes, text shown as text and images as images. The
+server only opens paths inside a folder some session has worked in, plus the
+worktrees this app made and the temp folder, so the panel cannot wander off into
+the rest of the disk.
+
+## Worktrees
+
+A worktree is a second checkout of the same repository on its own branch.
+**Worktrees…** in the session menu lists what git knows about, starts a new
+session in any of them, and makes new ones: give a branch name and the checkout
+appears *beside* the repository, in `<repo>-worktrees/<branch>`, never inside it.
+Removing one leaves the branch alone, and refuses while a turn is running there.
+
+## The pull request
+
+When the session's branch has a pull request, the bar above the composer shows
+it: its number, whether the checks pass, whether a review asked for changes, and
+whether auto-merge is on. Red beats amber beats green, so what needs a person is
+what you see. Opening the chip lists the failing checks — each one a link to its
+run — the latest review comments, and a switch for *merge when the checks pass*.
+
+All of it comes from the `gh` CLI that is already signed in on this machine. The
+app holds no GitHub token and makes no request of its own.
+
+## Keep this computer awake
+
+Off, **while Claude is working**, or always. The middle one is the useful one: a
+long turn started from your phone does not die because the PC went to sleep, and
+the machine is free to sleep the moment the turn ends. It holds a system request
+while it is on — `SetThreadExecutionState` on Windows, `caffeinate` on macOS,
+`systemd-inhibit` on Linux — and nothing in your own power settings is touched.
+
+## Commands and shortcuts
+
+**Ctrl/Cmd+K** opens everything this app can do, by name, along with the sessions
+themselves, so the same box both runs a thing and goes to a chat. Typing the
+actual word wins over scattered letters, and scattered letters still work:
+`gsd` finds *Group sessions by date*.
+
+| | |
+|---|---|
+| Ctrl/Cmd+K | Commands |
+| Ctrl/Cmd+F | Search sessions |
+| Ctrl/Cmd+B | Show or hide the list |
+| Ctrl/Cmd+N | New session |
+| Shift+Tab | Next permission mode |
+| Escape | Close the menu, clear a selection |
+
 ## Not there yet
 
 Honest gaps against Claude Desktop's Code tab, roughly in the order they are
 worth doing:
 
-- Sidebar filters (group by date/state, show archived, sort).
-- A file browser and search inside transcripts.
-- Keyboard shortcuts and a command palette.
-- Fast mode and a default effort setting.
-- The PR bar's monitoring (CI failures, review comments, auto-merge).
-- Per-session git worktrees.
-- Keep computer awake.
+- Fast mode.
 - Preview tools for Claude itself: reading the previewed page's console,
   network errors and DOM, the way Claude Desktop's `preview_*` tools do.
-- Terminal and browser panes; split view.
-- macOS and Linux shells (the web client already works everywhere; only the
-  native window is Windows-only).
+- A terminal pane, and split view.
+- Signed macOS and Linux builds. They are built and they run; until someone
+  pays Apple, the first launch needs right-click → Open.
 
 And one that is further out than the rest: **other providers** — adding an
 OpenAI or Google account next to your Claude one and continuing the same

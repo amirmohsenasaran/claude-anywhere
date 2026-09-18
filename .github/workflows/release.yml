@@ -1,8 +1,9 @@
 name: Release
 
 # Tag a commit to publish: `npm run release -- 0.4.0` writes the version,
-# commits and pushes the tag; this builds the Windows installer and opens a
-# draft release with it attached. Review the notes, then publish.
+# commits and pushes the tag; this builds the installer for each platform and
+# opens one draft release with all of them attached. Review the notes, then
+# publish.
 on:
   push:
     tags: ['v*']
@@ -16,9 +17,27 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    name: Windows installer
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows installer
+            args: ''
+          # Two Macs, one file each: Apple silicon and Intel. A universal binary would
+          # need both toolchains and doubles the download for everyone.
+          - os: macos-latest
+            name: macOS (Apple silicon)
+            args: '--target aarch64-apple-darwin'
+          - os: macos-13
+            name: macOS (Intel)
+            args: '--target x86_64-apple-darwin'
+          - os: ubuntu-22.04
+            name: Linux (deb, AppImage)
+            args: ''
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,35 +47,53 @@ jobs:
           node-version: 20
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || matrix.os == 'macos-13' && 'x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.os }}
+
+      # Tauri draws the window with the system webview; on Linux that is WebKitGTK.
+      - name: System webview and its build dependencies
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
       # The installer carries the server and its dependencies (bundle.resources),
       # so a production install must be present before the bundler runs.
       - run: npm ci --omit=dev
 
       - name: Check the tag matches the version in the app
-        shell: pwsh
+        shell: bash
         run: |
-          $tag = "${{ github.event.inputs.tag || github.ref_name }}" -replace '^v', ''
-          $conf = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $pkg = (Get-Content package.json | ConvertFrom-Json).version
-          if ($tag -ne $conf -or $tag -ne $pkg) {
-            throw "tag $tag, tauri.conf.json $conf, package.json $pkg - they must agree"
-          }
-          "version $tag"
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          tag="${tag#v}"
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$conf" ] || [ "$tag" != "$pkg" ]; then
+            echo "tag $tag, tauri.conf.json $conf, package.json $pkg - they must agree"; exit 1
+          fi
+          echo "version $tag"
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          args: ${{ matrix.args }}
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: Claude Anywhere ${{ github.event.inputs.tag || github.ref_name }}
           releaseBody: |
             See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what changed.
 
-            **Install:** download the `.exe` below and run it. [Node.js](https://nodejs.org/) 20 or newer
-            must be installed, because the app runs its server with it. Claude Code itself is included.
+            **Install:** Windows `.exe`, macOS `.dmg` (take the Apple silicon one unless
+            your Mac is Intel), Linux `.deb` or `.AppImage`. [Node.js](https://nodejs.org/) 20
+            or newer must be installed, because the app runs its server with it. Claude Code
+            itself is included.
+
+            The macOS and Linux builds are not signed, so the first launch needs the usual
+            right-click → Open, or `chmod +x` for the AppImage.
 
             **First run:** the app asks which Claude account to use — this computer's `claude login`,
             or a token from `claude setup-token`.

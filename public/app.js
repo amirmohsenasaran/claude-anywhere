@@ -158,8 +158,49 @@
     return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
+  // ---------- how the list is grouped, sorted and filtered ----------
+  // By project, in the order you dragged things into, is the default and the only
+  // view drag-and-drop applies to; the others are read-only ways of looking at the
+  // same sessions. Kept per device, like the collapsed groups.
+  state.view = { group: 'project', sort: 'manual', archived: false };
+  try { Object.assign(state.view, JSON.parse(localStorage.getItem('cr.view') || '{}')); } catch {}
+  const manualOrder = () => state.view.group === 'project' && state.view.sort === 'manual';
+  const DAY = 86400000;
+  // Desktop's buckets: today, yesterday, the last week, the last month, then by month and year.
+  function dateBucket(ms) {
+    const now = new Date(); const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (ms >= midnight) return 'Today';
+    if (ms >= midnight - DAY) return 'Yesterday';
+    if (ms >= midnight - 7 * DAY) return 'Previous 7 days';
+    if (ms >= midnight - 30 * DAY) return 'Previous 30 days';
+    const d = new Date(ms);
+    return d.getFullYear() === now.getFullYear() ? d.toLocaleDateString(undefined, { month: 'long' }) : String(d.getFullYear());
+  }
+  const STATES = ['Needs your input', 'Working', 'Failed', 'Unread', 'Archived', 'Idle'];
+  const stateBucket = (s) => s.needsInput ? STATES[0] : s.live || s.working ? STATES[1] : s.failed ? STATES[2] : s.unread ? STATES[3] : s.archived ? STATES[4] : STATES[5];
+  const GROUPS = [['project', 'Project', 'Your own order, drag to arrange'], ['date', 'Date', 'Today, yesterday, this month'], ['state', 'Activity', 'Needs input, working, unread']];
+  const SORTS = [['manual', 'Manual', 'The order you dragged them into'], ['recent', 'Recently active', ''], ['name', 'Name', '']];
+  function setView(patch) {
+    const reload = 'archived' in patch && patch.archived !== state.view.archived;
+    Object.assign(state.view, patch);
+    try { localStorage.setItem('cr.view', JSON.stringify(state.view)); } catch {}
+    $('#filter-btn').classList.toggle('on', state.view.group !== 'project' || state.view.sort !== 'manual' || state.view.archived);
+    if (reload) loadSessions().catch(() => {}); else renderSessions();
+  }
+  menuFor('#filter-btn', '#filter-menu', (m) => {
+    m.innerHTML = '';
+    m.appendChild(el('div', 'menu-title', 'Group by'));
+    for (const [id, name, desc] of GROUPS) m.appendChild(item(name, desc, state.view.group === id, () => { m.classList.add('hidden'); setView({ group: id }); }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(el('div', 'menu-title', 'Sort'));
+    // Manual only means anything inside a project group; the other groupings fall back to recent.
+    for (const [id, name, desc] of SORTS) m.appendChild(item(name, id === 'manual' && state.view.group !== 'project' ? 'Only when grouped by project' : desc, state.view.sort === id, () => { m.classList.add('hidden'); setView({ sort: id }); }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('Show archived', '', state.view.archived, () => { m.classList.add('hidden'); setView({ archived: !state.view.archived }); }));
+  });
+
   async function loadSessions() {
-    state.sessions = await api('/sessions?limit=200');
+    state.sessions = await api('/sessions?limit=200' + (state.view.archived ? '&archived=1' : ''));
     renderSessions();
   }
   let collapsed = new Set();
@@ -246,8 +287,9 @@
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
     const attn = s.needsInput ? 'needs-input' : s.failed ? 'failed' : s.unread ? 'unread' : '';
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : '') + (attn ? ' ' + attn : ''));
-    a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : ''); a.dataset.id = s.id;
+    a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '') + (s.archived ? '\nArchived' : ''); a.dataset.id = s.id;
     if (selected.has(s.id)) a.classList.add('selected');
+    if (s.archived) a.classList.add('is-archived');
     a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY, kind, group); });
     // Long-press on the phone opens the same menu; the tap that ends it must not open the session.
     let pressTimer = null, pressed = false;
@@ -263,6 +305,15 @@
     if (attn) { const d = el('span', 'dot ' + attn); d.title = attn === 'needs-input' ? 'Needs your input' : attn === 'failed' ? 'The last turn failed' : 'Finished while you were away'; a.appendChild(d); }
     else if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
+    // Found inside the transcript: the row grows a second line with what was found there.
+    const found = hits.get(s.id);
+    if (found && searchingInside) {
+      a.classList.add('with-hit');
+      const h = el('span', 'hit'); h.dir = 'auto';
+      h.appendChild(el('span', 'hit-n', found.count + (found.more ? '+' : '')));
+      h.appendChild(document.createTextNode(found.snippets[0]?.text || ''));
+      a.appendChild(h);
+    }
     a.appendChild(el('span', 'muted small', relTime(s.lastModified)));
     const pin = el('button', 'pin'); pin.type = 'button'; pin.title = s.pinned ? 'Unpin' : 'Pin'; pin.innerHTML = PIN_SVG;
     pin.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); togglePin(s.id, !s.pinned); });
@@ -381,36 +432,52 @@
     if (pinned.length) {
       const g = el('details', 'project-group'); g.open = !collapsed.has('__pinned');
       const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, 'Pinned')); sm.appendChild(el('span', 'cnt', String(pinned.length))); g.appendChild(sm);
-      for (const s of pinned) { const row = sessionRow(s, 'pinned', '__pinned'); makeDraggable(row, 'pinned', s.id, '__pinned'); g.appendChild(row); }
+      for (const s of pinned) { const row = sessionRow(s, 'pinned', '__pinned'); if (manualOrder()) makeDraggable(row, 'pinned', s.id, '__pinned'); g.appendChild(row); }
       g.addEventListener('toggle', () => rememberCollapsed('__pinned', !g.open));
       list.appendChild(g);
     }
     const q = (state.search || '').trim().toLowerCase();
+    const byProject = state.view.group === 'project';
+    const manual = manualOrder();
     const groups = new Map();
     for (const s of state.sessions) {
-      if (q && !(s.title + ' ' + s.project + ' ' + s.branch).toLowerCase().includes(q)) continue;
-      const k = groupKey(s); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s);
+      if (q && !(s.title + ' ' + s.project + ' ' + s.branch).toLowerCase().includes(q) && !hits.has(s.id)) continue;
+      const k = byProject ? groupKey(s) : state.view.group === 'date' ? dateBucket(s.lastModified) : stateBucket(s);
+      if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s);
     }
-    const keys = byOrder([...groups.keys()], state.order.projects, (k) => k);
+    const newest = (k) => Math.max(...groups.get(k).map((s) => s.lastModified));
+    const keys = byProject ? byOrder([...groups.keys()], state.order.projects, (k) => k)
+      : state.view.group === 'state' ? STATES.filter((x) => groups.has(x))
+      : [...groups.keys()].sort((a, b) => newest(b) - newest(a));
     for (const k of keys) {
-      const items = byOrder(groups.get(k), state.order.sessions[k] || [], (s) => s.id);
-      const name = items[0].project || 'Other';
-      const g = el('details', 'project-group'); g.open = q ? true : !collapsed.has(name);
+      const items = state.view.sort === 'name' ? groups.get(k).slice().sort((a, b) => a.title.localeCompare(b.title))
+        : manual ? byOrder(groups.get(k), state.order.sessions[k] || [], (s) => s.id)
+        : groups.get(k).slice().sort((a, b) => b.lastModified - a.lastModified);
+      const name = byProject ? (items[0].project || 'Other') : k;
+      const memo = byProject ? name : state.view.group + ':' + name; // a date bucket and a project can share a name
+      const g = el('details', 'project-group'); g.open = q ? true : !collapsed.has(memo);
       const sm = el('summary'); sm.innerHTML = CHEV_SVG; sm.appendChild(el('span', null, name)); sm.appendChild(el('span', 'cnt', String(items.length)));
-      // "+" on the project row: a new session in that folder, like Desktop
-      const add = el('button', 'proj-add'); add.type = 'button'; add.title = 'New session in ' + name;
-      add.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-      add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); state.cwd = items[0].cwd; localStorage.setItem('cr.cwd', state.cwd); location.hash = '#/'; renderProjectChip(); });
-      sm.appendChild(add);
-      sm.title = items[0].cwd + '\nDrag to reorder projects'; g.appendChild(sm);
-      makeDraggable(sm, 'project', k, '__projects');
-      sm.addEventListener('contextmenu', (e) => { e.preventDefault(); showProjectMenu(k, name, e.clientX, e.clientY); });
-      for (const s of items) { const row = sessionRow(s, 'session', k); makeDraggable(row, 'session', s.id, k); g.appendChild(row); }
-      g.addEventListener('toggle', () => { if (!q) rememberCollapsed(name, !g.open); });
+      if (byProject) {
+        // "+" on the project row: a new session in that folder, like Desktop
+        const add = el('button', 'proj-add'); add.type = 'button'; add.title = 'New session in ' + name;
+        add.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+        add.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); state.cwd = items[0].cwd; localStorage.setItem('cr.cwd', state.cwd); location.hash = '#/'; renderProjectChip(); });
+        sm.appendChild(add);
+        sm.title = items[0].cwd + (manual ? '\nDrag to reorder projects' : '');
+      }
+      g.appendChild(sm);
+      if (manual) {
+        makeDraggable(sm, 'project', k, '__projects');
+        sm.addEventListener('contextmenu', (e) => { e.preventDefault(); showProjectMenu(k, name, e.clientX, e.clientY); });
+      }
+      // Outside the manual order there is nothing to drop a row onto, and a link drags
+      // itself by default, so the ghost has to be turned off rather than just ignored.
+      for (const s of items) { const row = sessionRow(s, 'session', k); if (manual) makeDraggable(row, 'session', s.id, k); else row.draggable = false; g.appendChild(row); }
+      g.addEventListener('toggle', () => { if (!q) rememberCollapsed(memo, !g.open); });
       list.appendChild(g);
     }
     if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
-    if (q && !groups.size) list.appendChild(el('div', 'muted small pad', 'No sessions match.'));
+    if (q && !groups.size) list.appendChild(el('div', 'muted small pad', searchingInside ? 'Nothing found in any transcript.' : 'No sessions match.'));
     list.scrollTop = scrolled; // rebuilt in place on every refresh and every pick: it must not jump to the top
     updatePinButton(); paintSelectBar();
   }
@@ -426,12 +493,42 @@
     ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
   }
   // search (magnifier in the sidebar), back / forward
+  // Titles are matched here as you type. "Search inside" also asks the server to read
+  // the transcripts themselves, which is a gigabyte of JSON on this machine — so it
+  // waits for a pause in the typing, and says when it ran out of time before the
+  // oldest sessions.
+  let hits = new Map();          // session id -> { count, snippets }
+  let searchingInside = false, searchTimer = null, searchSeq = 0;
+  const insideOn = () => $('#search-inside').checked;
+  function clearHits() { if (hits.size || searchingInside) { hits = new Map(); searchingInside = false; } $('#search-note').classList.add('hidden'); }
+  async function searchInside() {
+    const q = (state.search || '').trim();
+    if (!insideOn() || q.length < 2) { clearHits(); renderSessions(); return; }
+    const seq = ++searchSeq;
+    const note = $('#search-note'); note.classList.remove('hidden'); note.textContent = 'Reading transcripts…';
+    try {
+      const r = await api('/search?q=' + encodeURIComponent(q));
+      if (seq !== searchSeq) return; // a later keystroke already went out
+      hits = new Map(r.hits.map((h) => [h.id, h]));
+      searchingInside = true;
+      note.textContent = `${r.hits.length} ${r.hits.length === 1 ? 'session' : 'sessions'} contain it` + (r.truncated ? ` · ${r.scanned} of ${r.total} read` : '');
+      renderSessions();
+    } catch (e) { if (seq === searchSeq) note.textContent = e.message; }
+  }
   $('#search-btn').addEventListener('click', () => {
     const sb = $('#sidebar'); sb.classList.toggle('searching');
-    if (sb.classList.contains('searching')) $('#search-input').focus(); else { state.search = ''; $('#search-input').value = ''; renderSessions(); }
+    if (sb.classList.contains('searching')) $('#search-input').focus(); else { state.search = ''; $('#search-input').value = ''; clearHits(); renderSessions(); }
   });
-  $('#search-input').addEventListener('input', () => { state.search = $('#search-input').value; renderSessions(); });
-  $('#search-input').addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#search-btn').click(); });
+  $('#search-input').addEventListener('input', () => {
+    state.search = $('#search-input').value; renderSessions();
+    clearTimeout(searchTimer); searchTimer = setTimeout(searchInside, 450);
+  });
+  $('#search-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('#search-btn').click();
+    if (e.key === 'Enter') { clearTimeout(searchTimer); searchInside(); }
+  });
+  $('#search-inside').addEventListener('change', () => { try { localStorage.setItem('cr.searchInside', insideOn() ? '1' : ''); } catch {} clearTimeout(searchTimer); searchInside(); });
+  try { $('#search-inside').checked = !!localStorage.getItem('cr.searchInside'); } catch {}
   $('#nav-back').addEventListener('click', () => history.back());
   $('#nav-fwd').addEventListener('click', () => history.forward());
   function rememberCollapsed(name, isCollapsed) {
@@ -633,7 +730,13 @@
     m.appendChild(item('Rename', '', false, async () => { m.classList.add('hidden'); const t = prompt('Session name', s.title || ''); if (t && t.trim()) { try { await api(`/sessions/${state.current}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); $('#chat-title').textContent = t.trim(); loadSessions(); } catch (e) { alert(e.message); } } }, { hint: 'R' }));
     m.appendChild(item('Fork', '', false, async () => { m.classList.add('hidden'); try { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } }, { hint: 'F' }));
     m.appendChild(item('Changes', '', false, () => { m.classList.add('hidden'); openChanges(); }));
+    m.appendChild(item('Files', 'Look through this session\'s folder', false, () => { m.classList.add('hidden'); openFiles(); }));
     m.appendChild(item('Preview', 'Show this project\'s dev server, here and on your phone', false, () => { m.classList.add('hidden'); openPreview(); }));
+    m.appendChild(item('Worktrees…', 'A second checkout on its own branch', false, () => { m.classList.add('hidden'); showWorktrees(state.cwd); }));
+    m.appendChild(item('Keep computer awake', (AWAKE.find((a) => a[0] === awakeMode) || AWAKE[0])[1], false, () => {
+      m.classList.add('hidden');
+      setAwake(AWAKE[(AWAKE.findIndex((a) => a[0] === awakeMode) + 1) % AWAKE.length][0]);
+    }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
     const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
@@ -698,6 +801,8 @@
       $('#app-version').textContent = v.commit ? v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : '') : 'unknown';
       $('#app-version-desc').textContent = [v.subject, v.when && 'committed ' + relTime(Date.parse(v.when)) + ' ago', 'server up ' + relTime(v.serverStartedAt), v.appBuiltAt && 'app built ' + relTime(v.appBuiltAt) + ' ago', v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
       $('#app-restart').disabled = !v.inApp;
+      // Rebuild app runs a PowerShell script that knows the Windows file locks; off Windows the button would only ever fail.
+      $('#app-rebuild').classList.toggle('hidden', v.platform !== undefined && v.platform !== 'win32');
       paintRebuildLog();
     } catch (e) { $('#app-version').textContent = '?'; $('#app-version-desc').textContent = e.message; }
   }
@@ -1129,7 +1234,7 @@
     clearInterval(tasksTimer); tasksTimer = null;
     if (running.length && tasksOpen) tasksTimer = setInterval(() => { for (const t of running) { const n = tpList.querySelector(`[data-task="${t.id}"] .tp-elapsed`); if (n) n.textContent = fmtDur(Date.now() - t.startedAt); } }, 1000);
   }
-  function openTasks() { if (changesOpen) closeChanges(); if (previewOpen) closePreview(); tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
+  function openTasks() { if (changesOpen) closeChanges(); if (previewOpen) closePreview(); if (filesOpen) closeFiles(); tasksOpen = true; tasksPanel.classList.remove('hidden'); app.classList.add('tasks-open'); paintTasks(); }
   function closeTasks() { tasksOpen = false; tasksPanel.classList.add('hidden'); app.classList.remove('tasks-open'); for (const [, o] of outputOpen) clearInterval(o.timer); outputOpen.clear(); paintTasks(); }
   $('#tasks-bar').addEventListener('click', () => tasksOpen ? closeTasks() : openTasks());
   $('#tp-close').addEventListener('click', closeTasks);
@@ -1215,14 +1320,18 @@
   }
 
   // ---------- the window's own title bar (native app only) ----------
-  // The Tauri window is frameless, like Claude Desktop's: the header row is the
-  // drag handle and the three buttons at the top right belong to the page.
+  // The Tauri window is frameless on Windows, like Claude Desktop's: the header row is
+  // the drag handle and the three buttons at the top right belong to the page. macOS
+  // and Linux keep their own title bar — a Mac without its traffic lights in the usual
+  // place is a Mac nobody can close — so there the page hides its buttons and the
+  // header goes back to full width.
   (function titleBar() {
     const T = window.__TAURI__;
     if (!T?.window?.getCurrentWindow) return;
     const win = T.window.getCurrentWindow();
     const root = document.documentElement;
     root.classList.add('in-app');
+    if (/Windows|Win32|Win64/i.test(navigator.userAgent)) root.classList.add('framed-by-us');
     const paintMax = async () => { try { root.classList.toggle('maximized', await win.isMaximized()); } catch {} };
     paintMax();
     window.addEventListener('resize', paintMax);
@@ -1289,6 +1398,7 @@
   async function openPreview() {
     if (tasksOpen) closeTasks();
     if (changesOpen) closeChanges();
+    if (filesOpen) closeFiles();
     previewOpen = true; pvPanel.classList.remove('hidden'); app.classList.add('panel-open');
     // The frame cannot send our token, so the server hands out a cookie first.
     try { await api('/preview/grant'); } catch (e) { pvNote.textContent = e.message; }
@@ -1332,10 +1442,182 @@
     }
   });
 
+  // ---------- Files: what is in the session's folder, read only ----------
+  // The server only opens paths under a folder some session has worked in, so this
+  // cannot wander off into the rest of the disk; it still shows anything Claude can see.
+  const fxPanel = $('#files-panel'), fxList = $('#fx-list'), fxView = $('#fx-view');
+  let filesOpen = false, fxDir = '', fxHome = '';
+  const FX_FOLDER = '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h3.2l1.6 1.8h6.2A1.5 1.5 0 0 1 17 7.3v7.2a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+  const FX_FILE = '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M5 3.5h6L15 7v9.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M11 3.5V7h4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  const fxSize = (n) => n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  function openFiles() {
+    if (tasksOpen) closeTasks(); if (previewOpen) closePreview(); if (changesOpen) closeChanges();
+    filesOpen = true; fxPanel.classList.remove('hidden'); app.classList.add('panel-open');
+    fxHome = state.cwd || '';
+    loadDir(fxDir || fxHome);
+  }
+  function closeFiles() { filesOpen = false; fxPanel.classList.add('hidden'); app.classList.remove('panel-open'); }
+  $('#fx-close').addEventListener('click', closeFiles);
+  $('#fx-home').addEventListener('click', () => loadDir(fxHome || state.cwd || ''));
+  $('#fx-up').addEventListener('click', () => { if (!fxView.classList.contains('hidden')) return showDir(); const up = fxDir.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, ''); if (up) loadDir(up); });
+  const showDir = () => { fxView.classList.add('hidden'); fxView.textContent = ''; fxList.classList.remove('hidden'); $('#fx-path').textContent = fxDir; };
+  async function loadDir(dir) {
+    if (!dir) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'muted small pad', 'This session has no folder.')); return; }
+    showDir();
+    try {
+      const d = await api('/browse?files=1&path=' + encodeURIComponent(dir));
+      fxDir = d.path; $('#fx-path').textContent = d.path;
+      fxList.innerHTML = '';
+      for (const x of d.dirs) {
+        const b = el('button', 'fx-row'); b.type = 'button';
+        const ic = el('span', 'ic'); ic.innerHTML = FX_FOLDER; b.appendChild(ic);
+        b.appendChild(el('span', 'nm', x.name));
+        b.addEventListener('click', () => loadDir(x.path));
+        fxList.appendChild(b);
+      }
+      for (const x of d.files) {
+        const b = el('button', 'fx-row'); b.type = 'button';
+        const ic = el('span', 'ic'); ic.innerHTML = FX_FILE; b.appendChild(ic);
+        b.appendChild(el('span', 'nm', x.name));
+        b.appendChild(el('span', 'sz', fxSize(x.size)));
+        b.addEventListener('click', () => openFileAt(x.path, x.name));
+        fxList.appendChild(b);
+      }
+      if (!d.dirs.length && !d.files.length) fxList.appendChild(el('div', 'muted small pad', 'Nothing here.'));
+    } catch (e) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'note error', e.message)); }
+  }
+  async function openFileAt(p, name) {
+    fxList.classList.add('hidden'); fxView.classList.remove('hidden'); fxView.textContent = 'Opening…'; $('#fx-path').textContent = p;
+    try {
+      const r = await api('/fs/read?path=' + encodeURIComponent(p));
+      fxView.textContent = '';
+      // An image is shown, not printed: the same route the chat uses for local pictures.
+      if (r.image) { const img = el('img'); img.src = localFileUrl(p); img.alt = name; img.addEventListener('click', () => openImage(img.src, name)); fxView.appendChild(img); return; }
+      if (r.binary) { fxView.textContent = name + ' is not text (' + fxSize(r.size) + ').'; return; }
+      fxView.textContent = r.text + (r.truncated ? '\n\n… the first 512 KB of ' + fxSize(r.size) + '.' : '');
+    } catch (e) { fxView.textContent = e.message; }
+  }
+
+  // ---------- worktrees: a second checkout of the same repository, on its own branch ----------
+  async function makeWorktree(cwd) {
+    const branch = prompt('New branch for this worktree', 'claude/' + new Date().toISOString().slice(5, 10).replace('-', ''));
+    if (!branch || !branch.trim()) return null;
+    toast('Making the worktree. A big repository takes a while…');
+    try {
+      const w = await api('/worktrees', { method: 'POST', body: JSON.stringify({ cwd, branch: branch.trim() }) });
+      state.cwd = w.path; try { localStorage.setItem('cr.cwd', w.path); } catch {}
+      renderProjectChip();
+      location.hash = '#/';
+      toast(`Worktree ready on ${w.branch}. The next session starts there.`);
+      return w;
+    } catch (e) { alert(e.message); return null; }
+  }
+  async function showWorktrees(cwd) {
+    if (!cwd) return alert('This session has no folder.');
+    ctx.innerHTML = '';
+    ctx.appendChild(el('div', 'menu-title', 'Worktrees'));
+    ctx.appendChild(el('div', 'muted small pad', 'Reading…'));
+    ctx.classList.remove('hidden');
+    let d;
+    try { d = await api('/worktrees?cwd=' + encodeURIComponent(cwd)); } catch (e) { d = { git: false, error: e.message }; }
+    ctx.innerHTML = '';
+    ctx.appendChild(el('div', 'menu-title', 'Worktrees'));
+    if (!d.git) { ctx.appendChild(el('div', 'muted small pad', d.error || 'Not a git repository.')); return; }
+    for (const w of d.worktrees) {
+      const row = el('div', 'wt-row');
+      row.appendChild(el('span', 'nm', w.branch || '(detached)'));
+      if (w.main) row.appendChild(el('span', 'tag', 'main checkout'));
+      if (w.gone) row.appendChild(el('span', 'tag', 'missing'));
+      row.title = w.path;
+      const use = el('button', 'link-btn small', 'New session'); use.type = 'button';
+      use.addEventListener('click', () => { ctx.classList.add('hidden'); state.cwd = w.path; try { localStorage.setItem('cr.cwd', w.path); } catch {} renderProjectChip(); location.hash = '#/'; });
+      row.appendChild(use);
+      if (w.ours && !w.main) {
+        const rm = el('button', 'link-btn small danger', 'Remove'); rm.type = 'button';
+        rm.addEventListener('click', async () => {
+          if (!confirm('Remove the worktree at ' + w.path + '? The branch itself stays.')) return;
+          try { await api('/worktrees', { method: 'DELETE', body: JSON.stringify({ path: w.path }) }); ctx.classList.add('hidden'); toast('Worktree removed.'); }
+          catch (e) { alert(e.message); }
+        });
+        row.appendChild(rm);
+      }
+      ctx.appendChild(row);
+    }
+    ctx.appendChild(el('div', 'menu-sep'));
+    ctx.appendChild(item('New worktree…', 'A fresh branch, checked out beside the repository', false, () => { ctx.classList.add('hidden'); makeWorktree(cwd); }));
+    if (!isPhone()) { const r = ctx.getBoundingClientRect(); ctx.style.left = Math.max(8, window.innerWidth - r.width - 24) + 'px'; ctx.style.top = '64px'; }
+  }
+
+  // ---------- the pull request for this branch: checks, reviews, auto-merge ----------
+  let prData = null, prTimer = null;
+  function stopPrWatch() { clearInterval(prTimer); prTimer = null; }
+  function watchPr() { stopPrWatch(); refreshPr(); prTimer = setInterval(() => { if (!document.hidden && state.current) refreshPr(); }, 60000); }
+  async function refreshPr(fresh) {
+    const chip = $('#sb-pr-state');
+    if (!state.current) { chip.classList.add('hidden'); return; }
+    try { prData = await api(`/sessions/${state.current}/pr` + (fresh ? '?fresh=1' : '')); } catch { prData = null; }
+    if (!prData?.has) { chip.classList.add('hidden'); return; }
+    const c = prData.checks;
+    // Red beats amber beats green: what needs a person comes first.
+    const bad = c.failed > 0 || prData.review === 'CHANGES_REQUESTED';
+    const run = !bad && c.pending > 0;
+    chip.className = 'sb-pr-chip' + (bad ? ' bad' : run ? ' run' : c.total || prData.review === 'APPROVED' ? ' ok' : '');
+    const bits = ['#' + prData.number];
+    if (c.failed) bits.push(c.failed + ' failing');
+    else if (c.pending) bits.push(c.pending + ' running');
+    else if (c.total) bits.push('checks pass');
+    if (prData.review === 'CHANGES_REQUESTED') bits.push('changes requested');
+    else if (prData.review === 'APPROVED') bits.push('approved');
+    if (prData.autoMerge) bits.push('auto-merge');
+    $('#sb-pr-label').textContent = bits.join(' · ');
+    chip.title = prData.title || '';
+    chip.classList.remove('hidden');
+    $('#sb-pr').classList.add('hidden'); // there is already one: no point offering to make another
+  }
+  menuFor('#sb-pr-state', '#pr-menu', (m) => {
+    m.innerHTML = '';
+    if (!prData?.has) return;
+    const row = (k, v) => { const r = el('div', 'row'); r.appendChild(el('span', 'k', k)); r.appendChild(el('span', 'v', v)); m.appendChild(r); };
+    m.appendChild(el('div', 'menu-title', '#' + prData.number + ' · ' + (prData.draft ? 'draft' : String(prData.state || '').toLowerCase())));
+    row('Title', prData.title || '');
+    row('Branch', prData.branch || '');
+    const c = prData.checks;
+    row('Checks', c.total ? `${c.passed} passed, ${c.failed} failed, ${c.pending} running` : 'none');
+    for (const f of c.failing) {
+      const b = item('✕ ' + f.name, 'Open the failing run', false, () => { if (f.url) window.open(f.url, '_blank', 'noopener'); });
+      b.classList.add('danger'); m.appendChild(b);
+    }
+    row('Review', prData.review ? prData.review.toLowerCase().replace('_', ' ') : 'none yet');
+    row('Merge', prData.mergeState ? String(prData.mergeState).toLowerCase() : String(prData.mergeable || '').toLowerCase());
+    for (const cm of prData.comments.slice(0, 3)) {
+      const d = el('div', 'cmt');
+      d.appendChild(el('b', null, (cm.author || 'someone') + (cm.state ? ' · ' + cm.state.toLowerCase().replace('_', ' ') : '') + ': '));
+      d.appendChild(document.createTextNode(cm.body || ''));
+      m.appendChild(d);
+    }
+    if (prData.commentCount > 3) m.appendChild(el('div', 'cmt muted', prData.commentCount - 3 + ' more on GitHub'));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item(prData.autoMerge ? 'Turn off auto-merge' : 'Merge when the checks pass', '', false, async () => {
+      m.classList.add('hidden');
+      try { prData = await api(`/sessions/${state.current}/pr/auto-merge`, { method: 'POST', body: JSON.stringify({ on: !prData.autoMerge, method: 'squash' }) }); refreshPr(); }
+      catch (e) { alert(e.message); }
+    }));
+    m.appendChild(item('Open on GitHub', '', false, () => { m.classList.add('hidden'); window.open(prData.url, '_blank', 'noopener'); }));
+    m.appendChild(item('Refresh', '', false, () => { m.classList.add('hidden'); refreshPr(true); }));
+  });
+
+  // ---------- keep this computer awake ----------
+  // It holds a system request while it is on, and lets go when it is off; nothing in
+  // the machine's own power settings is touched.
+  const AWAKE = [['off', 'Off'], ['working', 'While Claude is working'], ['always', 'Always']];
+  let awakeMode = 'off';
+  async function loadAwake() { try { awakeMode = (await api('/awake')).mode; } catch {} }
+  async function setAwake(mode) { try { awakeMode = (await api('/awake', { method: 'POST', body: JSON.stringify({ mode }) })).mode; toast('Keep awake: ' + (AWAKE.find((a) => a[0] === awakeMode) || [])[1]); } catch (e) { alert(e.message); } }
+
   // ---------- Changes: the files this folder has changed, and their diffs (Desktop's Changes pane) ----------
   const changesPanel = $('#changes-panel'), chList = $('#ch-list'), chDiff = $('#ch-diff');
   let changesOpen = false, changesData = null, changesFile = null;
-  function openChanges() { if (tasksOpen) closeTasks(); if (previewOpen) closePreview(); changesOpen = true; changesPanel.classList.remove('hidden'); app.classList.add('panel-open'); showChangesList(); loadChanges(); }
+  function openChanges() { if (tasksOpen) closeTasks(); if (previewOpen) closePreview(); if (filesOpen) closeFiles(); changesOpen = true; changesPanel.classList.remove('hidden'); app.classList.add('panel-open'); showChangesList(); loadChanges(); }
   function closeChanges() { changesOpen = false; changesFile = null; changesPanel.classList.add('hidden'); app.classList.remove('panel-open'); }
   $('#ch-close').addEventListener('click', closeChanges);
   $('#ch-refresh').addEventListener('click', () => loadChanges());
@@ -1736,7 +2018,108 @@
     h.addEventListener('dblclick', () => { apply(0); try { localStorage.removeItem(store); } catch {} });
   }
   resizable($('#sidebar'), '--sidebar-w', { min: 220, max: () => Math.min(600, window.innerWidth / 2), side: 'start' });
-  for (const [node, key] of [[tasksPanel, '--tasks-w'], [changesPanel, '--changes-w'], [pvPanel, '--preview-w']]) resizable(node, key, { min: 300, max: () => window.innerWidth - 560, side: 'end' });
+  for (const [node, key] of [[tasksPanel, '--tasks-w'], [changesPanel, '--changes-w'], [pvPanel, '--preview-w'], [fxPanel, '--files-w']]) resizable(node, key, { min: 300, max: () => window.innerWidth - 560, side: 'end' });
+
+  // ---------- everything this app can do, by name ----------
+  // Ctrl/Cmd+K. Commands first, then the sessions themselves, so the same box both
+  // runs a thing and goes to a chat. Nothing here is new behaviour: every entry calls
+  // what the buttons call.
+  const pal = $('#palette'), palInput = $('#palette-input'), palList = $('#palette-list');
+  let palRows = [], palAt = 0;
+  const hasSession = () => !!state.current;
+  function commands() {
+    const s = state.sessions.find((x) => x.id === state.current) || {};
+    const out = [
+      { name: 'New session', hint: 'Ctrl+N', run: () => { location.hash = '#/'; } },
+      { name: 'Search sessions', hint: 'Ctrl+F', run: () => { const sb = $('#sidebar'); if (!sb.classList.contains('searching')) $('#search-btn').click(); else $('#search-input').focus(); app.classList.add('sidebar-open'); } },
+      { name: 'Search inside transcripts', hint: '', run: () => { const sb = $('#sidebar'); if (!sb.classList.contains('searching')) $('#search-btn').click(); $('#search-inside').checked = true; $('#search-inside').dispatchEvent(new Event('change')); $('#search-input').focus(); app.classList.add('sidebar-open'); } },
+      { name: 'Toggle sidebar', hint: 'Ctrl+B', run: () => app.classList.toggle('sidebar-open') },
+    ];
+    for (const [id, name] of GROUPS.map((g) => [g[0], g[1]])) out.push({ name: 'Group sessions by ' + name.toLowerCase(), group: 'View', on: state.view.group === id, run: () => setView({ group: id }) });
+    for (const [id, name] of SORTS.map((g) => [g[0], g[1]])) out.push({ name: 'Sort sessions by ' + name.toLowerCase(), group: 'View', on: state.view.sort === id, run: () => setView({ sort: id }) });
+    out.push({ name: (state.view.archived ? 'Hide' : 'Show') + ' archived sessions', group: 'View', run: () => setView({ archived: !state.view.archived }) });
+    if (hasSession()) out.push(
+      { name: 'Changes', group: 'Session', run: () => (changesOpen ? closeChanges() : openChanges()) },
+      { name: 'Files', group: 'Session', run: () => (filesOpen ? closeFiles() : openFiles()) },
+      { name: 'Preview', group: 'Session', run: () => (previewOpen ? closePreview() : openPreview()) },
+      { name: 'Tasks', group: 'Session', run: () => (tasksOpen ? closeTasks() : openTasks()) },
+      { name: 'Worktrees', group: 'Session', run: () => showWorktrees(state.cwd) },
+      { name: 'New worktree…', group: 'Session', run: () => makeWorktree(state.cwd) },
+      { name: 'Rename session', hint: 'R', group: 'Session', run: async () => { const t = prompt('Session name', s.title || ''); if (t && t.trim()) { await api(`/sessions/${state.current}/rename`, { method: 'POST', body: JSON.stringify({ title: t.trim() }) }); $('#chat-title').textContent = t.trim(); loadSessions(); } } },
+      { name: 'Fork session', hint: 'F', group: 'Session', run: async () => { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } },
+      { name: s.pinned ? 'Unpin session' : 'Pin session', hint: 'P', group: 'Session', run: () => togglePin(state.current, !s.pinned) },
+      { name: s.archived ? 'Unarchive session' : 'Archive session', hint: 'A', group: 'Session', run: async () => { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } },
+      { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session from this computer? This cannot be undone.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
+    );
+    if (prData?.has) out.push({ name: 'Open pull request #' + prData.number + ' on GitHub', group: 'Session', run: () => window.open(prData.url, '_blank', 'noopener') });
+    for (const x of MODELS) out.push({ name: 'Model: ' + x.name, group: 'Turn', on: state.model === x.id, run: () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); pushControls({ model: x.id }); } });
+    for (const x of MODES) out.push({ name: 'Mode: ' + x.name, group: 'Turn', on: state.mode === x.id, run: () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); pushControls({ permissionMode: x.id }); } });
+    for (const [id, name] of AWAKE) out.push({ name: 'Keep computer awake: ' + name.toLowerCase(), group: 'This computer', on: awakeMode === id, run: () => setAwake(id) });
+    out.push({ name: 'Connectors and plugins', group: 'This computer', run: () => openConnectors() });
+    out.push({ name: 'Switch account', group: 'This computer', run: () => openAccounts() });
+    return out;
+  }
+  // Typing the actual word beats letters that merely appear in order, or searching for
+  // "ping" would offer "keeP computer awake: whIle claude is workiNG" before the chat
+  // called Ping. Only when nothing contains the word do scattered letters count, which
+  // is what makes "gsd" find "Group sessions by date".
+  function fuzzy(q, text) {
+    if (!q) return 0;
+    const t = text.toLowerCase();
+    const at = t.indexOf(q);
+    if (at >= 0) return 1000 - Math.min(at, 60) + (t.startsWith(q) ? 50 : 0);
+    let last = -1, score = 0;
+    for (const ch of q) { const i = t.indexOf(ch, last + 1); if (i < 0) return -1; score += i === last + 1 ? 2 : 1; last = i; }
+    return score;
+  }
+  function paintPalette() {
+    const q = palInput.value.trim().toLowerCase();
+    const cmds = commands().map((c) => ({ ...c, kind: c.group || 'Do', score: q ? fuzzy(q, c.name) : 1 })).filter((c) => c.score >= 0);
+    const sess = (q ? state.sessions.map((s) => ({ name: s.title, sub: s.project, kind: 'Go to', score: fuzzy(q, s.title + ' ' + s.project), run: () => { location.hash = '#/s/' + s.id; } })).filter((s) => s.score >= 0) : []);
+    // Whichever group holds the best match is listed first, so its header is not repeated.
+    const all = [...cmds, ...sess];
+    const best = new Map();
+    for (const r of all) best.set(r.kind, Math.max(best.get(r.kind) ?? -1, r.score));
+    palRows = all.sort((a, b) => (best.get(b.kind) - best.get(a.kind)) || (b.score - a.score)).slice(0, 40);
+    palAt = Math.min(palAt, Math.max(0, palRows.length - 1));
+    palList.innerHTML = '';
+    let group = '';
+    palRows.forEach((r, i) => {
+      if (r.kind !== group) { group = r.kind; palList.appendChild(el('div', 'palette-group', group)); }
+      const b = el('button', 'palette-item' + (i === palAt ? ' on' : '')); b.type = 'button';
+      b.appendChild(el('span', 'nm', (r.on ? '✓ ' : '') + r.name));
+      if (r.hint || r.sub) b.appendChild(el('span', 'sub', r.hint || r.sub));
+      b.addEventListener('click', () => runPalette(i));
+      palList.appendChild(b);
+    });
+    if (!palRows.length) palList.appendChild(el('div', 'palette-empty', 'Nothing matches.'));
+  }
+  function openPalette() { pal.classList.remove('hidden'); palInput.value = ''; palAt = 0; paintPalette(); palInput.focus(); }
+  function closePalette() { pal.classList.add('hidden'); }
+  async function runPalette(i) {
+    const r = palRows[i]; if (!r) return;
+    closePalette();
+    try { await r.run(); } catch (e) { toast(e.message); }
+  }
+  palInput.addEventListener('input', () => { palAt = 0; paintPalette(); });
+  palInput.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); palAt = Math.min(palAt + 1, palRows.length - 1); paintPalette(); palList.children[0] && palList.querySelector('.palette-item.on')?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); palAt = Math.max(palAt - 1, 0); paintPalette(); palList.querySelector('.palette-item.on')?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPalette(palAt); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  });
+  pal.addEventListener('mousedown', (e) => { if (e.target === pal) closePalette(); });
+
+  // The shortcuts that work anywhere. Ctrl on Windows and Linux, Cmd in a Mac browser,
+  // which is where this app is most often a second window.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || $('#app').classList.contains('hidden')) return;
+    const k = e.key.toLowerCase();
+    if (k === 'k') { e.preventDefault(); pal.classList.contains('hidden') ? openPalette() : closePalette(); }
+    else if (k === 'f') { e.preventDefault(); const sb = $('#sidebar'); if (!sb.classList.contains('searching')) $('#search-btn').click(); else $('#search-input').focus(); app.classList.add('sidebar-open'); }
+    else if (k === 'b') { e.preventDefault(); app.classList.toggle('sidebar-open'); }
+    else if (k === 'n') { e.preventDefault(); location.hash = '#/'; }
+  });
 
   // ---------- routing ----------
   // Opening a session fetches and renders its whole transcript, seconds for a big one.
@@ -1746,7 +2129,7 @@
   let openSeq = 0;
   async function openSession(id) {
     const seq = ++openSeq;
-    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (previewOpen) closePreview();
+    state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (previewOpen) closePreview(); if (filesOpen) closeFiles();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open'); app.classList.remove('new');
     empty.classList.remove('show'); thread.innerHTML = '<div class="muted small pad">Loading…</div>';
@@ -1777,7 +2160,7 @@
       markRead(id);
       subscribe(id); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
-      usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
+      usage.context = info.context || null; paintUsage(); refreshGit(); watchPr(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
       input.placeholder = 'Type / for commands';
       api(`/sessions/${id}/usage`).then((u) => { usage.context = u.context || usage.context; usage.limits = u.limits || usage.limits; paintUsage(); }).catch(() => {});
     } catch (e) { if (seq !== openSeq) return; thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
@@ -1785,7 +2168,7 @@
   }
   function openNew() {
     openSeq++; // a session still loading must not paint over the new-chat screen
-    state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges();
+    state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (filesOpen) closeFiles(); stopPrWatch(); $("#sb-pr-state").classList.add("hidden");
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
     thread.innerHTML = ''; empty.classList.add('show'); app.classList.add('new');
@@ -1857,7 +2240,7 @@
     try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
-    await Promise.all([loadSessions(), loadProjects()]);
+    await Promise.all([loadSessions(), loadProjects(), loadAwake()]);
     route();
     // First time on this device: ask which account to use (local or token).
     let chosen = false; try { chosen = !!localStorage.getItem('cr.accountChosen'); } catch {}
