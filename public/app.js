@@ -585,10 +585,12 @@
     fb.classList.remove('hidden');
     await browseTo(start || '');
   }
+  let fbDir = ''; // the folder being looked at, which is not the same as the one selected in it
   async function browseTo(p) {
     const list = $('#fb-list'); list.innerHTML = '<div class="muted small pad">Loading…</div>';
     try {
       const d = await api('/browse?path=' + encodeURIComponent(p || ''));
+      fbDir = d.path || '';
       $('#fb-path').value = d.path || '';
       $('#fb-use').disabled = !d.path;
       list.innerHTML = '';
@@ -603,8 +605,34 @@
         list.appendChild(b);
       }
       if (!d.dirs.length) list.appendChild(el('div', 'muted small pad', 'No subfolders'));
-    } catch (e) { list.innerHTML = ''; list.appendChild(el('div', 'note error', e.message)); }
+    } catch (e) {
+      list.innerHTML = '';
+      list.appendChild(el('div', 'note error', e.message));
+      // Typing the folder you are about to start is the normal way to begin a project,
+      // so a path that is not there yet is an offer, not a dead end.
+      const wanted = $('#fb-path').value.trim();
+      if (wanted) {
+        const make = el('button', 'btn btn-ghost fb-make', 'Create ' + wanted.split(/[\\/]/).filter(Boolean).pop());
+        make.type = 'button';
+        make.addEventListener('click', () => makeFolder(wanted));
+        list.appendChild(make);
+      }
+    }
   }
+  // `path` is created whole; with `name` it is a new folder inside the one being looked at.
+  async function makeFolder(p, name) {
+    try {
+      const r = await api('/browse/mkdir', { method: 'POST', body: JSON.stringify({ path: p, name }) });
+      await browseTo(r.path);
+      $('#fb-path').value = r.path; $('#fb-use').disabled = false;
+    } catch (e) { alert(e.message); }
+  }
+  $('#fb-new').addEventListener('click', () => {
+    const here = fbDir || $('#fb-path').value.trim();
+    if (!here) return alert('Open a folder first, then make one inside it.');
+    const name = prompt('Name for the new folder in\n' + here, 'new-project');
+    if (name && name.trim()) makeFolder(here, name.trim());
+  });
   $('#fb-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') browseTo($('#fb-path').value.trim()); });
   $('#fb-home').addEventListener('click', async () => { try { const d = await api('/browse'); browseTo(d.home); } catch {} });
   $('#fb-use').addEventListener('click', () => { const p = $('#fb-path').value.trim(); if (p) { pickFolder(p); fb.classList.add('hidden'); } });
@@ -1391,11 +1419,12 @@
   // ---------- Preview: whatever this project's dev server is serving ----------
   // The page is proxied through our own origin, so the phone can see a server
   // that only listens on the PC's localhost, and hot reload keeps working.
-  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note');
-  let previewOpen = false, pvPort = 0, pvPorts = [];
+  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr');
+  let previewOpen = false, pvPort = 0, pvPath = '/', pvPorts = [], pvAll = false;
   const pvKey = () => 'cr.preview.' + (state.cwd || 'any');
-  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: $('#pv-path').value })); } catch {} }
+  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: pvPath })); } catch {} }
   function pvRecall() { try { return JSON.parse(localStorage.getItem(pvKey()) || '{}'); } catch { return {}; } }
+  const setAddr = (port, p) => { pvAddr.value = port ? 'localhost:' + port + (p || '/') : ''; };
 
   async function openPreview() {
     if (tasksOpen) closeTasks();
@@ -1405,43 +1434,87 @@
     // The frame cannot send our token, so the server hands out a cookie first.
     try { await api('/preview/grant'); } catch (e) { pvNote.textContent = e.message; }
     const saved = pvRecall();
-    if (saved.path) $('#pv-path').value = saved.path;
     await loadPorts();
-    const pick = saved.port && pvPorts.some((p) => p.port === saved.port) ? saved.port : (pvPorts.find((p) => p.port >= 3000 && p.port <= 9999) || pvPorts[0])?.port;
-    if (pick) usePort(pick); else { pvNote.textContent = 'Nothing is listening on this machine yet. Start the dev server and press refresh.'; pvNote.classList.remove('hidden'); }
+    // What was open here last time, if it is still up; otherwise the likeliest dev
+    // server. Never a guess: with nothing to show, it says so and waits.
+    const still = saved.port && pvPorts.some((x) => x.port === saved.port && x.serves);
+    const pick = still ? saved.port : (pvPorts.find((x) => x.dev) || pvPorts.find((x) => x.serves))?.port;
+    if (pick) go(pick, still && saved.path ? saved.path : '/');
+    else showNote('Nothing on this computer is serving a page yet. Start the dev server, then press reload.');
   }
+  function showNote(text) { pvNote.textContent = text; pvNote.classList.remove('hidden'); pvFrame.classList.add('hidden'); }
   function closePreview() { previewOpen = false; pvPanel.classList.add('hidden'); app.classList.remove('panel-open'); pvFrame.src = 'about:blank'; }
   $('#pv-close').addEventListener('click', closePreview);
 
   async function loadPorts() {
     try { const r = await api('/preview/ports'); pvPorts = r.ports || []; }
-    catch (e) { pvPorts = []; pvNote.textContent = e.message; }
+    catch (e) { pvPorts = []; showNote(e.message); }
   }
-  function usePort(port) {
-    pvPort = port;
-    const found = pvPorts.find((p) => p.port === port);
-    $('#pv-port-name').textContent = port + (found?.label ? ' · ' + found.label : '');
-    show();
-  }
-  function show() {
-    if (!pvPort) return;
-    let p = $('#pv-path').value.trim() || '/';
-    if (!p.startsWith('/')) p = '/' + p;
+  function go(port, p) {
+    pvPort = port; pvPath = p && p.startsWith('/') ? p : '/' + (p || '');
     pvNote.classList.add('hidden'); pvFrame.classList.remove('hidden');
-    pvFrame.src = '/preview/' + pvPort + p;
-    pvRemember();
+    pvFrame.src = '/preview/' + pvPort + pvPath;
+    setAddr(pvPort, pvPath); pvRemember();
   }
-  $('#pv-reload').addEventListener('click', () => { loadPorts(); show(); });
-  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + ($('#pv-path').value || '/'), '_blank'); });
-  $('#pv-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); show(); } });
-  pvFrame.addEventListener('load', () => { pvNote.classList.add('hidden'); });
-  menuFor('#pv-port', '#pv-port-menu', (m) => {
+  // What someone types in an address bar: a port, a localhost address, a bare path, or
+  // a full URL. Anything that is not this machine is refused rather than fetched —
+  // the proxy is a window onto what is already running here, not a way out to the web.
+  function parseAddr(text) {
+    let s = String(text || '').trim();
+    if (!s) return null;
+    if (/^\d{1,5}$/.test(s)) return { port: Number(s), path: '/' };
+    if (s.startsWith('/')) return { port: pvPort, path: s };
+    const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
+    if (scheme && !/^https?$/i.test(scheme[1])) return null;
+    s = s.replace(/^https?:\/\//i, '');
+    let m = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::(\d+))?(\/.*)?$/i.exec(s);
+    if (m) return { port: Number(m[1] || pvPort), path: m[2] || '/' };
+    m = /^(\d{1,5})(\/.*)$/.exec(s); // "5173/settings"
+    if (m) return { port: Number(m[1]), path: m[2] };
+    return null;
+  }
+  function submitAddr() {
+    const a = parseAddr(pvAddr.value);
+    if (!a || !a.port) { showNote('Only a server on this computer can be shown here. Try a port, like 5173, or localhost:5173/settings.'); return; }
+    go(a.port, a.path);
+  }
+  pvAddr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitAddr(); } if (e.key === 'Escape') setAddr(pvPort, pvPath); });
+  pvAddr.addEventListener('focus', () => pvAddr.select());
+  // The frame is served from our own origin, so its history is ours to drive and its
+  // address is ours to read: clicking a link inside the page updates the bar.
+  const inFrame = (fn) => { try { return fn(pvFrame.contentWindow); } catch { return undefined; } };
+  $('#pv-back').addEventListener('click', () => inFrame((w) => w.history.back()));
+  $('#pv-fwd').addEventListener('click', () => inFrame((w) => w.history.forward()));
+  $('#pv-home').addEventListener('click', () => { if (pvPort) go(pvPort, '/'); });
+  $('#pv-reload').addEventListener('click', async () => {
+    await loadPorts();
+    if (!inFrame((w) => { w.location.reload(); return true; }) && pvPort) go(pvPort, pvPath);
+  });
+  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + pvPath, '_blank', 'noopener'); });
+  pvFrame.addEventListener('load', () => {
+    pvNote.classList.add('hidden');
+    const here = inFrame((w) => w.location.pathname + w.location.search + w.location.hash);
+    const m = here && /^\/preview\/(\d+)(\/[\s\S]*)?$/.exec(here);
+    if (m) { pvPort = Number(m[1]); pvPath = m[2] || '/'; setAddr(pvPort, pvPath); pvRemember(); }
+  });
+  menuFor('#pv-servers', '#pv-port-menu', (m) => {
     m.innerHTML = '';
-    if (!pvPorts.length) { m.appendChild(el('div', 'muted small pad', 'Nothing is listening.')); return; }
-    m.appendChild(el('div', 'menu-title', 'Listening on this machine'));
-    for (const p of pvPorts) {
-      m.appendChild(item(String(p.port), p.label || p.process || '', p.port === pvPort, () => { m.classList.add('hidden'); usePort(p.port); }));
+    const shown = pvAll ? pvPorts : pvPorts.filter((p) => p.serves);
+    if (!shown.length) { m.appendChild(el('div', 'muted small pad', pvAll ? 'Nothing is listening.' : 'Nothing is serving a page.')); }
+    let group = '';
+    for (const p of shown) {
+      const kind = p.dev ? 'Servers for your projects' : p.serves ? 'Other pages on this computer' : 'Listening, but not a web server';
+      if (kind !== group) { group = kind; m.appendChild(el('div', 'menu-title', kind)); }
+      // The page's own title says far more than the name of the process behind the socket.
+      const desc = [p.title, p.label].filter(Boolean).join(' · ') || p.process || '';
+      m.appendChild(item('localhost:' + p.port, desc, p.port === pvPort, () => { m.classList.add('hidden'); go(p.port, '/'); }));
     }
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item(pvAll ? 'Only what serves a page' : 'Show everything listening', '', false, () => { pvAll = !pvAll; $('#pv-servers').click(); $('#pv-servers').click(); }));
+    // Everything here is served under /preview/<port>/, which a few finished apps read
+    // as part of their own route and answer with their own "not found". Those still
+    // work the ordinary way, on this computer.
+    if (pvPort) m.appendChild(item('Open localhost:' + pvPort + ' outside the app', 'For a page whose router does not expect the preview path', false, () => { m.classList.add('hidden'); window.open('http://localhost:' + pvPort + pvPath, '_blank', 'noopener'); }));
   });
 
   // ---------- Files: what is in the session's folder, read only ----------

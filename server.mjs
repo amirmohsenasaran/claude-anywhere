@@ -105,12 +105,14 @@ app.use((req, res, next) => {
     const qs = req.originalUrl.includes('?') ? '?' + req.originalUrl.split('?').slice(1).join('?') : '';
     return proxyRequest(req, res, hit.port, hit.rest + qs);
   }
-  // A previewed page asking for an absolute path (/assets/app.js) lands here;
-  // its referer says which dev server meant to answer it.
-  if (!req.path.startsWith('/api/')) {
-    const port = portFromReferer(req.headers.referer || '');
-    if (port && previewAllowed(req)) return proxyRequest(req, res, port, req.originalUrl);
-  }
+  // A previewed page asking for an absolute path (/assets/app.js) lands here; its
+  // referer says which dev server meant to answer it. This has to include /api/ as
+  // well: a previewed app whose own API lives there — Mailpit's /api/v1, and most
+  // things with a backend — was being answered by ours, which said 401 and left the
+  // panel blank. Our own client never sends a preview referer, so the two cannot
+  // be confused.
+  const fromPreview = portFromReferer(req.headers.referer || '');
+  if (fromPreview && previewAllowed(req)) return proxyRequest(req, res, fromPreview, req.originalUrl);
   next();
 });
 
@@ -373,6 +375,32 @@ app.get('/api/browse', (req, res) => {
   const files = withFiles ? entries.filter((e) => e.isFile() && !hidden(e.name)).map((e) => { let size = 0; try { size = fs.statSync(path.join(p, e.name)).size; } catch {} return { name: e.name, path: path.join(p, e.name), size }; }).sort((a, b) => a.name.localeCompare(b.name)) : [];
   const parent = path.dirname(p) === p ? '' : path.dirname(p);
   res.json({ path: p, parent, dirs, files, drives, home: os.homedir(), isGit: fs.existsSync(path.join(p, '.git')) });
+});
+
+// Make a folder, so a new project can start in one that does not exist yet. Anything
+// the person can reach in the picker they can create in: this is their own machine and
+// their own file dialog. What it will not do is invent a drive or walk out of one.
+app.post('/api/browse/mkdir', (req, res) => {
+  try {
+    const raw = String(req.body?.path || '').trim();
+    const name = String(req.body?.name || '').trim();
+    if (!raw) return res.status(400).json({ error: 'No path' });
+    // Either a whole path to create, or a name inside the folder being looked at.
+    const target = path.normalize(name ? path.join(raw, name) : raw);
+    if (!path.isAbsolute(target)) return res.status(400).json({ error: 'Give the whole path, starting from the drive.' });
+    if (name && (name.includes('..') || /[\\/]/.test(name))) return res.status(400).json({ error: 'A folder name cannot contain a slash.' });
+    if (/[<>:"|?*]/.test(target.replace(/^[A-Za-z]:/, ''))) return res.status(400).json({ error: 'That name has characters Windows does not allow in a folder.' });
+    if (path.dirname(target) === target) return res.status(400).json({ error: 'That is a drive, not a folder.' });
+    if (fs.existsSync(target)) {
+      if (!fs.statSync(target).isDirectory()) return res.status(409).json({ error: 'A file of that name is already there.' });
+      return res.json({ path: target, existed: true });
+    }
+    fs.mkdirSync(target, { recursive: true });
+    res.json({ path: target, existed: false });
+  } catch (e) {
+    const msg = String(e.message || e);
+    res.status(500).json({ error: /EPERM|EACCES/.test(msg) ? 'Windows would not let this app create a folder there.' : msg });
+  }
 });
 
 // Read a text file for the file browser. Images already go through /api/file; this uses
