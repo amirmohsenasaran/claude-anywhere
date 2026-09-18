@@ -100,6 +100,9 @@ app keeps its own set under `%APPDATA%`.
   for that reason; without it the window keeps showing the page it first
   loaded, and a restart looks like it did nothing.
 - **A running app locks files in `target/release`**, so a rebuild cannot
-  overlap with it — the window has to close for the compile.
+  overlap with it — the window has to close for the compile. The file is
+  `WebView2Loader.dll`, which tauri-build copies there on every build and the
+  app has loaded; its `msedgewebview2.exe` children hold it a few seconds
+  longer, which is what `scripts/rebuild.ps1` now waits for.
 - **Two writers, one transcript.** Never continue a session here while another
   window is mid-turn on it.

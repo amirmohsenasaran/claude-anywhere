@@ -41,7 +41,32 @@ $oldExe = if ($app) { @($app)[0].Path } else { (Find-Exe).FullName }
 
 Say "closing the window (the server stays up)"
 foreach ($p in @($app)) { try { $p.Kill(); [void]$p.WaitForExit(15000) } catch {} }
-Start-Sleep -Seconds 4   # handles under target/release are released a moment after the process goes
+
+# On the GNU toolchain tauri-build copies WebView2Loader.dll into target/release
+# on every build, and the running app has that DLL loaded - so does every
+# msedgewebview2.exe it spawned, and those outlive their host by a few seconds.
+# Overwriting a loaded DLL is "os error 32", reported by tauri-build without a
+# path, which is what made this look like a mystery for a whole day. So: wait
+# for the file to actually be writable before compiling, and if the webview
+# children are the ones still holding it, end them.
+$dll = Join-Path $exeDir "WebView2Loader.dll"
+function Test-Writable($p) {
+  if (-not (Test-Path $p)) { return $true }
+  try { $f = [System.IO.File]::Open($p, 'Open', 'Write', 'None'); $f.Close(); return $true } catch { return $false }
+}
+$waited = 0
+while (-not (Test-Writable $dll)) {
+  if ($waited -eq 0) { Say "waiting for the WebView2 runtime to let go of WebView2Loader.dll" }
+  if ($waited -eq 10) {
+    Say "still held after 10s; closing the webview processes this app left behind"
+    Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match 'claude-anywhere|claude-remote' } |
+      ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
+  }
+  if ($waited -ge 30) { Say "it is still held; the build will probably fail on it"; break }
+  Start-Sleep -Seconds 1; $waited++
+}
+if ($waited -gt 0 -and (Test-Writable $dll)) { Say "released after ${waited}s" }
 
 function Invoke-Build {
   $outFile = Join-Path $env:TEMP "claude-anywhere-build.out"
@@ -53,16 +78,22 @@ function Invoke-Build {
     if ($sec % 30 -eq 0) { Say "still compiling ($sec s)" }
     if ($sec -ge 900) { Say "giving up: the build passed 15 minutes"; try { $p.Kill() } catch {}; break }
   }
-  $code = if ($p.HasExited) { $p.ExitCode } else { 1 }
+  # ExitCode is only filled in once the process has been waited on, and a
+  # Start-Process object that is merely "HasExited" can still report nothing -
+  # which is how a build that worked was announced as a failure.
+  if (-not $p.HasExited) { try { $p.Kill() } catch {} }
+  try { $p.WaitForExit(10000) | Out-Null } catch {}
   $err = if (Test-Path $errFile) { Get-Content $errFile -Raw } else { "" }
+  $code = $p.ExitCode
+  if ($null -eq $code) { $code = if ($err -match 'Built application at|Finished \d+ bundle') { 0 } else { 1 } }
   return @{ code = $code; err = $err; seconds = $sec }
 }
 
 Say "compiling - about 1 to 3 minutes"
 $build = Invoke-Build
-# os error 32 here is a leftover from the build that came before: the generated
-# resource object is still held. Clearing that crate's build directory and going
-# again fixes it, and costs one extra compile only when it actually happens.
+# os error 32 usually means WebView2Loader.dll was still loaded (handled above),
+# but a half-written build directory can do it too. Clearing that crate's build
+# directory and going again costs one extra compile, only when it happens.
 if ($build.code -ne 0 -and $build.err -match "os error 32|used by another process") {
   Say "a file was still locked; clearing the build directory and trying once more"
   Get-ChildItem (Join-Path $exeDir "build") -Directory -ErrorAction SilentlyContinue |

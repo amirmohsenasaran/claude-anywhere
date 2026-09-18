@@ -23,6 +23,18 @@ All notable changes to this project are documented here. The format follows
   there; markdown images had no handler at all. All of them now open in a
   lightbox that scales a small image up to fit (never past 3x), shows it at its
   own size on a second tap, and closes on Escape or a tap outside.
+- **Rebuild app could never finish, and the reason had no name.** On the GNU
+  toolchain tauri-build copies `WebView2Loader.dll` into `target/release` on
+  every build; the running app has that DLL loaded, and so does every
+  `msedgewebview2.exe` it spawned, which outlive their host by a few seconds.
+  Overwriting a loaded DLL is `os error 32`, which tauri-build reports without
+  a path — so every build after closing the window failed on a file nobody
+  could identify. The rebuild now waits for that file to be writable, and ends
+  the leftover webview processes if they are the ones still holding it.
+- **A build that worked was announced as a failure.** `Start-Process -PassThru`
+  leaves `ExitCode` empty until the process has been waited on, so the script
+  read nothing and assumed the worst — while the installer it had just produced
+  sat on disk.
 - **Rebuild app never started anything.** The server spawned its script with
   `detached: true`, and a detached PowerShell child on Windows gets no console
   and exits immediately, silently — so the panel sat on an empty log, which the

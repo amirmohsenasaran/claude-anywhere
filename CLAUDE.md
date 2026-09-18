@@ -64,6 +64,11 @@ await page.goto('http://127.0.0.1:7779/');
 - **The running app locks `target/release`**: a rebuild closes the window
   first. Never wait for "no live runs" before building — the person pressing
   Rebuild is usually mid-turn in this very app, and that waits for itself.
+- **`os error 32` from tauri-build is `WebView2Loader.dll`.** On the GNU
+  toolchain the build script copies it into `target/release` every time, and the
+  running app — plus every `msedgewebview2.exe` it spawned, which outlive it by
+  seconds — has it loaded. The error names no path, so check that file is
+  writable before suspecting anything else.
 - **Windows paths in heredocs**: `\U`, `\a` and friends get mangled. Write a
   file with the Write tool or a PowerShell here-string instead.
 
