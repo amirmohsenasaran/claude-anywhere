@@ -51,19 +51,31 @@ const RESTART_CODE: i32 = 75;
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app)
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .setup(|app| {
             let handle = app.handle().clone();
             let state = start_server(&handle).map_err(|e| {
                 // Keep the reason on disk too, for when the dialog is gone.
                 if let Ok(dir) = app.path().app_data_dir() {
-                    let _ = fs::write(dir.join("startup-error.txt"), format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()));
+                    let _ = fs::write(
+                        dir.join("startup-error.txt"),
+                        format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()),
+                    );
                 }
-                app.dialog().message(format!("{e}")).title("Claude Anywhere could not start").kind(MessageDialogKind::Error).blocking_show();
+                app.dialog()
+                    .message(format!("{e}"))
+                    .title("Claude Anywhere could not start")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
                 std::process::exit(1);
                 #[allow(unreachable_code)]
                 e
@@ -113,7 +125,10 @@ fn server_dir(app: &AppHandle, env_file: &Path) -> PathBuf {
     if let Ok(text) = fs::read_to_string(env_file) {
         for line in text.lines() {
             // The old name is still in .env files written before 0.3.0.
-            if let Some(v) = line.strip_prefix("CLAUDE_ANYWHERE_SERVER_DIR=").or_else(|| line.strip_prefix("CLAUDE_REMOTE_SERVER_DIR=")) {
+            if let Some(v) = line
+                .strip_prefix("CLAUDE_ANYWHERE_SERVER_DIR=")
+                .or_else(|| line.strip_prefix("CLAUDE_REMOTE_SERVER_DIR="))
+            {
                 let p = PathBuf::from(v.trim());
                 if p.join("server.mjs").exists() {
                     return p;
@@ -171,9 +186,20 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     let root = server_dir(app, &env_file);
     ensure_env_file(&env_file, &root)?;
     let (password, port) = read_env(&env_file);
-    let password = if password == "change-me" { String::new() } else { password };
+    let password = if password == "change-me" {
+        String::new()
+    } else {
+        password
+    };
     // Same derivation as server.mjs: no password means the fixed word "open".
-    let token = hex::encode(Sha256::digest(format!("claude-anywhere:{}", if password.is_empty() { "open" } else { &password })));
+    let token = hex::encode(Sha256::digest(format!(
+        "claude-anywhere:{}",
+        if password.is_empty() {
+            "open"
+        } else {
+            &password
+        }
+    )));
 
     // Already running with our password (the server of a previous app instance that is
     // still finishing a turn, another copy, or `npm start`)? Adopt it and carry on.
@@ -186,27 +212,62 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
                 .set("Content-Type", "application/json")
                 .timeout(Duration::from_secs(3))
                 .send_string(&format!("{{\"pid\":{}}}", std::process::id()));
-            return Ok(ServerState { child: Mutex::new(None), port, token, env_file, spawn: None });
+            return Ok(ServerState {
+                child: Mutex::new(None),
+                port,
+                token,
+                env_file,
+                spawn: None,
+            });
         }
-        port = (port + 1..port + 20).find(|p| !port_open(*p)).ok_or("No free port near the configured one")?;
+        port = (port + 1..port + 20)
+            .find(|p| !port_open(*p))
+            .ok_or("No free port near the configured one")?;
     }
 
     let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Anywhere again.")?;
     let root = root.canonicalize().unwrap_or(root);
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
-    let cfg = SpawnCfg { node, root, data_dir: data_dir.clone(), env_file: env_file.clone(), port };
+    let cfg = SpawnCfg {
+        node,
+        root,
+        data_dir: data_dir.clone(),
+        env_file: env_file.clone(),
+        port,
+    };
     let child = spawn_server(&cfg)?;
     let _ = fs::remove_file(data_dir.join("startup-error.txt"));
-    Ok(ServerState { child: Mutex::new(Some(child)), port, token, env_file, spawn: Some(cfg) })
+    Ok(ServerState {
+        child: Mutex::new(Some(child)),
+        port,
+        token,
+        env_file,
+        spawn: Some(cfg),
+    })
 }
 
 fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
-    let SpawnCfg { node, root, data_dir, env_file, port } = cfg;
+    let SpawnCfg {
+        node,
+        root,
+        data_dir,
+        env_file,
+        port,
+    } = cfg;
     let port = *port;
-    let mut log = fs::OpenOptions::new().create(true).append(true).open(data_dir.join("server.log")).ok();
+    let mut log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(data_dir.join("server.log"))
+        .ok();
     if let Some(f) = log.as_mut() {
         use std::io::Write;
-        let _ = writeln!(f, "[claude-anywhere] node={} root={} port={port}", node.display(), root.display());
+        let _ = writeln!(
+            f,
+            "[claude-anywhere] node={} root={} port={port}",
+            node.display(),
+            root.display()
+        );
     }
     let log_err = log.as_ref().and_then(|f| f.try_clone().ok());
     let mut cmd = Command::new(node);
@@ -214,7 +275,12 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
         .current_dir(root)
         .env("CLAUDE_ANYWHERE_DATA_DIR", data_dir.join("data"))
         .env("CLAUDE_ANYWHERE_ENV_FILE", env_file)
-        .env("CLAUDE_ANYWHERE_APP_EXE", std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())
+        .env(
+            "CLAUDE_ANYWHERE_APP_EXE",
+            std::env::current_exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
         .env("HOST", "0.0.0.0")
         .env("PORT", port.to_string())
         .env("CLAUDE_ANYWHERE_PARENT_PID", std::process::id().to_string())
@@ -226,15 +292,25 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start Node (is it installed and on PATH?): {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Could not start Node (is it installed and on PATH?): {e}"))?;
 
     let deadline = Instant::now() + Duration::from_secs(30);
     while !port_open(port) {
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("Node exited right away ({status}). See {}", data_dir.join("server.log").display()).into());
+            return Err(format!(
+                "Node exited right away ({status}). See {}",
+                data_dir.join("server.log").display()
+            )
+            .into());
         }
         if Instant::now() > deadline {
-            return Err(format!("The server did not come up on port {port}. See {}", data_dir.join("server.log").display()).into());
+            return Err(format!(
+                "The server did not come up on port {port}. See {}",
+                data_dir.join("server.log").display()
+            )
+            .into());
         }
         thread::sleep(Duration::from_millis(200));
     }
@@ -247,26 +323,50 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
 fn supervise_server(app: AppHandle) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(700));
-        let Some(state) = app.try_state::<ServerState>() else { continue };
-        let Some(cfg) = state.spawn.clone() else { return };
+        let Some(state) = app.try_state::<ServerState>() else {
+            continue;
+        };
+        let Some(cfg) = state.spawn.clone() else {
+            return;
+        };
         let exited = {
-            let mut guard = match state.child.lock() { Ok(g) => g, Err(_) => continue };
+            let mut guard = match state.child.lock() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
             match guard.as_mut().map(|c| c.try_wait()) {
-                Some(Ok(Some(status))) => { *guard = None; Some(status.code()) }
+                Some(Ok(Some(status))) => {
+                    *guard = None;
+                    Some(status.code())
+                }
                 _ => None,
             }
         };
         let Some(code) = exited else { continue };
         if code != Some(RESTART_CODE) {
-            let _ = app.notification().builder().title("Claude Anywhere server stopped").body("Restarting it.").show();
+            let _ = app
+                .notification()
+                .builder()
+                .title("Claude Anywhere server stopped")
+                .body("Restarting it.")
+                .show();
         }
         match spawn_server(&cfg) {
             Ok(child) => {
-                if let Ok(mut guard) = state.child.lock() { *guard = Some(child); }
-                if let Some(w) = app.get_webview_window("main") { let _ = w.eval("setTimeout(() => location.reload(), 300)"); }
+                if let Ok(mut guard) = state.child.lock() {
+                    *guard = Some(child);
+                }
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.eval("setTimeout(() => location.reload(), 300)");
+                }
             }
             Err(e) => {
-                let _ = app.notification().builder().title("Claude Anywhere server did not come back").body(format!("{e}")).show();
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("Claude Anywhere server did not come back")
+                    .body(format!("{e}"))
+                    .show();
                 thread::sleep(Duration::from_secs(5));
             }
         }
@@ -276,13 +376,22 @@ fn supervise_server(app: AppHandle) {
 // node.exe from PATH, or the usual install folder; resolved here so the log says which one ran.
 fn find_node() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).map(|d| d.join("node.exe")).collect())
+        .map(|p| {
+            std::env::split_paths(&p)
+                .map(|d| d.join("node.exe"))
+                .collect()
+        })
         .unwrap_or_default();
     if let Ok(pf) = std::env::var("ProgramFiles") {
         candidates.push(Path::new(&pf).join("nodejs").join("node.exe"));
     }
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
-        candidates.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
+        candidates.push(
+            Path::new(&la)
+                .join("Programs")
+                .join("nodejs")
+                .join("node.exe"),
+        );
     }
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -338,9 +447,26 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Claude", true, None::<&str>)?;
     let phone = MenuItem::with_id(app, "phone", "Phone connection…", true, None::<&str>)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
-    let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart_on, None::<&str>)?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "Start with Windows",
+        true,
+        autostart_on,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &phone, &autostart, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open,
+            &PredefinedMenuItem::separator(app)?,
+            &phone,
+            &autostart,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
 
     let icon = app.default_window_icon().cloned().expect("window icon");
     TrayIconBuilder::with_id("main")
@@ -353,7 +479,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "phone" => show_phone_info(app),
             "autostart" => {
                 let on = app.autolaunch().is_enabled().unwrap_or(false);
-                let _ = if on { app.autolaunch().disable() } else { app.autolaunch().enable() };
+                let _ = if on {
+                    app.autolaunch().disable()
+                } else {
+                    app.autolaunch().enable()
+                };
                 let _ = autostart.set_checked(!on);
             }
             "quit" => {
@@ -363,7 +493,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main(tray.app_handle());
             }
         })
@@ -372,17 +507,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn show_phone_info(app: &AppHandle) {
-    let Some(state) = app.try_state::<ServerState>() else { return };
+    let Some(state) = app.try_state::<ServerState>() else {
+        return;
+    };
     let (password, port) = read_env(&state.env_file);
     let mut lines = Vec::new();
     let url = format!("http://127.0.0.1:{}/api/addresses", port);
-    if let Ok(resp) = ureq::get(&url).set("Authorization", &format!("Bearer {}", state.token)).call() {
+    if let Ok(resp) = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {}", state.token))
+        .call()
+    {
         if let Ok(json) = resp.into_json::<serde_json::Value>() {
             for a in json.as_array().cloned().unwrap_or_default() {
                 let addr = a["address"].as_str().unwrap_or("");
                 let name = a["name"].as_str().unwrap_or("");
                 let ts = a["tailscale"].as_bool().unwrap_or(false);
-                lines.push(format!("http://{addr}:{port}   ({})", if ts { "Tailscale" } else { name }));
+                lines.push(format!(
+                    "http://{addr}:{port}   ({})",
+                    if ts { "Tailscale" } else { name }
+                ));
             }
         }
     }
@@ -400,7 +543,11 @@ fn show_phone_info(app: &AppHandle) {
         password_line,
         state.env_file.display()
     );
-    app.dialog().message(text).title("Claude on your phone").kind(MessageDialogKind::Info).show(|_| {});
+    app.dialog()
+        .message(text)
+        .title("Claude on your phone")
+        .kind(MessageDialogKind::Info)
+        .show(|_| {});
 }
 
 // Follows the server's notification stream and raises a system notification
@@ -411,26 +558,49 @@ fn spawn_notifier(app: AppHandle) {
             thread::sleep(Duration::from_secs(1));
             continue;
         };
-        let url = format!("http://127.0.0.1:{}/api/notify?token={}", state.port, state.token);
+        let url = format!(
+            "http://127.0.0.1:{}/api/notify?token={}",
+            state.port, state.token
+        );
         match ureq::get(&url).call() {
             Ok(resp) => {
                 let reader = BufReader::new(resp.into_reader());
                 for line in reader.lines() {
                     let Ok(line) = line else { break };
-                    let Some(json) = line.strip_prefix("data: ") else { continue };
-                    let Ok(ev) = serde_json::from_str::<serde_json::Value>(json) else { continue };
-                    let focused = app.get_webview_window("main").map(|w| w.is_focused().unwrap_or(false) && w.is_visible().unwrap_or(false)).unwrap_or(false);
+                    let Some(json) = line.strip_prefix("data: ") else {
+                        continue;
+                    };
+                    let Ok(ev) = serde_json::from_str::<serde_json::Value>(json) else {
+                        continue;
+                    };
+                    let focused = app
+                        .get_webview_window("main")
+                        .map(|w| w.is_focused().unwrap_or(false) && w.is_visible().unwrap_or(false))
+                        .unwrap_or(false);
                     if focused {
                         continue;
                     }
                     let (title, body) = match ev["t"].as_str() {
                         Some("permission") => (
-                            format!("Claude wants to use {}", ev["tool"].as_str().unwrap_or("a tool")),
-                            ev["summary"].as_str().unwrap_or("Open the app to review").to_string(),
+                            format!(
+                                "Claude wants to use {}",
+                                ev["tool"].as_str().unwrap_or("a tool")
+                            ),
+                            ev["summary"]
+                                .as_str()
+                                .unwrap_or("Open the app to review")
+                                .to_string(),
                         ),
                         Some("turn_done") => (
-                            if ev["isError"].as_bool().unwrap_or(false) { "Claude hit an error".to_string() } else { "Claude finished".to_string() },
-                            ev["text"].as_str().unwrap_or("Open the app to read the answer").to_string(),
+                            if ev["isError"].as_bool().unwrap_or(false) {
+                                "Claude hit an error".to_string()
+                            } else {
+                                "Claude finished".to_string()
+                            },
+                            ev["text"]
+                                .as_str()
+                                .unwrap_or("Open the app to read the answer")
+                                .to_string(),
                         ),
                         _ => continue,
                     };
