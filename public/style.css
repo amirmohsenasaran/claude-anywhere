@@ -409,3 +409,5 @@ code, pre { font-family: var(--mono); font-size: 13px; }
 .step.has-image > summary::after { content: "image"; font-size: 11px; color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 7px; margin-inline-start: 6px; }
 @media (max-width: 860px) { .msg-images img { max-width: 100%; max-height: 300px; } }
 .prose img.md-img { max-width: 100%; max-height: 520px; border-radius: 10px; border: 1px solid var(--line); display: block; margin: .6em 0; cursor: zoom-in; }
+
+.boot-note { position: fixed; inset-block-start: 12px; inset-inline-end: 12px; z-index: 90; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; font-size: 13px; color: var(--ink-2); }

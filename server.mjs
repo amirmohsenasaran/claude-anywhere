@@ -753,16 +753,26 @@ app.get('/api/version', (_req, res) => {
   const shellFiles = [...listDir(path.join(here, 'src-tauri', 'src'), /\.rs$/), path.join(here, 'src-tauri', 'Cargo.toml'), path.join(here, 'src-tauri', 'tauri.conf.json')];
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
-  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
+  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.
+// Restarting kills whatever turn is running, so when Claude is busy the request
+// is remembered instead of refused: the moment the last turn ends, the server
+// exits 75 and the app brings it back. Refusing was the old behaviour, and it
+// left the update banner up with nothing the person could do about it.
+let restartQueued = false;
+const restartNow = () => setTimeout(() => process.exit(75), 300);
 app.post('/api/restart', (req, res) => {
-  if (liveCount() && !req.body?.force) return res.status(409).json({ error: `Claude is still working (${liveCount()} turn${liveCount() === 1 ? '' : 's'}). Try again when it is done.` });
   if (!envOf('PARENT_PID')) return res.status(400).json({ error: 'Not running inside the desktop app; restart `npm start` by hand.' });
+  if (liveCount() && !req.body?.force) {
+    restartQueued = true;
+    return res.json({ ok: true, restarting: false, queued: true, liveRuns: liveCount() });
+  }
   res.json({ ok: true, restarting: true });
-  setTimeout(() => process.exit(75), 300);
+  restartNow();
 });
+bus.on('turn_done', () => { if (restartQueued) setTimeout(() => { if (!liveCount()) restartNow(); }, 1500); });
 // The Rust shell changed (rare): a script closes the window, rebuilds and relaunches.
 const REBUILD_LOG = path.join(DATA_DIR, 'rebuild.log');
 app.post('/api/rebuild', (_req, res) => {

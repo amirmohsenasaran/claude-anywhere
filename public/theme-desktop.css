@@ -470,3 +470,24 @@ button.sb-diff:hover { background: var(--bg-3); }
 
 /* v25: a rebuild log from an earlier run is history, not news */
 .app-log.old { opacity: .62; }
+
+
+/* ---------- v26: the title bar lines up with the header, and a panel header
+   never fights the window buttons ---------- */
+:root { --titlebar-h: 56px; }
+@media (max-width: 860px) { :root { --titlebar-h: 52px; } }
+/* Filling the header's height is what makes the glyphs share its centre line,
+   the way the native buttons do in Claude Desktop. */
+.in-app .win-controls { height: var(--titlebar-h); }
+.in-app .win-controls button { height: 100%; }
+.in-app .topbar { padding-inline-end: 150px; }
+/* Panel headers: one line, and on a narrow window they start below the buttons
+   instead of trying to share the row with them. */
+.tp-head { min-height: var(--titlebar-h); flex-wrap: nowrap; }
+.tp-title, #tp-count, #ch-meta, #tp-clear, .ch-stat { white-space: nowrap; }
+.tp-head .muted { overflow: hidden; text-overflow: ellipsis; }
+.in-app .tasks-panel .tp-head { padding-inline-end: 150px; }
+@media (max-width: 1100px) {
+  .in-app .tasks-panel .tp-head { padding-inline-end: 12px; padding-top: calc(var(--titlebar-h) - 10px); }
+}
+#tp-clear.btn.small { font-size: 12px; padding: 3px 9px; }

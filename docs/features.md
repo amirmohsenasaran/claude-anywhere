@@ -150,3 +150,8 @@ worth doing:
 - Terminal, browser and preview panes; split view.
 - macOS and Linux shells (the web client already works everywhere; only the
   native window is Windows-only).
+
+And one that is further out than the rest: **other providers** — adding an
+OpenAI or Google account next to your Claude one and continuing the same
+session on GPT or Gemini. The transcript and the tool protocol are Claude
+Code's, so it needs a translation layer; see the roadmap in the README.

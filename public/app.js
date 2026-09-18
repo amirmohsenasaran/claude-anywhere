@@ -622,19 +622,29 @@
     }, 2000);
   }
 
-  async function waitForServer(then) {
-    const log = $('#app-log'); log.classList.remove('hidden'); log.textContent = 'Restarting the server…';
-    for (let i = 0; i < 60; i++) {
+  async function waitForServer(then, seconds = 900) {
+    const log = $('#app-log'); log.classList.remove('hidden');
+    if (!log.textContent.startsWith('Claude is working')) log.textContent = 'Restarting the server…';
+    const started = Date.now();
+    for (let i = 0; i < seconds; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       try { const r = await fetch('/api/version', { headers: { Authorization: 'Bearer ' + state.token }, cache: 'no-store' }); if (r.ok) { const v = await r.json(); if (Date.now() - v.serverStartedAt < 60000) { log.textContent = 'Back. Reloading…'; return then(); } } } catch {}
-      log.textContent = 'Restarting the server… ' + (i + 1) + 's';
+      if (!log.textContent.startsWith('Claude is working')) log.textContent = 'Restarting the server… ' + (i + 1) + 's';
+      else if (i % 10 === 0) log.textContent = 'Claude is working. The server restarts by itself the moment this turn ends, and the window reloads. (' + Math.round((Date.now() - started) / 1000) + 's)';
     }
     log.textContent = 'The server did not come back yet. Reload the page in a moment.';
   }
   $('#app-restart').addEventListener('click', async () => {
     const btn = $('#app-restart'); btn.disabled = true;
-    try { await api('/restart', { method: 'POST', body: JSON.stringify({}) }); await waitForServer(() => location.reload()); }
-    catch (e) { btn.disabled = false; $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; }
+    const log = $('#app-log');
+    try {
+      const r = await api('/restart', { method: 'POST', body: JSON.stringify({}) });
+      if (r.queued) {
+        log.classList.remove('hidden'); log.classList.remove('old');
+        log.textContent = 'Claude is working. The server restarts by itself the moment this turn ends, and the window reloads.';
+      }
+      await waitForServer(() => location.reload());
+    } catch (e) { btn.disabled = false; $('#connectors-error').hidden = false; $('#connectors-error').textContent = e.message; }
   });
   $('#app-rebuild').addEventListener('click', async () => {
     if (!confirm('Rebuild the Windows app now? The window closes and comes back in 1–3 minutes. The chat keeps running while it builds.')) return;
@@ -655,7 +665,9 @@
       $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
     } else {
       $('#ub-text').textContent = 'A new version is ready'; $('#ub-detail').textContent = v.changed.length + ' file' + (v.changed.length === 1 ? '' : 's') + ' changed' + (v.liveRuns ? ' · waits until Claude is idle' : '');
-      $('#ub-action').textContent = v.inApp ? 'Restart now' : 'Reload'; $('#ub-action').onclick = async () => {
+      $('#ub-action').textContent = !v.inApp ? 'Reload' : v.restartQueued ? 'Restarting after this turn' : 'Restart now';
+      $('#ub-action').disabled = !!v.restartQueued;
+      $('#ub-action').onclick = async () => {
         if (!v.inApp) return location.reload();
         try { await api('/restart', { method: 'POST', body: JSON.stringify({}) }); openConnectors(); await waitForServer(() => location.reload()); }
         catch (e) { $('#ub-detail').textContent = e.message; }
@@ -1581,16 +1593,35 @@
   document.addEventListener('touchend', () => { sw = null; }, { passive: true });
 
   // ---------- boot ----------
+  // The window reloads as soon as the server says it is restarting, so the first
+  // fetches often land while it is still coming up. Retry, with a note, instead
+  // of leaving a dead page that only a full restart of the app clears.
+  function bootNote(text) {
+    let n = $('#boot-note');
+    if (!text) { n?.remove(); return; }
+    if (!n) { n = el('div', 'boot-note'); n.id = 'boot-note'; document.body.appendChild(n); }
+    n.textContent = text;
+  }
+  async function untilServer(fn, seconds = 45) {
+    let last;
+    for (let i = 0; i <= seconds; i++) {
+      try { const v = await fn(); bootNote(''); return v; } catch (e) { last = e; }
+      bootNote(i < 2 ? 'Connecting…' : 'Waiting for the server to come back… ' + i + 's');
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    bootNote('');
+    throw last;
+  }
   async function boot() {
     // No app password configured? Then no login screen: just fetch the session token.
     if (!state.token) {
       let cfg = {};
-      try { cfg = await (await fetch('/api/config')).json(); } catch {}
+      try { cfg = await untilServer(async () => (await fetch('/api/config')).json()); } catch { return showLogin(); }
       if (cfg.passwordRequired) return showLogin();
-      try { await login(''); } catch { return showLogin(); }
+      try { await untilServer(() => login('')); } catch { return showLogin(); }
     }
     let me;
-    try { me = await refreshMe(); } catch { return; }
+    try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
     await Promise.all([loadSessions(), loadProjects()]);

@@ -32,6 +32,34 @@ phone talks straight to your PC over Tailscale or your own network.
 the desk, and want to answer its permission prompt, read what it did, or send
 the next instruction from the sofa — with the same interface you already know.
 
+## Why not just install Claude Desktop?
+
+Because Claude Desktop runs where it is installed, and the work does not.
+
+Claude Code sessions live on the machine that has your repository, your
+environment and your credentials. When a long task is running there and you get
+up from the desk, Desktop cannot help you: it is on that desk. This app puts the
+same sessions — the same files on disk — on the phone in your pocket, the laptop
+in the other room, or a browser on your Mac, over your own private network.
+
+| | Claude Desktop | Claude Anywhere |
+|---|---|---|
+| Runs | on one computer | on your computer, reachable from any device you own |
+| Your machine's sessions from a phone | no | yes, over Tailscale or your own LAN |
+| Answer a permission prompt away from the desk | no | yes, with a notification |
+| Where your code goes | stays on the machine | stays on the machine; there is no server of ours |
+| Source | closed | MIT, ~4,000 lines you can read and change |
+| Panes: terminal, browser, preview, worktrees | yes | not yet |
+| macOS and Linux app | yes | web client only; the native window is Windows |
+| Support | Anthropic | an issue tracker and me |
+
+**They are not rivals.** This reads and writes the same transcripts as
+`claude --resume`, the VS Code extension and Desktop itself, so a session you
+start here is one you can pick up in any of them — and while another window is
+mid-turn on a session, this one follows along and shows what it is doing.
+
+Use Desktop at the desk. Use this when you are not at it.
+
 ## Highlights
 
 - **Every session, every project** in one sidebar, in an order you set by drag
@@ -129,6 +157,31 @@ screen — it is a PWA, so it gets its own icon and window.
 [docs/architecture.md](docs/architecture.md) goes deeper, including the SDK
 behaviours that are easy to get wrong.
 
+## Roadmap
+
+Near term, in the order they are likely to happen:
+
+- [ ] Sidebar filters: group by date or state, show archived, sort.
+- [ ] A file browser, and search inside transcripts.
+- [ ] Keyboard shortcuts and a command palette (⌘K), for the Mac browser.
+- [ ] The PR bar's monitoring: CI failures, review comments, auto-merge.
+- [ ] Per-session git worktrees, and *Keep computer awake*.
+- [ ] A macOS shell, so the native window is not Windows-only.
+
+Bigger, and deliberately further out:
+
+- [ ] **Other providers.** Keep one conversation and change who answers it:
+      add an OpenAI or Google account alongside your Claude one and continue
+      the same session on GPT or Gemini, with the same files and the same
+      tools. The transcript format and the tool protocol are Claude Code's, so
+      this needs a translation layer rather than a switch — it is an intention,
+      not a promise, and it will land behind a flag first.
+- [ ] Shared sessions: a link that lets a teammate watch a run without
+      touching your machine.
+
+Ideas and arguments about the order belong in
+[Discussions](https://github.com/aryasadeghy/claude-anywhere/discussions).
+
 ## Contributing
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -136,6 +189,12 @@ for how to run it, what the house style is, and what a PR needs (a screenshot,
 if it changes anything you can see). [CLAUDE.md](CLAUDE.md) is the same set of
 rules written for Claude Code itself, so an agent working in this repo starts
 out knowing them.
+
+## Star history
+
+<a href="https://star-history.com/#aryasadeghy/claude-anywhere&Date">
+  <img src="https://api.star-history.com/svg?repos=aryasadeghy/claude-anywhere&type=Date" alt="Star history chart" width="600">
+</a>
 
 ## Not affiliated with Anthropic
 
