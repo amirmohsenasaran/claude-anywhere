@@ -9,6 +9,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Several sessions at once.** Shift+click picks a range in the sidebar,
+  Ctrl/Cmd+click adds or removes one, and on the phone "Select" in the
+  long-press menu turns taps into picks. A bar above the list pins, archives or
+  deletes them together (Delete asks once), the right-click menu on a picked row
+  acts on all of them, and dragging one picked row moves the whole block within
+  its project. Escape clears the pick.
 - **Preview panel.** Whatever the project's dev server is serving, shown inside
   the app and therefore on your phone, which cannot reach the PC's localhost by
   itself. Ports are discovered with the process behind them; everything is
@@ -18,6 +24,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Opening two sessions in a row could show one under the other's name.**
+  Opening a session fetches and renders its whole transcript, which takes
+  seconds for a big one; opening another before that finished let the slow one
+  land last, so the header, the messages and the live stream belonged to the
+  first session while the sidebar and the address bar said the second, and a
+  message typed there went to the second. A load now gives up as soon as a newer
+  open has started, and a stream never writes into another session's thread.
+- **The session list no longer jumps to the top** every time it refreshes.
 - **Images in a session open full size again.** They called `window.open`,
   which does nothing inside the app's WebView, so tapping one left it sitting
   there; markdown images had no handler at all. All of them now open in a

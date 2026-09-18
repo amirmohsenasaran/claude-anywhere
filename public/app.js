@@ -172,7 +172,28 @@
   function showCtxMenu(s, x, y, kind = 'session', group = null) {
     ctx.innerHTML = '';
     const add = (label, hint, fn, cls) => { const b = item(label, '', false, () => { ctx.classList.add('hidden'); fn(); }, { hint }); if (cls) b.classList.add(cls); ctx.appendChild(b); };
+    const place = () => {
+      ctx.classList.remove('hidden');
+      if (window.matchMedia('(max-width: 860px)').matches) { ctx.style.left = ctx.style.top = ''; return; } // a bottom sheet on the phone
+      const r = ctx.getBoundingClientRect();
+      ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+    };
+    // Right-click on one of several picked rows: the menu acts on all of them.
+    if (selected.has(s.id) && selected.size > 1) {
+      const n = selected.size, all = selectedSessions();
+      ctx.appendChild(el('div', 'menu-title', n + ' selected'));
+      add('Move up', '', () => nudgeSelected(-1));
+      add('Move down', '', () => nudgeSelected(1));
+      ctx.appendChild(el('div', 'menu-sep'));
+      add(all.every((x) => x.pinned) ? 'Unpin' : 'Pin', 'P', pinSelected);
+      add(all.every((x) => x.archived) ? 'Unarchive' : 'Archive', 'A', archiveSelected);
+      add('Delete ' + n + ' sessions', 'D', deleteSelected, 'danger');
+      ctx.appendChild(el('div', 'menu-sep'));
+      add('Clear selection', '', clearSelection);
+      place(); return;
+    }
     add('Open', '', () => { location.hash = '#/s/' + s.id; });
+    add('Select', '', () => { selectMode = true; pick(s.id); }); // the way in on the phone: taps then pick rows
     ctx.appendChild(el('div', 'menu-sep'));
     const gk = group || groupKey(s); const lk = kind === 'pinned' ? 'pinned' : 'session';
     add('Move up', '', () => nudge(lk, gk, s.id, -1));
@@ -185,25 +206,60 @@
     ctx.appendChild(el('div', 'menu-sep'));
     add(s.archived ? 'Unarchive' : 'Archive', 'A', async () => { try { await api(`/sessions/${s.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (state.current === s.id && !s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } });
     add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}" from this computer? This cannot be undone.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
-    ctx.classList.remove('hidden');
-    if (window.matchMedia('(max-width: 860px)').matches) { ctx.style.left = ctx.style.top = ''; return; } // a bottom sheet on the phone
-    const r = ctx.getBoundingClientRect();
-    ctx.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px'; ctx.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+    place();
   }
   document.addEventListener('click', (e) => { if (!ctx.contains(e.target)) ctx.classList.add('hidden'); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctx.classList.add('hidden'); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ctx.classList.add('hidden'); clearSelection(); } });
+  // Delete with rows picked asks, then deletes them; not while typing somewhere.
+  document.addEventListener('keydown', (e) => { if (e.key === 'Delete' && selected.size && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && !document.activeElement?.isContentEditable) { e.preventDefault(); deleteSelected(); } });
 
+  // ---------- picking several sessions ----------
+  // Shift+click takes a range, Ctrl/Cmd+click adds or removes one; on the phone "Select"
+  // in the long-press menu turns taps into picks. Picked rows delete, archive, pin and
+  // move together, and drag as one block within their project.
+  const selected = new Set();
+  let selectAnchor = null, selectMode = false;
+  const selectedSessions = () => state.sessions.filter((s) => selected.has(s.id));
+  function pick(id, { range = false, toggle = false } = {}) {
+    const ranged = range && selectAnchor; // a Shift+click with nothing picked yet is the first pick
+    if (ranged) {
+      // the range is what is on screen between the anchor and this row, whatever groups it crosses
+      const ids = [...$('#session-list').querySelectorAll('.session-item')].map((n) => n.dataset.id);
+      let a = ids.indexOf(selectAnchor), b = ids.indexOf(id); if (a < 0) a = b; if (a > b) [a, b] = [b, a];
+      for (const x of ids.slice(a, b + 1)) selected.add(x);
+    } else if (toggle && selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    if (!ranged) selectAnchor = id;
+    renderSessions();
+  }
+  function clearSelection() { if (!selected.size && !selectMode) return; selected.clear(); selectMode = false; selectAnchor = null; renderSessions(); }
+  function paintSelectBar() {
+    for (const id of selected) if (!state.sessions.some((s) => s.id === id)) selected.delete(id);
+    const bar = $('#select-bar'), n = selected.size, all = selectedSessions();
+    bar.classList.toggle('hidden', !n && !selectMode);
+    $('#select-count').textContent = n === 1 ? '1 selected' : n + ' selected';
+    $('#select-pin').textContent = n && all.every((s) => s.pinned) ? 'Unpin' : 'Pin';
+    $('#select-archive').textContent = n && all.every((s) => s.archived) ? 'Unarchive' : 'Archive';
+    for (const b of bar.querySelectorAll('button[data-needs]')) b.disabled = !n;
+  }
   function sessionRow(s, kind = 'session', group = null) {
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
     const attn = s.needsInput ? 'needs-input' : s.failed ? 'failed' : s.unread ? 'unread' : '';
     const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : '') + (attn ? ' ' + attn : ''));
-    a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '');
+    a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : ''); a.dataset.id = s.id;
+    if (selected.has(s.id)) a.classList.add('selected');
     a.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(s, e.clientX, e.clientY, kind, group); });
     // Long-press on the phone opens the same menu; the tap that ends it must not open the session.
     let pressTimer = null, pressed = false;
     a.addEventListener('touchstart', (e) => { pressed = false; const t = e.touches[0]; pressTimer = setTimeout(() => { pressed = true; showCtxMenu(s, t.clientX, t.clientY, kind, group); if (navigator.vibrate) navigator.vibrate(10); }, 450); }, { passive: true });
     for (const evn of ['touchend', 'touchmove', 'touchcancel']) a.addEventListener(evn, () => clearTimeout(pressTimer), { passive: true });
-    a.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = false; } });
+    a.addEventListener('click', (e) => {
+      if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = false; return; }
+      // Shift / Ctrl / Cmd (or select mode on the phone) picks the row instead of opening
+      // it; left alone, the browser would open the link in a new window or tab.
+      if (e.shiftKey || e.ctrlKey || e.metaKey || selectMode) { e.preventDefault(); e.stopPropagation(); pick(s.id, { range: e.shiftKey, toggle: e.ctrlKey || e.metaKey || selectMode }); return; }
+      if (selected.size) clearSelection();
+    });
     if (attn) { const d = el('span', 'dot ' + attn); d.title = attn === 'needs-input' ? 'Needs your input' : attn === 'failed' ? 'The last turn failed' : 'Finished while you were away'; a.appendChild(d); }
     else if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
@@ -213,6 +269,48 @@
     a.appendChild(pin);
     return a;
   }
+  // One request per picked row, all at once; what failed is said once (a session
+  // mid-turn refuses to be deleted).
+  async function bulk(label, fn, confirmText) {
+    const ids = [...selected]; if (!ids.length) return null;
+    if (confirmText && !confirm(confirmText)) return null;
+    const results = await Promise.allSettled(ids.map(fn));
+    const failed = results.filter((r) => r.status === 'rejected');
+    clearSelection();
+    await loadSessions().catch(() => {});
+    if (failed.length) alert(`${label}: ${failed.length} of ${ids.length} did not work. ${failed[0].reason?.message || ''}`.trim());
+    return ids;
+  }
+  async function deleteSelected() {
+    const all = selectedSessions(); if (!all.length) return;
+    const what = all.length === 1 ? `"${all[0].title}"` : all.length + ' sessions';
+    const ids = await bulk('Delete', (id) => api(`/sessions/${id}`, { method: 'DELETE' }), `Delete ${what} from this computer? This cannot be undone.`);
+    if (ids && ids.includes(state.current) && !state.sessions.some((s) => s.id === state.current)) location.hash = '#/';
+  }
+  async function archiveSelected() {
+    const all = selectedSessions(); if (!all.length) return;
+    const archived = !all.every((s) => s.archived);
+    const ids = await bulk(archived ? 'Archive' : 'Unarchive', (id) => api(`/sessions/${id}/archive`, { method: 'POST', body: JSON.stringify({ archived }) }));
+    if (ids && archived && ids.includes(state.current)) location.hash = '#/';
+  }
+  async function pinSelected() {
+    const all = selectedSessions(); if (!all.length) return;
+    const pinned = !all.every((s) => s.pinned);
+    await bulk(pinned ? 'Pin' : 'Unpin', (id) => api(`/sessions/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }));
+  }
+  // Every picked row steps one place within its own list; a row already at the edge,
+  // or behind another picked row that is, stays where it is.
+  function nudgeSelected(dir) {
+    for (const list of [state.order.pinned, ...Object.values(state.order.sessions)]) {
+      const idx = list.map((_, i) => i); if (dir > 0) idx.reverse();
+      for (const i of idx) { const j = i + dir; if (!selected.has(list[i]) || j < 0 || j >= list.length || selected.has(list[j])) continue; [list[i], list[j]] = [list[j], list[i]]; }
+    }
+    saveOrder(); renderSessions();
+  }
+  $('#select-pin').addEventListener('click', pinSelected);
+  $('#select-archive').addEventListener('click', archiveSelected);
+  $('#select-delete').addEventListener('click', deleteSelected);
+  $('#select-done').addEventListener('click', clearSelection);
   // ---------- a sidebar that keeps its order ----------
   // Nothing re-sorts itself when a session is written to. New projects go to the bottom,
   // new sessions to the top of their project, once; after that only drag-and-drop
@@ -241,28 +339,34 @@
   let drag = null;
   function makeDraggable(node, kind, id, group) {
     node.draggable = true;
-    node.addEventListener('dragstart', (e) => { drag = { kind, id, group }; node.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', id); } catch {} });
-    node.addEventListener('dragend', () => { node.classList.remove('dragging'); drag = null; document.querySelectorAll('.drop-before, .drop-after').forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
+    node.addEventListener('dragstart', (e) => {
+      // a picked row takes every picked row of its list along, in their current order
+      const ids = selected.has(id) ? orderList(kind, group).filter((x) => selected.has(x)) : [id];
+      drag = { kind, id, group, ids }; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', id); } catch {}
+      for (const n of ids.length > 1 ? $('#session-list').querySelectorAll('.session-item.selected') : [node]) n.classList.add('dragging');
+    });
+    node.addEventListener('dragend', () => { drag = null; document.querySelectorAll('.dragging, .drop-before, .drop-after').forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after')); });
     node.addEventListener('dragover', (e) => {
-      if (!drag || drag.kind !== kind || drag.group !== group || drag.id === id) return;
+      if (!drag || drag.kind !== kind || drag.group !== group || drag.ids.includes(id)) return;
       e.preventDefault(); e.dataTransfer.dropEffect = 'move';
       const r = node.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
       node.classList.toggle('drop-before', !after); node.classList.toggle('drop-after', after);
     });
     node.addEventListener('dragleave', () => node.classList.remove('drop-before', 'drop-after'));
     node.addEventListener('drop', (e) => {
-      if (!drag || drag.kind !== kind || drag.group !== group || drag.id === id) return;
+      if (!drag || drag.kind !== kind || drag.group !== group || drag.ids.includes(id)) return;
       e.preventDefault();
       const r = node.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
-      moveInOrder(kind, group, drag.id, id, after); drag = null;
+      moveInOrder(kind, group, drag.ids, id, after); drag = null;
     });
   }
   function orderList(kind, group) { return kind === 'project' ? state.order.projects : kind === 'pinned' ? state.order.pinned : (state.order.sessions[group] || (state.order.sessions[group] = [])); }
-  function moveInOrder(kind, group, id, targetId, after) {
+  function moveInOrder(kind, group, ids, targetId, after) {
     const list = orderList(kind, group);
-    const from = list.indexOf(id); if (from < 0) return; list.splice(from, 1);
+    const moving = list.filter((x) => ids.includes(x)); if (!moving.length) return;
+    for (const x of moving) list.splice(list.indexOf(x), 1);
     let to = list.indexOf(targetId); if (to < 0) to = list.length; if (after) to += 1;
-    list.splice(to, 0, id); saveOrder(); renderSessions();
+    list.splice(to, 0, ...moving); saveOrder(); renderSessions();
   }
   function nudge(kind, group, id, dir) {
     const list = orderList(kind, group); const i = list.indexOf(id); const j = i + dir;
@@ -272,7 +376,7 @@
 
   function renderSessions() {
     applyOrder();
-    const list = $('#session-list'); list.innerHTML = '';
+    const list = $('#session-list'); const scrolled = list.scrollTop; list.innerHTML = '';
     const pinned = byOrder(state.sessions.filter((s) => s.pinned), state.order.pinned, (s) => s.id);
     if (pinned.length) {
       const g = el('details', 'project-group'); g.open = !collapsed.has('__pinned');
@@ -307,7 +411,8 @@
     }
     if (!state.sessions.length) list.appendChild(el('div', 'muted small pad', 'No sessions yet.'));
     if (q && !groups.size) list.appendChild(el('div', 'muted small pad', 'No sessions match.'));
-    updatePinButton();
+    list.scrollTop = scrolled; // rebuilt in place on every refresh and every pick: it must not jump to the top
+    updatePinButton(); paintSelectBar();
   }
   function showProjectMenu(k, name, x, y) {
     ctx.innerHTML = '';
@@ -1332,6 +1437,7 @@
   }
 
   function subscribe(sessionId, { since = -1 } = {}) {
+    if (state.current !== sessionId) return; // the chat moved on while this was being set up
     if (state.es) { state.es.close(); state.es = null; }
     const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}`);
     state.es = es;
@@ -1340,6 +1446,8 @@
     let msgNo = 0, mode = 'run';
     const key = (index) => msgNo + ':' + index;
     es.onmessage = (e) => {
+      // Whatever else happens, a stream never writes into another session's thread.
+      if (state.current !== sessionId) { es.close(); if (state.es === es) state.es = null; return; }
       const ev = JSON.parse(e.data);
       if (ev.i != null) state.lastEventId = ev.i;
       switch (ev.t) {
@@ -1606,7 +1714,13 @@
   async function stop() { if (state.current) await api(`/sessions/${state.current}/stop`, { method: 'POST' }); }
 
   // ---------- routing ----------
+  // Opening a session fetches and renders its whole transcript, seconds for a big one.
+  // Opening another one meanwhile must win: each open takes a number and gives up after
+  // every await once a newer open (or the new-chat screen) has started. Without this the
+  // slow one finished last and painted its messages under the other session's name.
+  let openSeq = 0;
   async function openSession(id) {
+    const seq = ++openSeq;
     state.current = id; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (previewOpen) closePreview();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open'); app.classList.remove('new');
@@ -1614,9 +1728,11 @@
     renderSessions();
     try {
       const info = await api('/sessions/' + id);
+      if (seq !== openSeq) return;
       // A turn started here and still running is replayed by the live stream from
       // its prompt onwards, so the history stops just before it.
       const messages = await api(`/sessions/${id}/messages` + (info.live && info.runStartedAt ? '?before=' + info.runStartedAt : ''));
+      if (seq !== openSeq) return;
       $('#chat-title').textContent = info.title;
       applySessionSettings(info.settings);
       $('#chat-meta').textContent = info.project || '';
@@ -1639,10 +1755,11 @@
       usage.context = info.context || null; paintUsage(); refreshGit(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
       input.placeholder = 'Type / for commands';
       api(`/sessions/${id}/usage`).then((u) => { usage.context = u.context || usage.context; usage.limits = u.limits || usage.limits; paintUsage(); }).catch(() => {});
-    } catch (e) { thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
+    } catch (e) { if (seq !== openSeq) return; thread.innerHTML = ''; thread.appendChild(el('div', 'note error', e.message)); }
     input.focus();
   }
   function openNew() {
+    openSeq++; // a session still loading must not paint over the new-chat screen
     state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges();
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
