@@ -199,6 +199,8 @@
     m.appendChild(item('Show archived', '', state.view.archived, () => { m.classList.add('hidden'); setView({ archived: !state.view.archived }); }));
   });
 
+  $('#filter-btn').classList.toggle('on', state.view.group !== 'project' || state.view.sort !== 'manual' || state.view.archived);
+
   async function loadSessions() {
     state.sessions = await api('/sessions?limit=200' + (state.view.archived ? '&archived=1' : ''));
     renderSessions();
@@ -718,7 +720,7 @@
       const add = g.sessionAdded ?? g.added, del = g.sessionRemoved ?? g.removed;
       $('#sb-added').textContent = '+' + Number(add).toLocaleString(); $('#sb-removed').textContent = '−' + Number(del).toLocaleString();
       $('#sb-diff').classList.toggle('hidden', !(add || del));
-      $('#sb-pr').classList.toggle('hidden', !g.dirty);
+      $('#sb-pr').classList.toggle('hidden', !g.dirty || !!prData?.has); // there already is one: no point offering to make another
     } catch { bar.classList.add('hidden'); }
   }
   $('#sb-close').addEventListener('click', () => $('#session-bar').classList.add('hidden'));
