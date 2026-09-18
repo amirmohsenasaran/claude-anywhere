@@ -1713,6 +1713,31 @@
   }
   async function stop() { if (state.current) await api(`/sessions/${state.current}/stop`, { method: 'POST' }); }
 
+  // ---------- the sidebar and the right-hand panels drag wider or narrower ----------
+  // The width goes into a CSS variable on <html>, so the stylesheet's phone rules keep
+  // winning below 860 px; it is remembered per device. Double-click puts the default back.
+  function resizable(node, key, { min, max, side }) {
+    const h = el('div', 'resizer'); h.title = 'Drag to resize. Double-click to reset.'; node.appendChild(h);
+    const store = 'cr.width.' + key.replace(/^--/, '').replace(/-w$/, '');
+    const apply = (w) => { if (w) document.documentElement.style.setProperty(key, w + 'px'); else document.documentElement.style.removeProperty(key); };
+    let saved = 0; try { saved = Number(localStorage.getItem(store)) || 0; } catch {}
+    if (saved) apply(saved);
+    h.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); h.setPointerCapture(e.pointerId); h.classList.add('active'); app.classList.add('resizing');
+      const x0 = e.clientX, w0 = node.getBoundingClientRect().width;
+      // the sidebar grows as its edge moves away from the window's start side, a panel as it moves towards it
+      const dir = (getComputedStyle(node).direction === 'rtl' ? -1 : 1) * (side === 'start' ? 1 : -1);
+      let w = w0;
+      const move = (ev) => { w = Math.round(Math.max(min, Math.min(max(), w0 + (ev.clientX - x0) * dir))); apply(w); };
+      const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up); h.classList.remove('active'); app.classList.remove('resizing'); try { localStorage.setItem(store, String(w)); } catch {} };
+      h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+    });
+    h.addEventListener('dblclick', () => { apply(0); try { localStorage.removeItem(store); } catch {} });
+  }
+  resizable($('#sidebar'), '--sidebar-w', { min: 220, max: () => Math.min(600, window.innerWidth / 2), side: 'start' });
+  for (const [node, key] of [[tasksPanel, '--tasks-w'], [changesPanel, '--changes-w'], [pvPanel, '--preview-w']]) resizable(node, key, { min: 300, max: () => window.innerWidth - 560, side: 'end' });
+
   // ---------- routing ----------
   // Opening a session fetches and renders its whole transcript, seconds for a big one.
   // Opening another one meanwhile must win: each open takes a number and gives up after

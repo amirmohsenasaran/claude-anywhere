@@ -520,3 +520,20 @@ button.sb-diff:hover { background: var(--bg-3); }
 .select-bar button.danger { color: var(--danger); }
 .select-bar button:disabled { opacity: .4; pointer-events: none; }
 @media (max-width: 860px) { .select-bar { flex-wrap: wrap; } .select-bar span { flex-basis: 100%; margin-bottom: 2px; } }   /* 300 px of sidebar: the count gets its own line */
+
+/* ---------- v30: the sidebar and the right-hand panels drag wider or narrower ---------- */
+/* Widths live in variables on <html> so the phone rules below 860 px (overlay sidebar,
+   full-screen panels) keep winning; the handles only exist on the wide layout. */
+@media (min-width: 861px) {
+  .sidebar, .tasks-panel { position: relative; }
+  .tasks-panel { width: var(--tasks-w, 360px); }
+  .changes-panel { width: var(--changes-w, 440px); }
+  .preview-panel { width: var(--preview-w, 520px); }
+}
+.resizer { position: absolute; top: 0; bottom: 0; inset-inline-end: -4px; width: 8px; cursor: col-resize; z-index: 5; touch-action: none; -webkit-app-region: no-drag; }
+.tasks-panel > .resizer { inset-inline-end: auto; inset-inline-start: -4px; }
+.resizer::after { content: ""; position: absolute; top: 0; bottom: 0; inset-inline-start: 3px; width: 2px; background: #3b82f6; opacity: 0; transition: opacity .12s; }
+.resizer:hover::after, .resizer.active::after { opacity: 1; }
+.app.resizing, .app.resizing * { cursor: col-resize !important; user-select: none; -webkit-user-select: none; }
+.app.resizing iframe { pointer-events: none; }   /* the preview frame would swallow the drag */
+@media (max-width: 860px) { .resizer { display: none; } .sidebar { width: min(var(--sidebar-w), 86vw); } }
