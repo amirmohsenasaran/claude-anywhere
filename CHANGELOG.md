@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rebuild app never started anything.** The server spawned its script with
+  `detached: true`, and a detached PowerShell child on Windows gets no console
+  and exits immediately, silently — so the panel sat on an empty log, which the
+  client rendered as "Waiting…". It is now started through a short-lived
+  launcher that hands the script to `Start-Process`, so it both starts and
+  outlives the window it closes.
+- The App panel says when a rebuild log is from, instead of showing a finished
+  log from an hour ago as if it had just happened.
+
 ## [0.3.0] — 2026-09-18
 
 First public release.

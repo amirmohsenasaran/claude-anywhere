@@ -763,10 +763,15 @@ app.post('/api/rebuild', (_req, res) => {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const stamp = () => '[' + new Date().toTimeString().slice(0, 8) + '] ';
   try { fs.writeFileSync(REBUILD_LOG, stamp() + 'starting the rebuild script\n'); } catch {}
-  // NOT detached: a detached PowerShell child gets no console on Windows and exits
-  // immediately, silently, so the panel sat on an empty log forever. The server
-  // outlives the rebuild anyway - it is a separate process from the window.
-  const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Repo', here, '-Port', String(PORT), '-Token', TOKEN, '-Log', REBUILD_LOG], { stdio: 'ignore', windowsHide: true });
+  // Two Windows traps in one line, both silent when you get them wrong:
+  //   detached + stdio:'ignore' gives PowerShell no console and it exits at once;
+  //   attached, it dies with whatever started it.
+  // So: a short-lived attached PowerShell whose only job is to Start-Process the
+  // real script, which then belongs to nobody and survives the window closing.
+  const q = (v) => "'" + String(v).replace(/'/g, "''") + "'";
+  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Repo', here, '-Port', String(PORT), '-Token', TOKEN, '-Log', REBUILD_LOG];
+  const launcher = `Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList ${args.map(q).join(',')}`;
+  const child = spawn('powershell.exe', ['-NoProfile', '-Command', launcher], { stdio: 'ignore', windowsHide: true });
   child.on('error', (e) => { try { fs.appendFileSync(REBUILD_LOG, stamp() + 'could not start PowerShell: ' + e.message + '\n' + stamp() + 'done\n'); } catch {} });
   child.unref();
   res.json({ ok: true, log: REBUILD_LOG });
