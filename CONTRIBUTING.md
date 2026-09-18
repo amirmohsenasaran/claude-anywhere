@@ -1,0 +1,72 @@
+# Contributing
+
+Thanks for looking. This is a small project with strong opinions about how it
+reads and behaves; the rules below are what keeps it that way.
+
+## Running it
+
+```bash
+npm install
+npm start                 # http://127.0.0.1:7777
+```
+
+There is **no build step for the client**. `public/` is plain HTML, CSS and one
+JavaScript file; reload the page and your change is there. The server has no
+watcher either — restart `npm start` after editing `server.mjs` or `lib/`.
+
+For the native window you need [Rust](https://rustup.rs/) and
+`cargo install tauri-cli --version "^2"`, then `npm run desktop`.
+
+Run a second copy on another port while your own is running:
+
+```bash
+PORT=7779 CLAUDE_REMOTE_DATA_DIR=/tmp/cr-dev node server.mjs
+```
+
+## Checks before a pull request
+
+There is no test runner yet. What is expected instead:
+
+1. `node --check` on every file you touched (`server.mjs`, `lib/*.mjs`,
+   `public/app.js`). CI does this for all of them.
+2. `cargo check` in `src-tauri/` if you touched Rust. CI does this too.
+3. **Walk the change in a browser.** Playwright against a dev server is how
+   every feature in here was checked — open the app, do the thing, and put the
+   screenshot in the pull request. A UI change without a screenshot will be
+   asked for one.
+4. Check the phone width (390 px) and, if you touched layout, WebKit — the app
+   is used from Safari on a Mac as well as Chrome.
+
+## Style
+
+- **Comments say why, not what.** If a line is surprising, the comment explains
+  the reason it has to be that way — usually an SDK behaviour, a Windows
+  detail, or a bug that came back. Do not narrate the code.
+- **Match the surrounding code.** Long single-line handlers are normal here;
+  so is `const` everywhere and early return.
+- **No dependencies unless there is no other way.** The client has two
+  (`marked`, `dompurify`) and no framework.
+- **Words are part of the design.** Labels are what Claude Desktop calls the
+  same thing where an equivalent exists, and sentences in the interface are
+  written for a person, not for the system's internals.
+- **British-ish spelling in prose, US in code identifiers** — match what is
+  already there rather than converting a file.
+
+## Commits and pull requests
+
+- One subject per commit, lower case, no trailing period, in the imperative or
+  as a statement of what now happens: `tasks: stop a single background task`.
+  Say the *why* in the body when the change is not obvious.
+- Rebase rather than merge; keep the history readable.
+- A pull request explains what changed, how you checked it, and carries a
+  screenshot if anything visible moved.
+
+## Where to start
+
+- Issues labelled `good first issue`.
+- The gap list in [docs/features.md](docs/features.md) under *Not there yet* —
+  those are real, wanted, and each is small enough to do alone.
+
+## Reporting a security problem
+
+Do not open an issue. See [SECURITY.md](SECURITY.md).

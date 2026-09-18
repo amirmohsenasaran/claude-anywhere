@@ -1,0 +1,65 @@
+name: Release
+
+# Tag a commit to publish: `npm run release -- 0.4.0` writes the version,
+# commits and pushes the tag; this builds the Windows installer and opens a
+# draft release with it attached. Review the notes, then publish.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The installer carries the server and its dependencies (bundle.resources),
+      # so a production install must be present before the bundler runs.
+      - run: npm ci --omit=dev
+
+      - name: Check the tag matches the version in the app
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}" -replace '^v', ''
+          $conf = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $pkg = (Get-Content package.json | ConvertFrom-Json).version
+          if ($tag -ne $conf -or $tag -ne $pkg) {
+            throw "tag $tag, tauri.conf.json $conf, package.json $pkg - they must agree"
+          }
+          "version $tag"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Claude Remote ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what changed.
+
+            **Install:** download the `.exe` below and run it. [Node.js](https://nodejs.org/) 20 or newer
+            must be installed, because the app runs its server with it. Claude Code itself is included.
+
+            **First run:** the app asks which Claude account to use — this computer's `claude login`,
+            or a token from `claude setup-token`.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false

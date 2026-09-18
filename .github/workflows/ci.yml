@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server and client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # There is no bundler: a syntax error is the failure mode, so check every file.
+      - name: Syntax-check every JavaScript file we ship
+        run: |
+          set -e
+          for f in server.mjs lib/*.mjs public/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done
+      - name: The server starts and answers
+        run: |
+          CLAUDE_REMOTE_DATA_DIR="$RUNNER_TEMP/data" PORT=7788 node server.mjs &
+          for i in $(seq 1 30); do
+            sleep 1
+            if curl -fsS http://127.0.0.1:7788/api/config > /dev/null; then
+              echo "up"; curl -fsS http://127.0.0.1:7788/api/config; exit 0
+            fi
+          done
+          echo "the server never answered"; exit 1
+
+  shell:
+    name: Native shell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # tauri-build reads bundle.resources, which point at node_modules.
+      - run: npm ci
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --locked
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check

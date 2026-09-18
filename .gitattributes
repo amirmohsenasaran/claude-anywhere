@@ -1,0 +1,15 @@
+# Keep the repository in LF; Windows checkouts get CRLF where it matters.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.mp4 binary
+
+# Generated, and noisy in a diff.
+package-lock.json linguist-generated=true
+src-tauri/Cargo.lock linguist-generated=true

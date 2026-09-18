@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. If this is a security problem — anything
+        that lets a request reach the machine without permission — please stop
+        and use a [private advisory](../security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead. A screenshot usually says it faster.
+      placeholder: |
+        I pressed Rebuild app from my phone and the panel stayed on "Waiting…" for ten minutes.
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a session
+        2. …
+    validations: { required: true }
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - The Windows app
+        - A browser on the same machine
+        - A phone
+        - A Mac or another computer
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The App panel in Connectors & plugins shows the commit; a release version is fine too.
+      placeholder: 0.3.0 or 85cc80e
+    validations: { required: true }
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: '`node -v`'
+      placeholder: v20.17.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything the server printed
+      description: The terminal running `npm start`, or the app's server log next to its data folder. Remove anything private first.
+      render: text

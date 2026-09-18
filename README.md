@@ -1,175 +1,154 @@
-# claude-remote
+<div align="center">
 
-A small self-hosted web app, styled like claude.ai, that lists, continues and
-starts the **Claude Code sessions on this PC** from any device (phone included).
+# Claude Remote
 
-It is built on the official Claude Agent SDK, so it reads the same session
-transcripts Claude Code writes (`~/.claude/projects/...`) and continuing a
-session is exactly `claude --resume`. It never touches `~/.claude/settings.json`
-or the Claude Desktop app.
+**Your Claude Code sessions, on every screen.**
 
-## Run
+A self-hosted desktop app and web client for the Claude Code sessions already
+on your computer — open them from your phone, your Mac, or a native Windows
+window, and keep working where you left off.
 
-```
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-black.svg)](#install)
+[![Built on the Claude Agent SDK](https://img.shields.io/badge/built%20on-Claude%20Agent%20SDK-d97757.svg)](https://docs.anthropic.com/en/docs/claude-code/sdk)
+
+![The app on Windows](docs/images/hero.png)
+
+</div>
+
+## What it is
+
+Claude Code keeps every session as a transcript on your machine. This reads
+those transcripts with the official [Claude Agent SDK][sdk], shows them in a
+Claude-styled interface, and lets you continue any of them — which is exactly
+what `claude --resume` does, so a session you start on your phone is the same
+session your terminal picks up later.
+
+Nothing is relayed through a server of ours, because there is no server of
+ours. The app is a small Node process on your machine plus a native window; the
+phone talks straight to your PC over Tailscale or your own network.
+
+**It is for you if** you leave Claude Code working on something, walk away from
+the desk, and want to answer its permission prompt, read what it did, or send
+the next instruction from the sofa — with the same interface you already know.
+
+## Highlights
+
+- **Every session, every project** in one sidebar, in an order you set by drag
+  and drop and that nothing re-sorts behind your back.
+- **Live turns**: streaming text and thinking, tool calls with their input and
+  result, a status line, queued messages that reach Claude at the next tool
+  boundary rather than at the end of the turn.
+- **Permission prompts from the phone** — Allow, Allow always, Deny.
+- **Tasks panel**: every command, subagent and workflow the turn is running,
+  with elapsed time, live output and its own Stop; send one to the background
+  and let Claude carry on.
+- **Changes panel**: every file that differs from `HEAD`, with per-file diffs.
+- **Rewind to here** on any earlier message: a fork of the session up to just
+  before it, with the message back in the composer to change and resend.
+- **Watches your other windows**: a session being worked on in VS Code, a
+  terminal or Claude Desktop streams in here as that window writes it.
+- **Native Windows app**: WebView2, a few megabytes, tray icon, start with
+  Windows, system notifications, its own title bar.
+- **Two accounts**: this computer's `claude login`, or a token you paste, and a
+  switch between them.
+
+See [docs/features.md](docs/features.md) for the whole list with the detail.
+
+## Install
+
+### From a release (Windows 10/11)
+
+Download the installer from [Releases][releases] and run it. It brings its own
+Claude Code binary, so the `claude` CLI is not required — but [Node.js][node]
+20 or newer must be installed and on `PATH`, because the app runs the server
+with it.
+
+### From source
+
+```bash
+git clone https://github.com/aryasadeghy/claude-remote
+cd claude-remote
 npm install
-copy .env.example .env      # optional: REMOTE_PASSWORD, USER_NAME
-npm start                   # http://127.0.0.1:7777
+npm start                    # http://127.0.0.1:7777
 ```
 
-There is no password unless you set one in `.env`. The first time a device
-opens the app it asks which Claude account to use.
+That is the web app on its own — enough for a phone, a Mac, or another browser
+on the same machine. For the native Windows window you also need the
+[Rust toolchain][rust] and the Tauri CLI
+(`cargo install tauri-cli --version "^2"`):
 
-## Reach it from the phone
-
-By default the server listens on localhost only. Pick one:
-
-- **Tailscale (recommended):** `tailscale serve --bg 7777`, then open the
-  machine's Tailscale URL on the phone. Add the page to the home screen; it is a
-  PWA.
-- **Own LAN / Tailscale IP directly:** set `HOST=0.0.0.0` in `.env` and open
-  `http://<pc-ip>:7777`.
-- **Cloudflare Tunnel:** `cloudflared tunnel --url http://127.0.0.1:7777`.
-
-The PC has to be awake: the sessions, files and tools live here.
-
-## What it does
-
-- Sidebar lists every session across projects, grouped by folder, newest first
-  (includes sessions started in the VS Code extension and the terminal).
-- Open a session to read it: text, thinking, tool calls with input and result.
-- Send a message to continue it (streams live). Tool permission prompts show up
-  as a card with Allow / Allow always / Deny, answered from the phone.
-- New chat: choose a folder, type, go. It becomes a normal Claude Code session
-  that `claude --resume` in a terminal can pick up as well.
-- A turn keeps running if the phone screen turns off; reopening the chat
-  replays what was missed.
-
-## Caveats
-
-- Do not continue a session from here while it is open and mid-turn in VS Code
-  or a terminal; two processes would append to the same transcript. Reading is
-  always safe.
-- One live turn per session at a time.
-- Everything is served over plain HTTP; keep it behind Tailscale or a tunnel.
-
-## Watching other windows
-
-Open a session that VS Code, a terminal or Claude Desktop is working on and the
-app follows its transcript file: each finished block (text, tool call, result)
-appears as the other window writes it, the header says "Working in another
-window", and the composer stays locked until that turn ends. Sessions written
-to in the last 45 seconds carry a dot in the sidebar.
-
-## Accounts
-
-Two accounts are available and you switch between them any time from the
-sidebar (click your name, or "Switch"):
-
-- **This computer's login**: whatever `claude login` signed into on this PC.
-- **Token**: a token from `claude setup-token` (or a Console API key) pasted
-  in the app. It is proven with one small Haiku request, then kept in
-  `data/auth.json`. Remove it from the same dialog.
-
-Whatever you send is billed to the active account; the sessions themselves
-stay on this computer either way. The account line at the bottom of the
-sidebar comes from `claude auth status`, run on the active account.
-
-## Desktop app (Windows, Rust + WebView2)
-
-```
-npm run desktop    # cargo tauri dev: run it as a native window from this folder
-npm run dist       # cargo tauri build: src-tauri/target/release/bundle/nsis/Claude Remote_x.y.z_x64-setup.exe
+```bash
+npm run desktop              # run it as a native window
+npm run dist                 # build the installer into src-tauri/target/release/bundle/nsis
 ```
 
-The shell is a small Tauri (Rust) app on the WebView2 that Windows already
-has, so it is a few megabytes and light on memory. It starts the same Node
-server inside itself (Node 20+ must be installed and on PATH), opens the chat
-in its own window already signed in, lives in the tray (closing the window
-hides it), can start with Windows, and shows a system notification when
-Claude asks for a permission or finishes a turn while the window is not in
-front. It listens on all interfaces so the phone can reach it: tray → "Phone
-connection…" shows the address (Tailscale first) and the password. Its
-settings live in `%APPDATA%\com.arya.claude-remote\.env`, pins and the
-optional token in `%APPDATA%\com.arya.claude-remote\data\`, and the server log
-next to them.
+New here? [docs/getting-started.md](docs/getting-started.md) walks the whole
+thing, including the phone.
 
-Building needs the Rust toolchain (`rustup`; the GNU toolchain works) and the
-Tauri CLI (`cargo install tauri-cli --version ^2`). The Agent SDK brings its
-own Claude Code binary (`@anthropic-ai/claude-agent-sdk-win32-x64`), so the
-installer is about 250 MB and does not depend on the `claude` CLI.
+## From your phone
 
-## While Claude works
+<img src="docs/images/phone.png" alt="The sidebar on a phone" width="260" align="right">
 
-- A status line under the last message shows what is happening ("Thinking…",
-  "Running Bash…", "Waiting for your approval"), seconds elapsed and output
-  tokens; thinking streams open and collapses to "Thought for 4s".
-- Messages typed while Claude works are handed to Claude Code at once; it reads
-  them after the current step (the next tool boundary), not after the whole
-  turn, exactly as the CLI and Desktop do. The bubble is dashed until the turn
-  takes it up. Esc or the stop button interrupts.
-- Permission mode (Manual / Edit automatically / Plan / Auto), model and effort
-  can be changed mid-turn; Shift+Tab cycles the mode like the CLI.
-- **Tasks.** Every command and subagent the turn runs is a task. A bar above
-  the composer ("2 tasks running · 1 command · 1 agent") opens a panel on the
-  right (a full-screen sheet on the phone) with each task: what it is, how long
-  it has run, tool uses and tokens for agents, a one-line progress summary, its
-  live output, and its own **Stop**. A foreground command or agent can be sent
-  to the background ("Run in background", the CLI's Ctrl+B) so Claude carries
-  on. The stop button in the composer ends the turn only; background tasks keep
-  running until they finish or you stop them, and the session process stays up
-  until then. Finished tasks stay listed with their result until cleared.
+The server listens on `127.0.0.1` by default, so start by giving your devices a
+private path to it. **Tailscale is the recommended one**:
 
-## The window
+```bash
+tailscale serve --bg 7777
+```
 
-The app window has no Windows title bar, like Claude Desktop's. The page draws
-its own: the header row (and the top of the sidebar) is the drag handle,
-double-clicking it maximises, and minimise / maximise / close sit at the top
-right. They only appear inside the app; in a browser the page looks unchanged.
+Then open the machine's Tailscale URL on the phone and add it to the home
+screen — it is a PWA, so it gets its own icon and window.
 
-The buttons talk to the window through Tauri, and the page is served over http,
-which counts as a remote origin, so the window commands are granted to it in
-`src-tauri/capabilities/window-controls.json` — nothing else is. Closing still
-only hides the window; the server, and the phone, keep running.
+> [!WARNING]
+> This app runs Claude Code as you, on your machine. Anything that can reach it
+> can read your files and run commands. Do not put it on the open internet, and
+> set `REMOTE_PASSWORD` before binding it to a network you do not control.
+> [SECURITY.md](SECURITY.md) has the short version of the threat model.
 
-## Sidebar dots, Changes, Rewind
+## How it works
 
-- **Dots.** A session that is waiting for your approval gets a pulsing dot;
-  one whose last turn failed a red one; one that finished while you were not
-  looking at it a blue one (Desktop's unread dot). Opening the session clears
-  it; the long-press / right-click menu has *Mark as unread* / *Mark as read*.
-  Unread survives a restart (`data/attention.json`).
-- **Changes.** The `+n −m` in the bar above the composer (and *Changes* in the
-  session menu) opens a panel on the right listing every file that differs
-  from `HEAD` in the session's folder, modified / added / deleted / renamed,
-  with per-file counts; tap a file for its diff with old/new line numbers.
-  Untracked files show as fully added. Refreshes when a turn ends.
-- **Rewind to here** under any earlier message of yours: a new session that is
-  this one up to just before that message, with the message back in the
-  composer to change and send again. The original session is untouched.
+```
+  phone / Mac / browser ─┐
+                         ├── http ──► server.mjs (Express, your machine)
+  native window (Tauri) ─┘                 │
+                                           ├── @anthropic-ai/claude-agent-sdk
+                                           │      └── Claude Code ──► Anthropic
+                                           └── ~/.claude/projects/*.jsonl
+                                                  (the same transcripts the CLI writes)
+```
 
-## Updating from the phone
+- `server.mjs` — HTTP API, session list, live event streams.
+- `lib/runs.mjs` — one Claude Code process per live turn, streaming input so a
+  message typed mid-turn is folded in at the next tool boundary.
+- `lib/tail.mjs` — follows transcripts other windows are writing.
+- `public/` — the client. No build step, no framework: HTML, CSS and one JS
+  file you can read.
+- `src-tauri/` — the native shell (Rust): window, tray, notifications.
 
-**Rebuild app** closes the window, compiles (1–3 minutes) and opens it again.
-The chat does not stop: the server is its own process and stays up, so a turn
-in flight keeps running and the phone and browser keep working — the log is at
-`/api/rebuild/log`, which the App panel shows live. The window has to go
-because the running app holds files in `target/release`; cargo fails with
-"used by another process" otherwise, even if the exe is renamed aside.
+[docs/architecture.md](docs/architecture.md) goes deeper, including the SDK
+behaviours that are easy to get wrong.
 
-**Restart server** only reloads the server code, and needs Claude to be idle
-(it would kill a running turn), so it answers 409 while one is in flight.
+## Contributing
 
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md)
+for how to run it, what the house style is, and what a PR needs (a screenshot,
+if it changes anything you can see). [CLAUDE.md](CLAUDE.md) is the same set of
+rules written for Claude Code itself, so an agent working in this repo starts
+out knowing them.
 
-Open Connectors & plugins (plug icon at the top) → **App**:
+## Not affiliated with Anthropic
 
-- **Restart server** — picks up new server and page code (`server.mjs`, `lib/`,
-  `public/`) from the checkout the app runs from, and reloads the window. The
-  app refuses while Claude is mid-turn. Set `CLAUDE_REMOTE_SERVER_DIR` in the
-  app's `.env` (`%APPDATA%\com.arya.claude-remote\.env`) to the repo folder so
-  the app serves the working copy directly.
-- **Rebuild app** — only when the Rust shell (`src-tauri/`) changed. A detached
-  script (`scripts/rebuild.ps1`) waits until nothing is running, closes the app,
-  runs `cargo tauri build` and relaunches it; the log streams into the panel.
+This is a community project. It is not made, endorsed or supported by
+Anthropic. "Claude" and "Claude Code" are Anthropic's trademarks, used here
+only to say what this tool works with. Your use of Claude through it is your
+own Claude account, under Anthropic's terms.
 
-Restarts never kill a running turn: a busy server stays up until it is idle,
-and the next app instance adopts it.
+## Licence
+
+[MIT](LICENSE) © Arya Sadeghi
+
+[sdk]: https://docs.anthropic.com/en/docs/claude-code/sdk
+[releases]: https://github.com/aryasadeghy/claude-remote/releases
+[node]: https://nodejs.org/
+[rust]: https://rustup.rs/

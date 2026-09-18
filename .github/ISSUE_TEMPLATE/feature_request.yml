@@ -1,0 +1,24 @@
+name: Feature request
+description: Something that should exist
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. What were you doing when you wanted this?
+      placeholder: |
+        I leave a long task running and walk away, and I cannot tell from my phone whether it is waiting for me.
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: If Claude Desktop, the CLI or another tool already does it, say how — matching something that exists beats inventing a new shape.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you post
+      options:
+        - label: I looked at the "Not there yet" list in docs/features.md and this is not already on it
+          required: true
