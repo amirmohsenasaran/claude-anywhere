@@ -42,7 +42,7 @@ edit('src-tauri/tauri.conf.json', (s) => s.replace(/("version":\s*")[^"]+(")/, `
 // link block at the bottom gains a line for it.
 const today = new Date().toISOString().slice(0, 10);
 edit('CHANGELOG.md', (s) => {
-  const repo = 'https://github.com/aryasadeghy/claude-remote';
+  const repo = 'https://github.com/aryasadeghy/claude-anywhere';
   const previous = (s.match(/^## \[(\d+\.\d+\.\d+)\]/m) || [])[1];
   return s
     .replace(/## \[Unreleased\]\n/, `## [Unreleased]\n\n## [${version}] — ${today}\n`)
@@ -51,7 +51,7 @@ edit('CHANGELOG.md', (s) => {
 });
 
 // Cargo.lock carries the version too, and a stale one fails `cargo check --locked` in CI.
-try { run('cargo', 'update', '--manifest-path', 'src-tauri/Cargo.toml', '--package', 'claude-remote', '--precise', version); } catch {}
+try { run('cargo', 'update', '--manifest-path', 'src-tauri/Cargo.toml', '--package', 'claude-anywhere', '--precise', version); } catch {}
 
 run('git', 'add', '-A');
 run('git', 'commit', '-m', `release ${version}`);

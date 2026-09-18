@@ -1,4 +1,4 @@
-# claude-remote — house rules
+# claude-anywhere — house rules
 
 Everything an agent needs to work in this repo. The same rules a human
 contributor gets are in [CONTRIBUTING.md](CONTRIBUTING.md); this file is the
@@ -9,7 +9,7 @@ short, operational version.
 ```bash
 npm install
 npm start                                  # http://127.0.0.1:7777
-PORT=7779 CLAUDE_REMOTE_DATA_DIR=/tmp/cr node server.mjs   # a second copy, own data
+PORT=7779 CLAUDE_ANYWHERE_DATA_DIR=/tmp/cr node server.mjs   # a second copy, own data
 npm run desktop                            # native window (needs Rust + tauri-cli)
 ```
 

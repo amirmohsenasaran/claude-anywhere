@@ -1,4 +1,4 @@
-// claude-remote — a small self-hosted bridge between the Claude Agent SDK and a
+// claude-anywhere — a small self-hosted bridge between the Claude Agent SDK and a
 // Claude-styled web client, so local Claude Code sessions can be listed,
 // continued and started from another device. Everything runs on this machine;
 // the browser only ever talks to this process.
@@ -29,9 +29,13 @@ import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken,
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+// This was called claude-remote until 0.3.0. An installed app, a saved .env or a
+// running shell can still be passing the old names, so accept both everywhere.
+const envOf = (name) => process.env['CLAUDE_ANYWHERE_' + name] || process.env['CLAUDE_REMOTE_' + name] || '';
+
 // ---------- config (.env is optional; real env vars win) ----------
 function loadDotEnv() {
-  const p = process.env.CLAUDE_REMOTE_ENV_FILE || path.join(here, '.env');
+  const p = envOf('ENV_FILE') || path.join(here, '.env');
   if (!fs.existsSync(p)) return;
   for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
@@ -48,7 +52,11 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PASSWORD = (process.env.REMOTE_PASSWORD || '').trim() === 'change-me' ? '' : (process.env.REMOTE_PASSWORD || '').trim();
 const PASSWORD_REQUIRED = PASSWORD.length > 0;
 const USER_NAME = process.env.USER_NAME || 'there';
-const TOKEN = createHash('sha256').update('claude-remote:' + (PASSWORD || 'open')).digest('hex');
+const TOKEN = createHash('sha256').update('claude-anywhere:' + (PASSWORD || 'open')).digest('hex');
+// The salt carried the old project name until 0.3.0. Accepting the token it
+// produced keeps every already-signed-in phone and browser signed in.
+const LEGACY_TOKEN = createHash('sha256').update('claude-remote:' + (PASSWORD || 'open')).digest('hex');
+const knownToken = (t) => t === TOKEN || t === LEGACY_TOKEN;
 
 // ---------- http ----------
 const app = express();
@@ -57,7 +65,7 @@ app.use(express.json({ limit: '60mb' })); // attachments travel as base64
 
 // Attachments: images are sent to Claude as image blocks; any other file is saved on
 // this PC and referenced from the prompt by path, the way Remote Control does it.
-const UPLOAD_DIR = path.join(os.tmpdir(), 'claude-remote-uploads');
+const UPLOAD_DIR = path.join(os.tmpdir(), 'claude-anywhere-uploads');
 function parseAttachments(body) {
   const images = (Array.isArray(body?.attachments) ? body.attachments : [])
     .filter((a) => a && typeof a.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(a.media_type || ''))
@@ -95,13 +103,13 @@ app.post('/api/login', (req, res) => {
 app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
-  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && req.query.token === TOKEN;
-  if (auth !== 'Bearer ' + TOKEN && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
+  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && knownToken(String(req.query.token || ''));
+  if (!knownToken(auth.replace(/^Bearer /, '')) && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
 
 // ---------- small preferences file: pinned sessions (shared by every device) ----------
-const DATA_DIR = process.env.CLAUDE_REMOTE_DATA_DIR || path.join(here, 'data');
+const DATA_DIR = envOf('DATA_DIR') || path.join(here, 'data');
 const PREFS_PATH = path.join(DATA_DIR, 'prefs.json');
 function readPrefs() {
   try { return { pinned: [], ...JSON.parse(fs.readFileSync(PREFS_PATH, 'utf8')) }; } catch { return { pinned: [] }; }
@@ -117,7 +125,7 @@ const whoCache = new Map(); // which -> { at, value }
 function whoAmI(which = activeAccount()) {
   const hit = whoCache.get(which);
   if (hit && Date.now() - hit.at < 60000) return hit.value;
-  const cli = process.env.CLAUDE_REMOTE_CLI || 'claude';
+  const cli = envOf('CLI') || 'claude';
   try {
     const raw = execFileSync(cli, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true, env: envFor(which) });
     const j = JSON.parse(raw);
@@ -349,7 +357,7 @@ async function fetchLimits(which = activeAccount()) {
   const fail = () => { limitsCache.set(which, { at: Date.now() - 30000, value: stale }); return stale; };
   try {
     const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: 'Bearer ' + tok, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-remote/0.2' }, signal: ctrl.signal });
+    const r = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: 'Bearer ' + tok, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-anywhere/0.2' }, signal: ctrl.signal });
     clearTimeout(t);
     if (!r.ok) return fail();
     const u = await r.json();
@@ -380,7 +388,7 @@ function listConnectors(cwd) {
     for (const [k, v] of Object.entries(cj.projects || {})) if (normPath(k) === normPath(cwd)) for (const [n, c] of Object.entries(v.mcpServers || {})) add(n, c, 'project');
     const pj = readJson(path.join(cwd, '.mcp.json')); for (const [n, c] of Object.entries(pj?.mcpServers || pj || {})) if (c && typeof c === 'object') add(n, c, '.mcp.json');
   }
-  out.push({ name: 'claude-remote', scope: 'built-in', type: 'in-process', target: 'SendUserFile — shows files in this chat', enabled: true, builtin: true });
+  out.push({ name: 'claude-anywhere', scope: 'built-in', type: 'in-process', target: 'SendUserFile — shows files in this chat', enabled: true, builtin: true });
   return out;
 }
 function listPlugins() {
@@ -740,18 +748,18 @@ function newerThan(files, since) {
 }
 const listDir = (d, ext) => { try { return fs.readdirSync(d).filter((f) => ext.test(f)).map((f) => path.join(d, f)); } catch { return []; } };
 app.get('/api/version', (_req, res) => {
-  let exeAt = null; try { exeAt = fs.statSync(process.env.CLAUDE_REMOTE_APP_EXE || '').mtimeMs; } catch {}
+  let exeAt = null; try { exeAt = fs.statSync(envOf('APP_EXE')).mtimeMs; } catch {}
   const serverFiles = [path.join(here, 'server.mjs'), path.join(here, 'package.json'), ...listDir(path.join(here, 'lib'), /\.mjs$/), ...listDir(path.join(here, 'public'), /\.(js|css|html|json)$/)];
   const shellFiles = [...listDir(path.join(here, 'src-tauri', 'src'), /\.rs$/), path.join(here, 'src-tauri', 'Cargo.toml'), path.join(here, 'src-tauri', 'tauri.conf.json')];
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
-  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: process.env.CLAUDE_REMOTE_APP_EXE || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!process.env.CLAUDE_REMOTE_PARENT_PID, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
+  res.json({ ...gitInfo(), serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.
 app.post('/api/restart', (req, res) => {
   if (liveCount() && !req.body?.force) return res.status(409).json({ error: `Claude is still working (${liveCount()} turn${liveCount() === 1 ? '' : 's'}). Try again when it is done.` });
-  if (!process.env.CLAUDE_REMOTE_PARENT_PID) return res.status(400).json({ error: 'Not running inside the desktop app; restart `npm start` by hand.' });
+  if (!envOf('PARENT_PID')) return res.status(400).json({ error: 'Not running inside the desktop app; restart `npm start` by hand.' });
   res.json({ ok: true, restarting: true });
   setTimeout(() => process.exit(75), 300);
 });
@@ -799,7 +807,7 @@ export { TOKEN, PASSWORD, PASSWORD_REQUIRED, HOST, PORT, bus };
 export function startServer({ host = HOST, port = PORT } = {}) {
   return new Promise((resolve) => {
     const server = app.listen(port, host, () => {
-      console.log(`claude-remote listening on http://${host}:${port}`);
+      console.log(`claude-anywhere listening on http://${host}:${port}`);
       resolve({ server, url: `http://${host}:${port}` });
     });
   });
@@ -807,18 +815,18 @@ export function startServer({ host = HOST, port = PORT } = {}) {
 
 // Run directly (`node server.mjs`): listen. When imported as a module, the importer calls startServer().
 const isMain = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === path.resolve(fileURLToPath(import.meta.url)).toLowerCase();
-console.log(`[claude-remote] node ${process.version} argv1=${process.argv[1]} main=${isMain} cwd=${process.cwd()}`);
+console.log(`[claude-anywhere] node ${process.version} argv1=${process.argv[1]} main=${isMain} cwd=${process.cwd()}`);
 if (isMain) startServer();
 
 // Started by the desktop app: leave when it leaves, but never while Claude is mid-turn.
 // A new app instance (after a rebuild or update) finds this server on the port, adopts
 // it (POST /api/adopt) and carries on with the same live runs.
-let parentPid = Number(process.env.CLAUDE_REMOTE_PARENT_PID) || 0;
+let parentPid = Number(envOf('PARENT_PID')) || 0;
 let orphanSince = 0;
 if (parentPid) setInterval(() => {
   try { process.kill(parentPid, 0); orphanSince = 0; return; } catch {}
   const live = [...runs.values()].filter((r) => !r.done).length;
-  if (live) { if (!orphanSince) { orphanSince = Date.now(); console.log(`[claude-remote] desktop app is gone; staying up for ${live} running turn(s)`); } return; }
-  console.log('[claude-remote] desktop app is gone and nothing is running, exiting'); process.exit(0);
+  if (live) { if (!orphanSince) { orphanSince = Date.now(); console.log(`[claude-anywhere] desktop app is gone; staying up for ${live} running turn(s)`); } return; }
+  console.log('[claude-anywhere] desktop app is gone and nothing is running, exiting'); process.exit(0);
 }, 2000).unref();
-app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; console.log('[claude-remote] adopted by app pid', pid); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });
+app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; console.log('[claude-anywhere] adopted by app pid', pid); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });

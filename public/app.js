@@ -1,4 +1,4 @@
-/* claude-remote client. Plain JS, no build step. */
+/* claude-anywhere client. Plain JS, no build step. */
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };

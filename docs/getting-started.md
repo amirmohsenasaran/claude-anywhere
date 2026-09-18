@@ -24,8 +24,8 @@ and skip to step 3.
 **From source:**
 
 ```bash
-git clone https://github.com/aryasadeghy/claude-remote
-cd claude-remote
+git clone https://github.com/aryasadeghy/claude-anywhere
+cd claude-anywhere
 npm install
 npm start
 ```
@@ -100,5 +100,5 @@ happened; the log the server prints is the useful part.
 [node]: https://nodejs.org/
 [rust]: https://rustup.rs/
 [tailscale]: https://tailscale.com/
-[releases]: https://github.com/aryasadeghy/claude-remote/releases
-[issues]: https://github.com/aryasadeghy/claude-remote/issues
+[releases]: https://github.com/aryasadeghy/claude-anywhere/releases
+[issues]: https://github.com/aryasadeghy/claude-anywhere/issues

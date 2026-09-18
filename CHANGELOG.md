@@ -20,7 +20,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.3.0] — 2026-09-18
 
-First public release.
+First public release. The project is called **Claude Anywhere** from this
+version; it was `claude-remote` while it was a personal tool. An installation
+from before the rename keeps working: the server still accepts the old
+`CLAUDE_REMOTE_*` variables and the token they produced, and the app copies its
+settings across.
 
 ### Added
 
@@ -54,7 +58,7 @@ First public release.
 ### Fixed
 
 - The in-process MCP server is built per run; sharing one instance made the
-  second live session report the `claude-remote` connector as failed.
+  second live session report the `claude-anywhere` connector as failed.
 - Static files are served `Cache-Control: no-cache`; WebView2 was serving the
   page it first loaded, so restarts looked like they had done nothing.
 - Opening a session created a second earlier returned 404 before its transcript
@@ -91,7 +95,7 @@ First public release.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-remote/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/aryasadeghy/claude-remote/releases/tag/v0.3.0
-[0.2.0]: https://github.com/aryasadeghy/claude-remote/releases/tag/v0.2.0
-[0.1.0]: https://github.com/aryasadeghy/claude-remote/releases/tag/v0.1.0
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/aryasadeghy/claude-anywhere/releases/tag/v0.3.0
+[0.2.0]: https://github.com/aryasadeghy/claude-anywhere/releases/tag/v0.2.0
+[0.1.0]: https://github.com/aryasadeghy/claude-anywhere/releases/tag/v0.1.0

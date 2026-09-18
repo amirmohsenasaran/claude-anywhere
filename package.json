@@ -1,5 +1,5 @@
 {
-  "name": "claude-remote",
+  "name": "claude-anywhere",
   "version": "0.3.0",
   "description": "Your Claude Code sessions, on every screen: a self-hosted desktop and web client for the sessions already on your computer.",
   "keywords": [
@@ -11,11 +11,11 @@
     "tauri",
     "remote"
   ],
-  "homepage": "https://github.com/aryasadeghy/claude-remote#readme",
-  "bugs": "https://github.com/aryasadeghy/claude-remote/issues",
+  "homepage": "https://github.com/aryasadeghy/claude-anywhere#readme",
+  "bugs": "https://github.com/aryasadeghy/claude-anywhere/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aryasadeghy/claude-remote.git"
+    "url": "git+https://github.com/aryasadeghy/claude-anywhere.git"
   },
   "license": "MIT",
   "author": "Arya Sadeghi",

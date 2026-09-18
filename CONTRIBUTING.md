@@ -20,7 +20,7 @@ For the native window you need [Rust](https://rustup.rs/) and
 Run a second copy on another port while your own is running:
 
 ```bash
-PORT=7779 CLAUDE_REMOTE_DATA_DIR=/tmp/cr-dev node server.mjs
+PORT=7779 CLAUDE_ANYWHERE_DATA_DIR=/tmp/cr-dev node server.mjs
 ```
 
 ## Checks before a pull request

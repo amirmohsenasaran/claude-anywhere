@@ -18,7 +18,7 @@ An Express app on port 7777. It serves `public/`, exposes the session API, and
 holds nothing in memory that matters except the live runs.
 
 Every `/api` route needs the bearer token, which is
-`sha256("claude-remote:" + (password || "open"))` — so with no password
+`sha256("claude-anywhere:" + (password || "open"))` — so with no password
 configured, anything that can reach the port is authorised. That is deliberate
 (see [SECURITY.md](../SECURITY.md)) and why the default bind is localhost.
 
@@ -73,7 +73,7 @@ A Tauri 2 app on WebView2. It:
 
 - starts the Node server as a child process, or **adopts** one that is already
   listening and answers to the same token;
-- passes `CLAUDE_REMOTE_PARENT_PID` so the server can exit when the app is
+- passes `CLAUDE_ANYWHERE_PARENT_PID` so the server can exit when the app is
   gone — unless a turn is still running, in which case it stays up and the next
   app instance adopts it. That is why *Rebuild app* does not interrupt a chat;
 - loads `http://127.0.0.1:<port>`, which counts as a **remote origin**: the
@@ -89,7 +89,7 @@ A Tauri 2 app on WebView2. It:
 | `data/auth.json` | the pasted token, if any |
 | `data/limits.json` | last known plan usage, so the banner is right on the first screen |
 
-All git-ignored. `CLAUDE_REMOTE_DATA_DIR` moves them, which is how the native
+All git-ignored. `CLAUDE_ANYWHERE_DATA_DIR` moves them, which is how the native
 app keeps its own set under `%APPDATA%`.
 
 ## Things that will bite you

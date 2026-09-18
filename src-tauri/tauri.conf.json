@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Claude Remote",
+  "productName": "Claude Anywhere",
   "version": "0.3.0",
-  "identifier": "com.arya.claude-remote",
+  "identifier": "com.arya.claude-anywhere",
   "build": {
     "frontendDist": "../public"
   },

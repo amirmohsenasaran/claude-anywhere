@@ -1,6 +1,6 @@
 <div align="center">
 
-# Claude Remote
+# Claude Anywhere
 
 **Your Claude Code sessions, on every screen.**
 
@@ -67,8 +67,8 @@ with it.
 ### From source
 
 ```bash
-git clone https://github.com/aryasadeghy/claude-remote
-cd claude-remote
+git clone https://github.com/aryasadeghy/claude-anywhere
+cd claude-anywhere
 npm install
 npm start                    # http://127.0.0.1:7777
 ```
@@ -149,6 +149,6 @@ own Claude account, under Anthropic's terms.
 [MIT](LICENSE) © Arya Sadeghi
 
 [sdk]: https://docs.anthropic.com/en/docs/claude-code/sdk
-[releases]: https://github.com/aryasadeghy/claude-remote/releases
+[releases]: https://github.com/aryasadeghy/claude-anywhere/releases
 [node]: https://nodejs.org/
 [rust]: https://rustup.rs/

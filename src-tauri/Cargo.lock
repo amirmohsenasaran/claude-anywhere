@@ -489,7 +489,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-remote"
+name = "claude-anywhere"
 version = "0.3.0"
 dependencies = [
  "hex",

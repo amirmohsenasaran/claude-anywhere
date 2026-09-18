@@ -11,14 +11,16 @@
 # It never waits for Claude to be idle first: whoever presses Rebuild is usually
 # talking to Claude through this very app, so "wait until nothing is running"
 # waited for itself and looked stuck.
-param([string]$Repo = "C:\Users\arya\Desktop\claude-remote", [int]$Port = 7777, [string]$Token = "", [string]$Log = "")
+# The server passes -Repo; the default is the checkout this script sits in.
+param([string]$Repo = "", [int]$Port = 7777, [string]$Token = "", [string]$Log = "")
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 $ErrorActionPreference = "Continue"
-if (-not $Log) { $Log = Join-Path $env:TEMP "claude-remote-rebuild.log" }
+if (-not $Log) { $Log = Join-Path $env:TEMP "claude-anywhere-rebuild.log" }
 function Say($m) { $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m; Add-Content -Path $Log -Value $line -Encoding utf8 }
 Set-Content -Path $Log -Value "" -Encoding utf8
 $headers = @{ Authorization = "Bearer $Token" }
 $exeDir = Join-Path $Repo "src-tauri\target\release"
-$exe = Join-Path $exeDir "claude-remote.exe"
+$exe = Join-Path $exeDir "claude-anywhere.exe"
 
 Say "rebuild requested"
 $live = 0
@@ -26,12 +28,12 @@ try { $r = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/runs" -Headers $he
 if ($live -gt 0) { Say "Claude is working - the chat carries on while the window is away" }
 
 Say "closing the window (the server stays up)"
-Get-Process claude-remote -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$exeDir*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process claude-anywhere -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$exeDir*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 Say "compiling - about 1 to 3 minutes"
-$outFile = Join-Path $env:TEMP "claude-remote-build.out"
-$errFile = Join-Path $env:TEMP "claude-remote-build.err"
+$outFile = Join-Path $env:TEMP "claude-anywhere-build.out"
+$errFile = Join-Path $env:TEMP "claude-anywhere-build.err"
 $p = Start-Process -FilePath "cargo" -ArgumentList "tauri", "build" -WorkingDirectory (Join-Path $Repo "src-tauri") -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
 $sec = 0
 while (-not $p.HasExited) {
@@ -46,7 +48,7 @@ if ($rc -ne 0) { Say "build FAILED (exit $rc) - bringing back the version you ha
 Say "starting the app"
 Start-Process -FilePath $exe -WorkingDirectory $exeDir
 Start-Sleep -Seconds 8
-$up = Get-Process claude-remote -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
+$up = Get-Process claude-anywhere -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
 Say ("app is back: " + [bool]$up)
 try {
   $v = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/version" -Headers $headers -TimeoutSec 5

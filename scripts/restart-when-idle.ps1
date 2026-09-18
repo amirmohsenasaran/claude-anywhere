@@ -1,7 +1,7 @@
 # Ask the running server to restart (pick up new code) as soon as Claude is idle.
-# Detached from any terminal so it survives; logs to %TEMP%\claude-remote-restart.log.
+# Detached from any terminal so it survives; logs to %TEMP%\claude-anywhere-restart.log.
 param([int]$Port = 7777, [string]$Token = "", [int]$MaxMinutes = 120)
-$log = Join-Path $env:TEMP "claude-remote-restart.log"
+$log = Join-Path $env:TEMP "claude-anywhere-restart.log"
 function Say($m) { Add-Content -Path $log -Value ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) -Encoding utf8 }
 Set-Content -Path $log -Value "" -Encoding utf8
 $headers = @{ Authorization = "Bearer $Token" }

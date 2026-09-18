@@ -115,9 +115,9 @@ top of the sidebar drag the window, double-clicking maximises, and minimise,
 maximise and close sit at the top right. In a browser those buttons do not
 appear.
 
-Its settings live in `%APPDATA%\com.arya.claude-remote\.env`, its data (pins,
+Its settings live in `%APPDATA%\com.arya.claude-anywhere\.env`, its data (pins,
 order, attention marks, an optional token) next to them. Point
-`CLAUDE_REMOTE_SERVER_DIR` at a checkout and the app serves that working copy,
+`CLAUDE_ANYWHERE_SERVER_DIR` at a checkout and the app serves that working copy,
 which is what makes the next section work.
 
 ## Updating without going to the PC

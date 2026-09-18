@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security problem
-    url: https://github.com/aryasadeghy/claude-remote/security/advisories/new
+    url: https://github.com/aryasadeghy/claude-anywhere/security/advisories/new
     about: Anything that lets a request reach the machine without permission. Please do not open a public issue.
   - name: Question or an idea to talk through
-    url: https://github.com/aryasadeghy/claude-remote/discussions
+    url: https://github.com/aryasadeghy/claude-anywhere/discussions
     about: Use Discussions for anything that is not yet a bug or a concrete request.
   - name: Claude Code itself
     url: https://github.com/anthropics/claude-code/issues

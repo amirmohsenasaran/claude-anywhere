@@ -1,4 +1,4 @@
-// Claude Remote — native Windows shell (Tauri 2, WebView2).
+// Claude Anywhere — native Windows shell (Tauri 2, WebView2).
 //
 // It starts the Node server that talks to the Claude Agent SDK, opens the chat
 // in a native window already signed in, lives in the tray, can start with
@@ -63,7 +63,7 @@ fn main() {
                 if let Ok(dir) = app.path().app_data_dir() {
                     let _ = fs::write(dir.join("startup-error.txt"), format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()));
                 }
-                app.dialog().message(format!("{e}")).title("Claude Remote could not start").kind(MessageDialogKind::Error).blocking_show();
+                app.dialog().message(format!("{e}")).title("Claude Anywhere could not start").kind(MessageDialogKind::Error).blocking_show();
                 std::process::exit(1);
                 #[allow(unreachable_code)]
                 e
@@ -108,11 +108,12 @@ fn main() {
 // ---------- the Node server ----------
 
 fn server_dir(app: &AppHandle, env_file: &Path) -> PathBuf {
-    // CLAUDE_REMOTE_SERVER_DIR in the app's .env: run the server straight from a checkout,
+    // CLAUDE_ANYWHERE_SERVER_DIR in the app's .env: run the server straight from a checkout,
     // so edits (and "Restart server" from the phone) take effect without a rebuild.
     if let Ok(text) = fs::read_to_string(env_file) {
         for line in text.lines() {
-            if let Some(v) = line.strip_prefix("CLAUDE_REMOTE_SERVER_DIR=") {
+            // The old name is still in .env files written before 0.3.0.
+            if let Some(v) = line.strip_prefix("CLAUDE_ANYWHERE_SERVER_DIR=").or_else(|| line.strip_prefix("CLAUDE_REMOTE_SERVER_DIR=")) {
                 let p = PathBuf::from(v.trim());
                 if p.join("server.mjs").exists() {
                     return p;
@@ -172,7 +173,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     let (password, port) = read_env(&env_file);
     let password = if password == "change-me" { String::new() } else { password };
     // Same derivation as server.mjs: no password means the fixed word "open".
-    let token = hex::encode(Sha256::digest(format!("claude-remote:{}", if password.is_empty() { "open" } else { &password })));
+    let token = hex::encode(Sha256::digest(format!("claude-anywhere:{}", if password.is_empty() { "open" } else { &password })));
 
     // Already running with our password (the server of a previous app instance that is
     // still finishing a turn, another copy, or `npm start`)? Adopt it and carry on.
@@ -190,7 +191,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
         port = (port + 1..port + 20).find(|p| !port_open(*p)).ok_or("No free port near the configured one")?;
     }
 
-    let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Remote again.")?;
+    let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Anywhere again.")?;
     let root = root.canonicalize().unwrap_or(root);
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
     let cfg = SpawnCfg { node, root, data_dir: data_dir.clone(), env_file: env_file.clone(), port };
@@ -205,18 +206,18 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
     let mut log = fs::OpenOptions::new().create(true).append(true).open(data_dir.join("server.log")).ok();
     if let Some(f) = log.as_mut() {
         use std::io::Write;
-        let _ = writeln!(f, "[claude-remote] node={} root={} port={port}", node.display(), root.display());
+        let _ = writeln!(f, "[claude-anywhere] node={} root={} port={port}", node.display(), root.display());
     }
     let log_err = log.as_ref().and_then(|f| f.try_clone().ok());
     let mut cmd = Command::new(node);
     cmd.arg(root.join("server.mjs"))
         .current_dir(root)
-        .env("CLAUDE_REMOTE_DATA_DIR", data_dir.join("data"))
-        .env("CLAUDE_REMOTE_ENV_FILE", env_file)
-        .env("CLAUDE_REMOTE_APP_EXE", std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())
+        .env("CLAUDE_ANYWHERE_DATA_DIR", data_dir.join("data"))
+        .env("CLAUDE_ANYWHERE_ENV_FILE", env_file)
+        .env("CLAUDE_ANYWHERE_APP_EXE", std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())
         .env("HOST", "0.0.0.0")
         .env("PORT", port.to_string())
-        .env("CLAUDE_REMOTE_PARENT_PID", std::process::id().to_string())
+        .env("CLAUDE_ANYWHERE_PARENT_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(log.map(Stdio::from).unwrap_or_else(Stdio::null))
         .stderr(log_err.map(Stdio::from).unwrap_or_else(Stdio::null));
@@ -257,7 +258,7 @@ fn supervise_server(app: AppHandle) {
         };
         let Some(code) = exited else { continue };
         if code != Some(RESTART_CODE) {
-            let _ = app.notification().builder().title("Claude Remote server stopped").body("Restarting it.").show();
+            let _ = app.notification().builder().title("Claude Anywhere server stopped").body("Restarting it.").show();
         }
         match spawn_server(&cfg) {
             Ok(child) => {
@@ -265,7 +266,7 @@ fn supervise_server(app: AppHandle) {
                 if let Some(w) = app.get_webview_window("main") { let _ = w.eval("setTimeout(() => location.reload(), 300)"); }
             }
             Err(e) => {
-                let _ = app.notification().builder().title("Claude Remote server did not come back").body(format!("{e}")).show();
+                let _ = app.notification().builder().title("Claude Anywhere server did not come back").body(format!("{e}")).show();
                 thread::sleep(Duration::from_secs(5));
             }
         }
@@ -344,7 +345,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let icon = app.default_window_icon().cloned().expect("window icon");
     TrayIconBuilder::with_id("main")
         .icon(icon)
-        .tooltip("Claude Remote")
+        .tooltip("Claude Anywhere")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
