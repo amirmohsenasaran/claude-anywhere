@@ -2,11 +2,12 @@
 
 # Claude Anywhere
 
-**Your Claude Code sessions, on every screen.**
+**One set of sessions. Any of your Claude accounts. Your machine, not a relay.**
 
-A self-hosted desktop app and web client for the Claude Code sessions already
-on your computer — open them from your phone, your Mac, or a native Windows
-window, and keep working where you left off.
+A self-hosted desktop app and web client for the Claude Code sessions already on
+your computer. Switch which account answers — this machine's login, or a token
+you paste from another — without leaving the session, and reach all of it from
+your phone over your own network.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-black.svg)](#install)
@@ -24,31 +25,40 @@ Claude-styled interface, and lets you continue any of them — which is exactly
 what `claude --resume` does, so a session you start on your phone is the same
 session your terminal picks up later.
 
-Nothing is relayed through a server of ours, because there is no server of
-ours. The app is a small Node process on your machine plus a native window; the
-phone talks straight to your PC over Tailscale or your own network.
+## Why this exists
 
-**It is for you if** you leave Claude Code working on something, walk away from
-the desk, and want to answer its permission prompt, read what it did, or send
-the next instruction from the sofa — with the same interface you already know.
+Claude Desktop is good, and it can already reach your machine from elsewhere
+through Remote Control. Three things sent me here anyway.
 
-## Why not just install Claude Desktop?
+**One session, whichever account you like.** Desktop is signed in as one
+account. Here there are two, side by side: this computer's `claude login`, and a
+token you paste — `claude setup-token` output from any other account, or a
+Console key. You switch between them from the sidebar at any moment, and the
+sessions do not care: the same conversation, the same files, answered by
+whichever account you picked, billed to that account's plan. If you have a
+personal subscription and a work one, or someone hands you a token for an
+afternoon, this is the difference between one tool and two.
 
-Because Claude Desktop runs where it is installed, and the work does not.
+**No relay in the middle.** Desktop's Remote Control goes through
+`claude.ai/code`, and an organisation policy can switch it off. Here your phone
+opens a port on your own machine over Tailscale or your LAN. Nothing passes
+through anyone else's service, there is no extra sign-in, and it keeps working
+on a network that cannot reach a hosted one.
 
-Claude Code sessions live on the machine that has your repository, your
-environment and your credentials. When a long task is running there and you get
-up from the desk, Desktop cannot help you: it is on that desk. This app puts the
-same sessions — the same files on disk — on the phone in your pocket, the laptop
-in the other room, or a browser on your Mac, over your own private network.
+**It is yours.** MIT, no build step, one JavaScript file for the whole client.
+When something is wrong for the way you work, you change it — and several things
+in here exist because Desktop does not do them: a sidebar that never re-sorts
+itself, per-task Stop for background commands and subagents, Rewind on any
+earlier message, and a dev-server preview that reaches your phone.
 
 | | Claude Desktop | Claude Anywhere |
 |---|---|---|
-| Runs | on one computer | on your computer, reachable from any device you own |
-| Your machine's sessions from a phone | no | yes, over Tailscale or your own LAN |
-| Answer a permission prompt away from the desk | no | yes, with a notification |
-| Where your code goes | stays on the machine | stays on the machine; there is no server of ours |
+| Accounts | one, signed in | two at once: this machine's login and a pasted token, switchable mid-session |
+| Reaching your machine | Remote Control, through `claude.ai/code` | direct, over Tailscale or your own LAN |
+| Turned off by an org policy | possible | nothing to turn off |
+| Where your code goes | stays on the machine | stays on the machine, and there is no server of ours |
 | Source | closed | MIT, ~4,000 lines you can read and change |
+| Sidebar order | sorts itself | yours, by drag and drop |
 | Preview of your dev server | yes, on that machine | yes, and on your phone |
 | Panes: terminal, browser, worktrees | yes | not yet |
 | macOS and Linux app | yes | web client only; the native window is Windows |
@@ -56,13 +66,14 @@ in the other room, or a browser on your Mac, over your own private network.
 
 **They are not rivals.** This reads and writes the same transcripts as
 `claude --resume`, the VS Code extension and Desktop itself, so a session you
-start here is one you can pick up in any of them — and while another window is
-mid-turn on a session, this one follows along and shows what it is doing.
-
-Use Desktop at the desk. Use this when you are not at it.
+start in one you can pick up in another — and while another window is mid-turn
+on a session, this one follows along and shows what it is doing.
 
 ## Highlights
 
+- **Two accounts, one set of sessions**: this computer's `claude login` and a
+  token you paste, switched from the sidebar whenever you like. Plan usage is
+  shown for whichever one is answering.
 - **Every session, every project** in one sidebar, in an order you set by drag
   and drop and that nothing re-sorts behind your back.
 - **Live turns**: streaming text and thinking, tool calls with their input and
@@ -81,8 +92,6 @@ Use Desktop at the desk. Use this when you are not at it.
   terminal or Claude Desktop streams in here as that window writes it.
 - **Native Windows app**: WebView2, a few megabytes, tray icon, start with
   Windows, system notifications, its own title bar.
-- **Two accounts**: this computer's `claude login`, or a token you paste, and a
-  switch between them.
 
 See [docs/features.md](docs/features.md) for the whole list with the detail.
 
