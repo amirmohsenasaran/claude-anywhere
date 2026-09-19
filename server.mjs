@@ -31,6 +31,7 @@ import * as worktrees from './lib/worktrees.mjs';
 import * as pr from './lib/pr.mjs';
 import * as awake from './lib/awake.mjs';
 import * as update from './lib/update.mjs';
+import * as models from './lib/models.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -637,6 +638,13 @@ function listPlugins() {
   }
   return out;
 }
+// The model menu, straight from the CLI: same names, same descriptions, same effort
+// levels per model as Claude Code and Claude Desktop show. Cached on disk, so the
+// menu is right on the first paint and a refresh happens behind it.
+models.useCache(DATA_DIR);
+models.warm().catch(() => {});
+app.get('/api/models', (req, res) => res.json(models.list({ force: req.query.refresh === '1' })));
+
 app.get('/api/connectors', async (req, res) => {
   const cwd = String(req.query.cwd || ''); const sessionId = String(req.query.sessionId || '');
   const connectors = listConnectors(cwd);

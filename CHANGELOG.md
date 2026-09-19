@@ -26,6 +26,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The model menu and its effort levels are Claude's, not a list we kept here.**
+  Four models were hard-coded with hand-written names, and effort was offered as
+  Auto / Low / Medium / High for every one of them. The CLI's own answer is what
+  the menu draws now — the same rows Claude Code shows this account, with its
+  descriptions and prices, the *Default (recommended)* row included — and effort is
+  the model's own: **Low, Medium, High** (the default), **Extra, Max**, with Claude's
+  warning on Max. Haiku has no effort levels and now shows none; a level the new
+  model does not take goes back to the default instead of travelling along unused.
+  A saved `claude-sonnet-5` is recognised as the CLI's `sonnet` row, so nothing on
+  your device has to be picked again.
 - **Restart server works after a rebuild — which is when you need it.** A rebuild
   leaves the running server up on purpose so the turn in flight survives, and the
   app that comes back adopts it instead of starting one of its own. The shell kept

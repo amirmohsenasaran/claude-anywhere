@@ -103,6 +103,14 @@ options up invites a second answer that nothing is listening for.
 - Permission mode (Manual / Accept edits / Plan / Auto / Bypass), model and
   effort can all be changed mid-turn. Shift+Tab cycles the mode like the CLI,
   1–5 pick one directly.
+- **The model menu is the CLI's own.** The list, the names, the descriptions and
+  the prices come from `supportedModels()` — whatever Claude Code offers this
+  account, including the *Default (recommended)* row and the 1M-context ones — so
+  it cannot drift from Claude. **Effort** is the model's own set: Low, Medium,
+  **High** (the default, and what a model runs at when nothing is chosen), Extra
+  and Max, restricted to the levels that model takes, with Claude's own warning on
+  Max. Haiku has no effort levels, so it shows none; switching to a model that
+  does not take the level you had picked puts it back to the default.
 - Permission prompts appear as a card with **Allow**, **Allow always** and
   **Deny**, answerable from the phone.
 - The composer's stop button ends the turn. Background work is not killed by
