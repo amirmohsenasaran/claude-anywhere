@@ -36,6 +36,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # Cargo.lock carries the version too, and a stale one fails `cargo check --locked`
+      # on the commit this makes. The release script needs cargo present to fix it.
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Refuse a version that is already out
         run: |
