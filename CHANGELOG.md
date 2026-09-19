@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **An answered question stops being a form.** The options stayed on screen and
+  stayed clickable after you had answered, so the card looked like it had not
+  taken. It collapses now: the question, what you chose underneath it, and nothing
+  left to press. Answering from another device collapses it here too.
+- **Opening a session lands at the end of the chat, not in the middle of it.** The
+  bars under the thread arrive after it is drawn — the branch, a running task, the
+  update banner — and each one shrinks the window without moving the scroll, which
+  on a phone left the last messages 180 to 240 pixels below the fold. The view now
+  stays pinned while the page settles, and lets go the moment you scroll away.
 - **A question from Claude is a question, not a permission.** `AskUserQuestion`
   arrived as a bare "Claude wants to use AskUserQuestion" with "(no summary)" and
   an Allow button, which meant answering something you were never shown. The card

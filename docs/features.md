@@ -89,6 +89,9 @@ at once and multi-select both work. **Skip** declines the question. What you cho
 travels back on the tool’s own `answers` field, so Claude receives the answer rather
 than mere permission to ask.
 
+Once you answer, the card collapses to the question and your answer. Leaving the
+options up invites a second answer that nothing is listening for.
+
 ## While Claude works
 
 - A status line under the last message says what is happening ("Thinking…",

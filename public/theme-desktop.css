@@ -645,3 +645,7 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .question-card .q-other-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 13.5px; padding: 9px 12px; border-radius: 10px; border: 1px dashed var(--line-2); background: var(--bg-2); color: var(--ink); outline: none; }
 .question-card .q-other-input:focus { border-style: solid; border-color: var(--accent); }
 .question-card .permission-actions { margin-top: 14px; }
+.question-card.answered { border-color: var(--line); }
+.question-card.answered .q-text { color: var(--ink-2); }
+.question-card .q-answer { margin-top: 6px; padding: 8px 12px; border-radius: 10px; background: var(--bg-3); font-size: 13.5px; line-height: 1.5; }
+.question-card .q-answer.none { color: var(--ink-3); }

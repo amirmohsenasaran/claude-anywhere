@@ -1038,6 +1038,23 @@
   let stickToBottom = true;
   scroll.addEventListener('scroll', () => { stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
   const autoscroll = () => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; };
+  // A transcript keeps growing after it is drawn: pictures arrive, fonts settle, long
+  // code blocks reflow. Scrolling to the end once therefore lands somewhere in the
+  // middle, which is what opening a session used to look like. Stay pinned while it
+  // settles, and let go the moment the reader scrolls away themselves.
+  let pinTimer = null, pinWatch = null;
+  function pinToBottom(ms = 3000) {
+    scroll.scrollTop = scroll.scrollHeight;
+    clearTimeout(pinTimer); pinWatch?.disconnect();
+    if (typeof ResizeObserver !== 'function') return;
+    // Both ends move: the thread grows as pictures and fonts arrive, and the window
+    // shrinks as the bars below it appear - the git bar, a running task, the update
+    // banner. Either one leaves the end off-screen.
+    pinWatch = new ResizeObserver(() => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; });
+    pinWatch.observe(thread);
+    pinWatch.observe(scroll);
+    pinTimer = setTimeout(() => { pinWatch?.disconnect(); pinWatch = null; }, ms);
+  }
 
   function toolSummary(name, input) {
     if (!input || typeof input !== 'object') return '';
@@ -2088,13 +2105,32 @@
       other.appendChild(otherText);
       wrap.appendChild(opts); wrap.appendChild(other);
       card.appendChild(wrap);
-      blocks.push({ q, set, otherText });
+      blocks.push({ q, set, otherText, wrap });
     }
 
     const actions = el('div', 'permission-actions');
     const sendBtn = el('button', 'btn btn-primary', 'Answer'); sendBtn.type = 'button';
     const skip = el('button', 'btn btn-ghost', 'Skip'); skip.type = 'button';
     const result = el('div', 'perm-result hidden');
+    // Once it is answered it is not a form any more: the options go and what you chose
+    // stays under its question, the way the answer reads back in Claude Code itself.
+    // Leaving the buttons there invites a second answer that nothing is listening for.
+    card.collapse = (answers, behavior) => {
+      if (card.classList.contains('answered')) return;
+      card.classList.add('answered');
+      head.lastChild.textContent = behavior === 'deny' ? 'Claude asked' : qs.length === 1 ? 'You answered' : 'You answered ' + qs.length + ' things';
+      for (const { q, wrap } of blocks) {
+        wrap.querySelector('.q-options')?.remove();
+        wrap.querySelector('.q-other')?.remove();
+        const given = answers && answers[q.question];
+        const line = el('div', 'q-answer' + (given ? '' : ' none'));
+        line.dir = 'auto';
+        line.textContent = given || (behavior === 'deny' ? 'Skipped' : 'Answered');
+        wrap.appendChild(line);
+      }
+      actions.remove();
+      result.classList.add('hidden');
+    };
     const answer = async (behavior) => {
       actions.querySelectorAll('button').forEach((x) => x.disabled = true);
       const answers = {};
@@ -2105,6 +2141,7 @@
       }
       try {
         await api('/permissions/' + ev.reqId, { method: 'POST', body: JSON.stringify({ behavior, always: false, ...(behavior === 'allow' ? { updatedInput: { answers } } : {}) }) });
+        card.collapse(answers, behavior);
       } catch (e) { result.textContent = e.message; result.classList.remove('hidden'); actions.querySelectorAll('button').forEach((x) => x.disabled = false); }
     };
     sendBtn.addEventListener('click', () => {
@@ -2139,6 +2176,8 @@
   }
   function resolvePermissionCard(reqId, behavior) {
     const card = thread.querySelector(`.permission[data-req-id="${reqId}"]`); if (!card) return;
+    // Answered here, or on another device: either way it stops being a form.
+    if (card.collapse) return card.collapse(null, behavior);
     card.querySelector('.permission-actions').remove();
     const r = card.querySelector('.perm-result');
     const asked = card.classList.contains('question-card');
@@ -2417,7 +2456,7 @@
         b.addEventListener('click', () => { n.remove(); input.value = 'Continue where you left off. Check what was already done before redoing anything, then finish the task.'; input.dispatchEvent(new Event('input')); submit(); });
         n.appendChild(b); thread.appendChild(n);
       }
-      stickToBottom = true; scroll.scrollTop = scroll.scrollHeight;
+      stickToBottom = true; pinToBottom();
       setRunning(false); setElsewhere(false);
       markRead(id);
       subscribe(id); // streams our own turn, or follows the file if another window is working
