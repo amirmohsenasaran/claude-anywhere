@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # to ask Release for the installers once the tag is pushed
 
 concurrency:
   group: cut-release
@@ -78,4 +79,15 @@ jobs:
           fi
           git push origin HEAD:${{ github.ref_name }}
           git push origin "v${{ inputs.version }}"
-          echo "Pushed v${{ inputs.version }}. Release is building the installers now."
+          echo "Pushed v${{ inputs.version }}."
+
+      # A tag pushed with GITHUB_TOKEN does not start anything: GitHub suppresses
+      # workflow triggers from its own token so a workflow cannot loop for ever. So
+      # Release is asked for by name, which is allowed.
+      - name: Build the installers
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run release.yml --ref ${{ github.ref_name }} -f tag="v${{ inputs.version }}"
+          echo "Release is building Windows, both Macs and Linux into a draft."
