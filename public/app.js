@@ -52,18 +52,38 @@
       if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
       return `<img src="${escapeAttr(mediaSrc(href))}" alt="${escapeAttr(text)}"${title ? ` title="${escapeAttr(title)}"` : ''} loading="lazy" class="md-img">`;
     },
+    // A link stays a link, as it does in Desktop. `![...](clip.mp4)` is how you ask for
+    // a player; `[clip](clip.mp4)` is how you point at one, and clicking opens it here
+    // rather than embedding it in the middle of a sentence.
     link({ href, title, tokens }) {
       const inner = this.parser.parseInline(tokens);
-      if (isVideo(href)) return videoHtml(mediaSrc(href));
-      if (isAudio(href)) return `<audio controls class="md-audio" src="${escapeAttr(mediaSrc(href))}"></audio>`;
+      if (!isWebUrl(href)) return `<a href="#" class="file-link" data-path="${escapeAttr(href)}"${title ? ` title="${escapeAttr(title)}"` : ''}>${inner}</a>`;
       return `<a href="${escapeAttr(href)}"${title ? ` title="${escapeAttr(title)}"` : ''} target="_blank" rel="noopener">${inner}</a>`;
+    },
+    codespan({ text }) {
+      const raw = String(text ?? '');
+      const shown = escapeAttr(raw).replace(/&quot;/g, '"');
+      return looksLikePath(raw)
+        ? `<a href="#" class="file-link code" data-path="${escapeAttr(raw)}">${shown}</a>`
+        : `<code>${shown}</code>`;
     },
   } });
   const md = (text) => DOMPurify.sanitize(marked.parse(text || ''), { USE_PROFILES: { html: true, svg: true }, ADD_TAGS: ['video', 'audio', 'button', 'svg', 'path'], ADD_ATTR: ['loading', 'controls', 'preload', 'target', 'playsinline', 'aria-label', 'viewBox', 'fill', 'd'] });
   const stripHarness = (t) => String(t || '')
-    .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args)[\s\S]*?<\/\1>/g, '')
+    .replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-stderr|command-name|command-message|command-args|task-notification|function_results)[\s\S]*?<\/\1>/g, '')
     .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, '')
     .trim();
+
+  // Desktop draws an inline-code file path as a link and a bare file name as plain code:
+  // `out/molavi.mp4` is clickable, `check-farsi.py` is not. The separator is the whole
+  // rule — a name on its own is being talked about, a path is being pointed at.
+  const CODE_PATH = /^(?:[A-Za-z]:[\\/]|[~.]{0,2}[\\/])?(?:[^\s\\/:*?"<>|]+[\\/])+[^\s\\/:*?"<>|]+$/;
+  const looksLikePath = (s) => {
+    const t = String(s || '').trim();
+    if (!t || t.length > 300 || /\s/.test(t)) return false;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return false; // a URL is already a link
+    return CODE_PATH.test(t);
+  };
 
   // ---------- login ----------
   function showLogin(err) {
@@ -1114,8 +1134,11 @@
     let node = msg.blocks.get(index);
     if (block.type === 'text') {
       if (!node) { node = el('div', 'prose'); node.dir = 'auto'; msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
-      node.innerHTML = md(block.text);
-      if (!block.live) attachMediaPreviews(node, block.text);
+      // The harness writes its own notes into the stream - reminders, task notices.
+      // They are not the answer and Desktop does not show them either.
+      const shown = stripHarness(block.text);
+      node.innerHTML = md(shown);
+      node.classList.toggle('hidden', !shown);
     } else if (block.type === 'thinking') {
       if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
       node.querySelector('.step-body').textContent = block.thinking || '';
@@ -1144,19 +1167,12 @@
   const dataUrl = (img) => img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
   // Desktop shows a player when an answer mentions a video/audio file on the PC, even as a
   // bare path or in backticks (`out/hasanlu.mp4`). Files that do not exist simply drop out.
-  const MEDIA_PATH = /(?:[A-Za-z]:\\|\.{0,2}[\\/])?(?:[\w .()\-]+[\\/])*[\w .()\-]+\.(mp4|webm|mov|m4v|mp3|wav|m4a|ogg)\b/gi;
-  function attachMediaPreviews(node, text) {
-    if (!text || node.querySelector('video, audio')) return;
-    const seen = new Set();
-    for (const m of text.matchAll(MEDIA_PATH)) {
-      const p = m[0].trim(); if (seen.has(p) || /^https?:/i.test(p)) continue; seen.add(p);
-      if (seen.size > 4) break;
-      let media;
-      if (isAudio(p)) { media = el('audio', 'md-audio'); media.controls = true; media.src = localFileUrl(p); media.addEventListener('error', () => media.remove(), { once: true }); }
-      else { media = videoEl(localFileUrl(p)); media.querySelector('video').addEventListener('error', () => media.remove(), { once: true }); }
-      node.appendChild(media);
-    }
-  }
+  // A path that is merely mentioned used to grow a player underneath the message, which
+  // is why the same session read differently here and in Desktop: there the path is a
+  // link and the message stays a message. The path is a link here now too, and clicking
+  // it opens the clip over the page, so nothing is lost and the text is not interrupted.
+  // Media still appears inline where it was actually handed over: a sent file, or a
+  // picture Claude read.
   function attachResult(toolNode, result) {
     if (!toolNode) return;
     const b = toolNode.querySelector('.step-body');
@@ -1448,14 +1464,51 @@
   }
   function openImage(src, name) {
     if (!src) return;
+    stopPlayer();
     lbImg.style.width = '';
+    lbImg.classList.remove('hidden');
     lbImg.src = src; $('#lb-name').textContent = name || '';
     $('#lb-open').href = src;
     lb.classList.remove('hidden', 'zoom');
     if (lbImg.complete) fitImage();
     $('#lb-close').focus();
   }
-  function closeImage() { lb.classList.add('hidden'); lbImg.removeAttribute('src'); lbImg.style.width = ''; }
+  // A clip the assistant pointed at plays over the page, the way a picture opens.
+  function openPlayer(href, name) {
+    const src = mediaSrc(href);
+    stopPlayer();
+    lbImg.removeAttribute('src'); lbImg.classList.add('hidden');
+    const holder = $('#lb-play');
+    const v = document.createElement(isAudio(href) ? 'audio' : 'video');
+    v.src = src; v.controls = true; v.autoplay = true; v.playsInline = true; v.className = 'lb-media';
+    holder.appendChild(v); holder.classList.remove('hidden');
+    $('#lb-name').textContent = name || ''; $('#lb-open').href = src;
+    lb.classList.remove('hidden', 'zoom');
+    $('#lb-close').focus();
+  }
+  function stopPlayer() { const h = $('#lb-play'); h.classList.add('hidden'); h.innerHTML = ''; }
+  function closeImage() { lb.classList.add('hidden'); stopPlayer(); lbImg.classList.remove('hidden'); lbImg.removeAttribute('src'); lbImg.style.width = ''; }
+  // A file the assistant pointed at, by path: a picture or a clip opens over the page,
+  // anything else opens in the Files panel, where it can be read.
+  const isImage = (h) => /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)(\?|#|$)/i.test(h || '');
+  const absPath = (p) => {
+    const s = String(p || '').replace(/^file:\/\/\/?/i, '');
+    if (/^([A-Za-z]:[\\/]|[\\/])/.test(s)) return s;
+    if (!state.cwd) return s;
+    const sep = state.cwd.includes('\\') ? '\\' : '/';
+    return state.cwd.replace(/[\\/]+$/, '') + sep + s.replace(/[\\/]/g, sep);
+  };
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a.file-link');
+    if (!a) return;
+    e.preventDefault();
+    const p = a.dataset.path || '';
+    const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
+    if (isImage(p)) return openImage(localFileUrl(p), name);
+    if (isVideo(p) || isAudio(p)) return openPlayer(p, name);
+    openFiles();
+    openFileAt(absPath(p), name);
+  });
   lbImg.addEventListener('load', fitImage);
   window.addEventListener('resize', () => { if (!lb.classList.contains('hidden')) fitImage(); });
   lb.addEventListener('click', (e) => { if (e.target === lb || e.target.closest('#lb-close')) closeImage(); });

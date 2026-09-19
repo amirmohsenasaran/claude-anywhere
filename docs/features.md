@@ -41,6 +41,18 @@ in the tray, and the choice is remembered for next time.
 Sessions live on the machine running the server, so this is not a merged list:
 connect to the PC and you see the PC's sessions. That is the point of it.
 
+## Files in a message
+
+A file path written as inline code is a link: `out/clip.mp4` can be clicked, while
+a bare name like `check.py` stays plain code. The separator is the whole rule — a
+name on its own is being talked about, a path is being pointed at — and it is the
+rule Claude Desktop follows, so the same session reads the same way in both.
+
+Clicking a picture or a clip opens it over the page. Anything else opens in the Files
+panel. A path that is only mentioned does not embed a player in the middle of the
+message — media appears inline where it was actually handed over: a file sent to you,
+or a picture Claude read.
+
 ## Deleting, and undoing it
 
 Delete moves a session’s transcript to a trash folder inside the app’s data

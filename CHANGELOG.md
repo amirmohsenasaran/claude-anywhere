@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A transcript reads the same here as it does in Claude Desktop.** A file path
+  written as inline code is now a link you can click, and a bare file name stays
+  plain code: Desktop links `out/clip.mp4` and leaves `check.py` alone, and the
+  separator is all there is to the rule. Clicking a picture or a clip opens it
+  over the page; anything else opens in the Files panel. A path merely mentioned
+  no longer grows a video player underneath the message — which is what made the
+  same session look so different in the two apps — and the harness’s own task
+  notices are hidden here as they are there.
+
 ## [0.4.0] — 2026-09-19
 
 ### Added
