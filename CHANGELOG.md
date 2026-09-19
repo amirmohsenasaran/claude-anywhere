@@ -9,6 +9,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Deleting a session puts it aside instead of destroying it.** The transcript
+  moves to a trash folder and *Deleted sessions* in the funnel menu puts it back;
+  only emptying the trash removes anything. The confirmation now names what is
+  about to go and which projects it spans, and a Shift+click range stays inside
+  the project it started in rather than sweeping across all of them.
 - **Make a folder from the folder picker.** Typing a path that is not there yet
   offers to create it, and a *New folder* button makes one inside the folder you
   are looking at, so starting a new project no longer means creating its folder

@@ -17,6 +17,18 @@
   somewhere else. Opening it clears the dot, and the unread mark survives a
   restart (`data/attention.json`).
 
+## Deleting, and undoing it
+
+Delete moves a session’s transcript to a trash folder inside the app’s data
+directory and takes it out of the list. **Deleted sessions**, in the funnel menu
+or the command palette, puts one back. Only *Empty the trash* removes anything
+for good.
+
+The confirmation names the sessions it is about to take and says how many
+projects they span, and a Shift+click range stays inside the group it started
+in, because the quiet way to delete far more than you meant is a range that
+crossed a project boundary without saying so.
+
 ## Reading and continuing
 
 - Open a session to read it: text, thinking, tool calls with input and result,

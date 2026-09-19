@@ -241,9 +241,74 @@ app.post('/api/sessions/:id/fork', async (req, res, next) => {
 app.post('/api/sessions/:id/archive', async (req, res, next) => {
   try { await tagSession(req.params.id, req.body?.archived ? 'archived' : null); res.json({ ok: true, archived: !!req.body?.archived }); } catch (e) { next(e); }
 });
+// ---------- deleting a session puts it aside, it does not destroy it ----------
+// Sessions are the only thing here that cannot be made again, and deleting several
+// at once is one confirm away. So the transcript is moved to a trash folder and can
+// be put back; a rename on the same drive is instant even for a 300 MB one. Only
+// emptying the trash actually removes anything.
+const TRASH_DIR = path.join(DATA_DIR, 'trash');
+const TRASH_INDEX = path.join(TRASH_DIR, 'index.json');
+const readTrash = () => { try { return JSON.parse(fs.readFileSync(TRASH_INDEX, 'utf8')); } catch { return {}; } };
+const writeTrash = (t) => { try { fs.mkdirSync(TRASH_DIR, { recursive: true }); fs.writeFileSync(TRASH_INDEX, JSON.stringify(t, null, 2)); } catch {} };
+
+function trashSession(id, info) {
+  const from = sessionFile(id);
+  if (!from) return null;
+  try {
+    fs.mkdirSync(TRASH_DIR, { recursive: true });
+    fs.renameSync(from, path.join(TRASH_DIR, id + '.jsonl'));
+  } catch { return null; } // another drive, or the file is held open: let the caller delete properly
+  // Subagent transcripts live in a folder beside the file and belong with it.
+  const side = from.replace(/\.jsonl$/i, '');
+  let sideMoved = false;
+  try { if (fs.existsSync(side)) { fs.renameSync(side, path.join(TRASH_DIR, id)); sideMoved = true; } } catch {}
+  const t = readTrash();
+  t[id] = { id, from, side: sideMoved, at: Date.now(), title: info?.customTitle || info?.summary || 'Untitled', cwd: info?.cwd || '', project: info?.cwd ? path.basename(info.cwd) : '' };
+  writeTrash(t);
+  return t[id];
+}
+
 app.delete('/api/sessions/:id', async (req, res, next) => {
-  try { if (isLive(req.params.id)) return res.status(409).json({ error: 'Stop the running turn first.' }); await deleteSession(req.params.id); res.json({ ok: true }); } catch (e) { next(e); }
+  try {
+    const id = req.params.id;
+    if (isLive(id)) return res.status(409).json({ error: 'Stop the running turn first.' });
+    const info = await getSessionInfo(id).catch(() => null);
+    const kept = trashSession(id, info);
+    if (!kept) await deleteSession(id); // nothing to move, or the move failed: do as asked
+    res.json({ ok: true, recoverable: !!kept });
+  } catch (e) { next(e); }
 });
+
+app.get('/api/trash', (_req, res) => res.json({ items: Object.values(readTrash()).sort((a, b) => b.at - a.at), dir: TRASH_DIR }));
+
+app.post('/api/trash/:id/restore', (req, res) => {
+  const t = readTrash();
+  const it = t[req.params.id];
+  if (!it) return res.status(404).json({ error: 'Not in the trash.' });
+  try {
+    if (fs.existsSync(it.from)) return res.status(409).json({ error: 'A session is already back at that path.' });
+    fs.mkdirSync(path.dirname(it.from), { recursive: true });
+    fs.renameSync(path.join(TRASH_DIR, it.id + '.jsonl'), it.from);
+    if (it.side) { try { fs.renameSync(path.join(TRASH_DIR, it.id), it.from.replace(/\.jsonl$/i, '')); } catch {} }
+    delete t[req.params.id]; writeTrash(t);
+    res.json({ ok: true, id: it.id });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+
+// For good, this time. Two routes, not one optional parameter: Express 5 refuses that.
+const emptyTrash = (req, res) => {
+  const t = readTrash();
+  const ids = req.params.id ? [req.params.id] : Object.keys(t);
+  for (const id of ids) {
+    try { fs.rmSync(path.join(TRASH_DIR, id + '.jsonl'), { force: true }); } catch {}
+    try { fs.rmSync(path.join(TRASH_DIR, id), { recursive: true, force: true }); } catch {}
+    delete t[id];
+  }
+  writeTrash(t);
+  res.json({ ok: true, removed: ids.length });
+};
+app.delete('/api/trash', emptyTrash);
+app.delete('/api/trash/:id', emptyTrash);
 
 // Lines the session wrote so far (Write / Edit / NotebookEdit inputs), what Desktop's
 // "+19,770 −0" in the session bar counts. Cached by transcript size.

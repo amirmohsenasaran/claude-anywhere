@@ -197,6 +197,8 @@
     for (const [id, name, desc] of SORTS) m.appendChild(item(name, id === 'manual' && state.view.group !== 'project' ? 'Only when grouped by project' : desc, state.view.sort === id, () => { m.classList.add('hidden'); setView({ sort: id }); }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item('Show archived', '', state.view.archived, () => { m.classList.add('hidden'); setView({ archived: !state.view.archived }); }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('Deleted sessions…', 'Put one back', false, () => { m.classList.add('hidden'); openTrash(); }));
   });
 
   $('#filter-btn').classList.toggle('on', state.view.group !== 'project' || state.view.sort !== 'manual' || state.view.archived);
@@ -248,7 +250,7 @@
     add('Fork', 'F', async () => { try { const r = await api(`/sessions/${s.id}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } });
     ctx.appendChild(el('div', 'menu-sep'));
     add(s.archived ? 'Unarchive' : 'Archive', 'A', async () => { try { await api(`/sessions/${s.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (state.current === s.id && !s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } });
-    add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}" from this computer? This cannot be undone.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
+    add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}"? It moves to the trash and can be put back from Deleted sessions.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
     place();
   }
   document.addEventListener('click', (e) => { if (!ctx.contains(e.target)) ctx.classList.add('hidden'); });
@@ -266,9 +268,15 @@
   function pick(id, { range = false, toggle = false } = {}) {
     const ranged = range && selectAnchor; // a Shift+click with nothing picked yet is the first pick
     if (ranged) {
-      // the range is what is on screen between the anchor and this row, whatever groups it crosses
-      const ids = [...$('#session-list').querySelectorAll('.session-item')].map((n) => n.dataset.id);
-      let a = ids.indexOf(selectAnchor), b = ids.indexOf(id); if (a < 0) a = b; if (a > b) [a, b] = [b, a];
+      // The range stays inside the group it started in. Sweeping across every project
+      // at once is how a Shift+click takes far more than it looks like it is taking.
+      const from = $('#session-list').querySelector('.session-item[data-id="' + selectAnchor + '"]');
+      const scope = from ? from.closest('.project-group') || $('#session-list') : $('#session-list');
+      const ids = [...scope.querySelectorAll('.session-item')].map((n) => n.dataset.id);
+      let a = ids.indexOf(selectAnchor), b = ids.indexOf(id);
+      if (b < 0) { selected.add(id); selectAnchor = id; renderSessions(); return; } // another project: start again there
+      if (a < 0) a = b;
+      if (a > b) [a, b] = [b, a];
       for (const x of ids.slice(a, b + 1)) selected.add(x);
     } else if (toggle && selected.has(id)) selected.delete(id);
     else selected.add(id);
@@ -334,11 +342,55 @@
     if (failed.length) alert(`${label}: ${failed.length} of ${ids.length} did not work. ${failed[0].reason?.message || ''}`.trim());
     return ids;
   }
+  // Say which sessions, not just how many: a range that quietly crossed a project is
+  // the way to delete far more than you meant to.
+  function deletePrompt(all) {
+    const names = all.slice(0, 6).map((s) => '  • ' + (s.title || 'Untitled') + (s.project ? '  (' + s.project + ')' : ''));
+    if (all.length > names.length) names.push('  … and ' + (all.length - names.length) + ' more');
+    const projects = [...new Set(all.map((s) => s.project).filter(Boolean))];
+    return `Delete ${all.length === 1 ? 'this session' : all.length + ' sessions'}`
+      + (projects.length > 1 ? ` across ${projects.length} projects` : '') + '?\n\n'
+      + names.join('\n')
+      + '\n\nThey move to the trash and can be put back from Deleted sessions.';
+  }
   async function deleteSelected() {
     const all = selectedSessions(); if (!all.length) return;
-    const what = all.length === 1 ? `"${all[0].title}"` : all.length + ' sessions';
-    const ids = await bulk('Delete', (id) => api(`/sessions/${id}`, { method: 'DELETE' }), `Delete ${what} from this computer? This cannot be undone.`);
+    const ids = await bulk('Delete', (id) => api(`/sessions/${id}`, { method: 'DELETE' }), deletePrompt(all));
     if (ids && ids.includes(state.current) && !state.sessions.some((s) => s.id === state.current)) location.hash = '#/';
+  }
+
+  // ---------- deleted sessions ----------
+  async function openTrash() {
+    ctx.innerHTML = '';
+    ctx.appendChild(el('div', 'menu-title', 'Deleted sessions'));
+    ctx.appendChild(el('div', 'muted small pad', 'Reading…'));
+    ctx.classList.remove('hidden');
+    let items = [];
+    try { items = (await api('/trash')).items || []; } catch (e) { ctx.innerHTML = ''; ctx.appendChild(el('div', 'note error', e.message)); return; }
+    ctx.innerHTML = '';
+    ctx.classList.remove('hidden'); // the opening click has been and gone by now
+    ctx.appendChild(el('div', 'menu-title', items.length ? items.length + ' in the trash' : 'Deleted sessions'));
+    if (!items.length) ctx.appendChild(el('div', 'muted small pad', 'Nothing has been deleted.'));
+    for (const it of items.slice(0, 40)) {
+      const row = el('div', 'wt-row');
+      const nm = el('span', 'nm', it.title || 'Untitled'); nm.title = it.from || ''; row.appendChild(nm);
+      if (it.project) row.appendChild(el('span', 'tag', it.project));
+      row.appendChild(el('span', 'tag', relTime(it.at) + ' ago'));
+      const back = el('button', 'link-btn small', 'Restore'); back.type = 'button';
+      back.addEventListener('click', async () => { try { await api(`/trash/${it.id}/restore`, { method: 'POST' }); await loadSessions(); openTrash(); } catch (e) { alert(e.message); } });
+      row.appendChild(back);
+      ctx.appendChild(row);
+    }
+    if (items.length) {
+      ctx.appendChild(el('div', 'menu-sep'));
+      const empty = item('Empty the trash', 'Removes ' + items.length + ' for good', false, async () => {
+        if (!confirm('Remove ' + items.length + ' deleted ' + (items.length === 1 ? 'session' : 'sessions') + ' for good? This one really cannot be undone.')) return;
+        try { await api('/trash', { method: 'DELETE' }); ctx.classList.add('hidden'); toast('Trash emptied.'); } catch (e) { alert(e.message); }
+      });
+      empty.classList.add('danger');
+      ctx.appendChild(empty);
+    }
+    if (!isPhone()) { const r = ctx.getBoundingClientRect(); ctx.style.left = Math.max(8, Math.min(320, window.innerWidth - r.width - 24)) + 'px'; ctx.style.top = '64px'; }
   }
   async function archiveSelected() {
     const all = selectedSessions(); if (!all.length) return;
@@ -769,7 +821,7 @@
     }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
-    const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
+    const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session? It moves to the trash and can be put back from Deleted sessions.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
     del.classList.add('danger'); m.appendChild(del);
   });
 
@@ -1596,6 +1648,7 @@
     let d;
     try { d = await api('/worktrees?cwd=' + encodeURIComponent(cwd)); } catch (e) { d = { git: false, error: e.message }; }
     ctx.innerHTML = '';
+    ctx.classList.remove('hidden'); // ditto: opened from a menu item, whose click closes menus
     ctx.appendChild(el('div', 'menu-title', 'Worktrees'));
     if (!d.git) { ctx.appendChild(el('div', 'muted small pad', d.error || 'Not a git repository.')); return; }
     for (const w of d.worktrees) {
@@ -2113,6 +2166,7 @@
     for (const [id, name] of GROUPS.map((g) => [g[0], g[1]])) out.push({ name: 'Group sessions by ' + name.toLowerCase(), group: 'View', on: state.view.group === id, run: () => setView({ group: id }) });
     for (const [id, name] of SORTS.map((g) => [g[0], g[1]])) out.push({ name: 'Sort sessions by ' + name.toLowerCase(), group: 'View', on: state.view.sort === id, run: () => setView({ sort: id }) });
     out.push({ name: (state.view.archived ? 'Hide' : 'Show') + ' archived sessions', group: 'View', run: () => setView({ archived: !state.view.archived }) });
+    out.push({ name: 'Deleted sessions', group: 'View', run: () => openTrash() });
     if (hasSession()) out.push(
       { name: 'Changes', group: 'Session', run: () => (changesOpen ? closeChanges() : openChanges()) },
       { name: 'Files', group: 'Session', run: () => (filesOpen ? closeFiles() : openFiles()) },
@@ -2124,7 +2178,7 @@
       { name: 'Fork session', hint: 'F', group: 'Session', run: async () => { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } },
       { name: s.pinned ? 'Unpin session' : 'Pin session', hint: 'P', group: 'Session', run: () => togglePin(state.current, !s.pinned) },
       { name: s.archived ? 'Unarchive session' : 'Archive session', hint: 'A', group: 'Session', run: async () => { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } },
-      { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session from this computer? This cannot be undone.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
+      { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session? It moves to the trash and can be put back from Deleted sessions.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
     );
     if (prData?.has) out.push({ name: 'Open pull request #' + prData.number + ' on GitHub', group: 'Session', run: () => window.open(prData.url, '_blank', 'noopener') });
     for (const x of MODELS) out.push({ name: 'Model: ' + x.name, group: 'Turn', on: state.model === x.id, run: () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); pushControls({ model: x.id }); } });
