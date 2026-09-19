@@ -7,6 +7,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Every merge to `main` becomes a release you can download.** CI goes green and
+  the Release workflow works out the next version from the changelog, writes it
+  into all four files that carry one, tags it, builds the Windows, macOS and Linux
+  installers on their own runners and publishes them — no draft left waiting, no
+  installer built on somebody's laptop. A merge that only touched docs is not a
+  release, and `[skip release]` in the merged commit's subject stops one outright.
+- **The app says which build it is, and when there is a newer one.** *Connectors &
+  plugins → App* now reads `Claude Anywhere 0.4.0 · commit adf0332 · built 2 h
+  ago`, and a banner offers a published release the moment one is newer than what
+  you are running: *Claude Anywhere 0.5.0 is available · you have 0.4.0 · 14 MB*,
+  with a Download button that opens the file for your platform. The check is one
+  read of the public Releases page, once an hour, shared by every device pointed at
+  this server — `CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` turns it off. Nothing
+  installs itself; a turn in flight is not something to replace an app under.
+
 ### Fixed
 
 - **Restart server works after a rebuild — which is when you need it.** A rebuild

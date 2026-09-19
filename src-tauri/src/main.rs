@@ -451,7 +451,14 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
                 .set("Authorization", &format!("Bearer {token}"))
                 .set("Content-Type", "application/json")
                 .timeout(Duration::from_secs(3))
-                .send_string(&format!("{{\"pid\":{}}}", std::process::id()));
+                // The version too: this server was started by the app we replaced, and
+                // until it is restarted it would otherwise keep reporting that one.
+                .send_string(&format!(
+                    "{{\"pid\":{},\"version\":\"{}\",\"commit\":\"{}\"}}",
+                    std::process::id(),
+                    env!("CARGO_PKG_VERSION"),
+                    env!("CA_COMMIT")
+                ));
             // Knowing how to start a server matters even when we did not start this one.
             // After a rebuild the app comes back to a server that outlived it on purpose,
             // adopts it, and "Restart server" then has to be able to put one back —
@@ -529,6 +536,10 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default(),
         )
+        // What this window actually is, for the About line and for deciding whether
+        // a release on GitHub is newer. An installed app has no checkout to ask.
+        .env("CLAUDE_ANYWHERE_APP_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("CLAUDE_ANYWHERE_APP_COMMIT", env!("CA_COMMIT"))
         .env("HOST", "0.0.0.0")
         .env("PORT", port.to_string())
         .env("CLAUDE_ANYWHERE_PARENT_PID", std::process::id().to_string())

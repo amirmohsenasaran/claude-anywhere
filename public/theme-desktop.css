@@ -649,3 +649,19 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .question-card.answered .q-text { color: var(--ink-2); }
 .question-card .q-answer { margin-top: 6px; padding: 8px 12px; border-radius: 10px; background: var(--bg-3); font-size: 13.5px; line-height: 1.5; }
 .question-card .q-answer.none { color: var(--ink-3); }
+
+/* ---------- v36: which build this is, and whether there is a newer one ---------- */
+/* .ct-desc is one clipped line; this one is allowed to be two on a phone. */
+.app-update { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 4px; white-space: normal; overflow: visible; }
+.app-update > span { min-width: 0; }
+.app-update:empty { display: none; }
+.app-update .update-yes { color: var(--accent); font-weight: 500; }
+.app-update .link-btn.strong { font-weight: 500; }
+/* "Claude Anywhere 0.5.0 is available" does not fit beside its own detail on a
+   phone, and four one-word lines is not a sentence. The detail takes its own row. */
+@media (max-width: 560px) {
+  .update-banner { flex-wrap: wrap; }
+  .update-banner #ub-text { flex: 1 0 auto; }
+  .update-banner #ub-detail { order: 9; flex-basis: 100%; }
+  .update-banner .sb-spacer { display: none; }
+}

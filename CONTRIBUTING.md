@@ -61,6 +61,29 @@ There is no test runner yet. What is expected instead:
 - A pull request explains what changed, how you checked it, and carries a
   screenshot if anything visible moved.
 
+## Releases
+
+Nobody publishes from a laptop. A pull request merges into `main`, CI goes green,
+and the **Release** workflow does the rest: it works out the next version, writes
+it into `package.json`, `tauri.conf.json`, `Cargo.toml` and the lockfile, moves the
+changelog's *Unreleased* section under that version, commits, tags, builds the
+Windows, macOS and Linux installers on their own runners, and publishes the release
+with the changelog section as its notes. Running apps notice it within the hour.
+
+What decides the number:
+
+- an `### Added` block in *Unreleased* makes it a **minor** bump, anything else a
+  **patch** — while the major is 0, that is the promise the changelog makes;
+- a `package.json` already ahead of the last tag is taken at its word, which is how
+  `1.0.0` will happen;
+- a merge that touched only docs, the changelog or the workflows is not a release,
+  and `[skip release]` in the merged commit's subject stops one outright;
+- Actions → *Release* → *Run workflow* forces a version by hand, and *dry run*
+  shows what it would do without pushing anything.
+
+So: write the changelog entry in the pull request that earns it. It is what the
+release page will say, and it is what decides the version.
+
 ## Where to start
 
 - Issues labelled `good first issue`.

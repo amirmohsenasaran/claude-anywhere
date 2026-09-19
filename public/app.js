@@ -896,12 +896,60 @@
     }
     if (!data.plugins.length) pl.appendChild(el('div', 'muted small pad', 'No plugin marketplaces installed.'));
   }
+  // A link that leaves the app has to leave the window too: inside Tauri, window.open
+  // navigates the webview and there is no way back to the session you were in.
+  function openExternal(url) {
+    const T = window.__TAURI__;
+    if (T?.opener?.openUrl) { T.opener.openUrl(url).catch(() => window.open(url, '_blank', 'noopener')); return; }
+    window.open(url, '_blank', 'noopener');
+  }
+  const mb = (bytes) => (bytes > 0 ? Math.round(bytes / 1048576) + ' MB' : '');
+  // relTime says "now" for the last minute, and "now ago" is not a thing.
+  const ago = (ms) => { const r = relTime(ms); return r === 'now' ? 'just now' : r + ' ago'; };
+
+  // What this build is, and whether GitHub has a newer one. A released app has no
+  // checkout to ask, so the version and the commit come from the shell that was built.
+  function paintUpdate(v, checking) {
+    const box = $('#app-update'); box.innerHTML = '';
+    const u = v.update || {};
+    const again = (label) => { const b = el('button', 'link-btn small'); b.type = 'button'; b.textContent = label; b.addEventListener('click', checkUpdateNow); return b; };
+    if (u.off) { box.appendChild(el('span', 'muted', 'Update checks are off.')); return; }
+    if (checking) { box.appendChild(el('span', 'muted', 'Asking GitHub…')); return; }
+    if (u.newer) {
+      const line = el('span', 'update-yes', 'Claude Anywhere ' + u.latest + ' is available');
+      box.appendChild(line);
+      const get = el('button', 'link-btn small strong'); get.type = 'button';
+      get.textContent = u.download ? 'Download ' + (mb(u.download.size) || 'it') : 'Open the release';
+      get.addEventListener('click', () => openExternal(u.download?.url || u.url));
+      box.appendChild(get);
+      const notes = el('button', 'link-btn small'); notes.type = 'button'; notes.textContent = 'What changed';
+      notes.addEventListener('click', () => openExternal(u.url));
+      box.appendChild(notes);
+      return;
+    }
+    // Running a checkout is normally ahead of every release, and calling that
+    // "up to date" reads as if the newer thing on disk did not count.
+    if (u.latest) box.appendChild(el('span', 'muted', (u.latest === u.current ? 'Up to date' : 'Ahead of the latest release (' + u.latest + ')') + (u.checkedAt ? ' · checked ' + ago(u.checkedAt) : '')));
+    else if (u.error) box.appendChild(el('span', 'muted', 'Could not reach GitHub: ' + u.error));
+    else box.appendChild(el('span', 'muted', 'No release published yet' + (v.repo ? ' for ' + v.repo : '')));
+    box.appendChild(again('Check again'));
+  }
+  async function checkUpdateNow() {
+    let v; try { v = await api('/version'); } catch { return; }
+    paintUpdate(v, true);
+    try { v.update = await api('/update/check', { method: 'POST', body: JSON.stringify({}) }); } catch (e) { v.update = { error: e.message }; }
+    paintUpdate(v);
+    checkForUpdate();
+  }
+
   // App section: what is running, restart the server with new code, rebuild the shell.
   async function paintVersion() {
     try {
       const v = await api('/version');
-      $('#app-version').textContent = v.commit ? v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : '') : 'unknown';
-      $('#app-version-desc').textContent = [v.subject, v.when && 'committed ' + relTime(Date.parse(v.when)) + ' ago', 'server up ' + relTime(v.serverStartedAt), v.appBuiltAt && 'app built ' + relTime(v.appBuiltAt) + ' ago', v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
+      $('#app-version').textContent = v.version || v.commit || 'unknown';
+      const subject = v.subject && v.subject.length > 46 ? v.subject.slice(0, 45) + '…' : v.subject;
+      $('#app-version-desc').textContent = [v.commit && 'commit ' + v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : ''), subject, v.appBuiltAt && 'built ' + ago(v.appBuiltAt), 'server up ' + relTime(v.serverStartedAt), v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
+      paintUpdate(v);
       $('#app-restart').disabled = !v.inApp;
       // Rebuild app runs a PowerShell script that knows the Windows file locks; off Windows the button would only ever fail.
       $('#app-rebuild').classList.toggle('hidden', v.platform !== undefined && v.platform !== 'win32');
@@ -970,10 +1018,19 @@
   async function checkForUpdate() {
     let v; try { v = await api('/version'); } catch { return; }
     const bar = $('#update-banner');
-    const key = (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
+    const u = v.update || {};
+    // A published release wins over the two development ones: a release is the app
+    // everybody has, the others only mean this checkout is ahead of what is running.
+    const key = u.newer ? 'rel:' + u.latest : (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
     if (!key || key === updateSnoozed) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
-    if (v.shellStale) {
+    $('#ub-action').disabled = false; // the restart branch below disables it, and the banner outlives that reason
+    if (u.newer) {
+      $('#ub-text').textContent = 'Claude Anywhere ' + u.latest + ' is available';
+      $('#ub-detail').textContent = ['you have ' + (u.current || 'an older build'), u.publishedAt && 'published ' + ago(u.publishedAt), u.download && mb(u.download.size)].filter(Boolean).join(' · ');
+      $('#ub-action').textContent = u.download ? 'Download' : 'Open the release';
+      $('#ub-action').onclick = () => openExternal(u.download?.url || u.url);
+    } else if (v.shellStale) {
       $('#ub-text').textContent = 'The app shell changed'; $('#ub-detail').textContent = v.shellChanged.slice(0, 3).join(', ') + ' · needs a rebuild (1–3 min)';
       $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
     } else {

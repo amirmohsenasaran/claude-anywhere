@@ -112,6 +112,11 @@ with it.
 
 The macOS build is not signed yet, so the first launch needs right-click → Open.
 
+Every release is built and published by GitHub Actions when a change lands on
+`main`, so what is on that page is what the code is. The app checks it once an
+hour and offers the new one in a banner — the version and the commit it was built
+from are in *Connectors & plugins → App*.
+
 ### From source
 
 ```bash

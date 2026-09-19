@@ -243,6 +243,29 @@ From *Connectors & plugins* → **App**:
 A banner appears by itself when the files on disk are newer than what is
 running, and says which one you need.
 
+## New versions
+
+The **App** row is the About box: the version, the commit it was built from, when
+it was built, and how long the server has been up. A packaged app has no checkout
+to ask, so the shell carries its own version and commit — compiled in by the build
+that made it.
+
+Once an hour the server asks GitHub whether the [latest release][releases] is
+newer than the running version, and a banner offers it: *Claude Anywhere 0.5.0 is
+available · you have 0.4.0 · 14 MB* with a **Download** button that opens the file
+for this platform — the `.exe`, the `.dmg` or the `.deb`, picked from the release's
+own assets. Nothing is sent anywhere; it is one unauthenticated read of a public
+page, cached for every device pointed at this server, and
+`CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` stops it asking at all. Installing is
+never automatic — replacing the app under a turn in flight is not something to do
+behind your back.
+
+Releases themselves are built by GitHub, never from a laptop: merging to `main`
+runs CI, and a green run cuts the version, tags it, builds Windows, macOS and
+Linux, and publishes them. [How that works](../CONTRIBUTING.md#releases).
+
+[releases]: https://github.com/aryasadeghy/claude-anywhere/releases
+
 ## Finding things
 
 The magnifier filters the list by title as you type. **Search inside** also asks

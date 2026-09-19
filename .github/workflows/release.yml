@@ -1,24 +1,91 @@
 name: Release
 
-# Tag a commit to publish: `npm run release -- 0.4.0` writes the version,
-# commits and pushes the tag; this builds the installer for each platform and
-# opens one draft release with all of them attached. Review the notes, then
-# publish.
+# Nothing is released from a laptop. A pull request merges, CI goes green on main,
+# and this cuts the version, tags it, builds the three installers and publishes them
+# — so what is on the Releases page is always what main is, built by GitHub.
+#
+# By hand: Actions → Release → Run workflow. A version there forces that number
+# (that is how 1.0.0 happens); "dry run" prints what it would do and stops.
+#
+# Why `workflow_run` and not `push: main`: the release has to be the thing CI just
+# passed, and a workflow cannot wait on another one any other way.
+
 on:
-  push:
-    tags: ['v*']
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to build (must already exist)'
-        required: true
+      version:
+        description: 'Version to release, like 0.5.0 (blank = decide from the changelog)'
+        required: false
+      dry_run:
+        description: 'Only show what would happen'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+# Two merges close together must not race for the same version number.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  decide:
+    name: Version and tag
+    # A red CI run is not a release.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0 # the tags are how it knows what the last release was
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Is there a release in this?
+        id: plan
+        run: node scripts/next-version.mjs "${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to release
+        if: steps.plan.outputs.release != 'true'
+        run: echo "::notice::No release — ${{ steps.plan.outputs.reason }}"
+
+      - name: Set the version, move the changelog, tag it
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm run release -- "${{ steps.plan.outputs.version }}"
+          echo "--- what the release page will say ---"
+          node scripts/release-notes.mjs "${{ steps.plan.outputs.version }}"
+
+      - name: Push it
+        if: steps.plan.outputs.release == 'true' && inputs.dry_run != true
+        run: |
+          git push origin HEAD:main
+          git push origin "${{ steps.plan.outputs.tag }}"
+          echo "::notice::Pushed ${{ steps.plan.outputs.tag }} — building the installers"
+
+      - name: Dry run
+        if: steps.plan.outputs.release == 'true' && inputs.dry_run == true
+        run: git --no-pager show --stat HEAD
+
   build:
     name: ${{ matrix.name }}
+    needs: decide
+    if: needs.decide.outputs.release == 'true' && inputs.dry_run != true
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,7 +108,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.decide.outputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -69,15 +136,23 @@ jobs:
       # so a production install must be present before the bundler runs.
       - run: npm ci --omit=dev
 
+      # github.sha is the commit CI ran on, which is one older than the release
+      # commit this checks out — the built app must name the one it was built from.
+      - name: Which commit this is
+        id: built
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Check the tag matches the version in the app
         shell: bash
         run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          tag="${{ needs.decide.outputs.tag }}"
           tag="${tag#v}"
           conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
           pkg=$(node -p "require('./package.json').version")
-          if [ "$tag" != "$conf" ] || [ "$tag" != "$pkg" ]; then
-            echo "tag $tag, tauri.conf.json $conf, package.json $pkg - they must agree"; exit 1
+          crate=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          if [ "$tag" != "$conf" ] || [ "$tag" != "$pkg" ] || [ "$tag" != "$crate" ]; then
+            echo "tag $tag, tauri.conf.json $conf, package.json $pkg, Cargo.toml $crate - they must agree"; exit 1
           fi
           echo "version $tag"
 
@@ -86,7 +161,7 @@ jobs:
         id: notes
         shell: bash
         run: |
-          node scripts/release-notes.mjs "${{ github.event.inputs.tag || github.ref_name }}" > RELEASE_NOTES.md
+          node scripts/release-notes.mjs "${{ needs.decide.outputs.tag }}" > RELEASE_NOTES.md
           echo "--- notes ---"; cat RELEASE_NOTES.md
           {
             echo "body<<CHANGELOG_SECTION"
@@ -97,12 +172,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The window's About line says which commit it was built from, and only the
+          # build knows that: the installed app has no repository to ask.
+          CLAUDE_ANYWHERE_COMMIT: ${{ steps.built.outputs.sha }}
           # And if FUSE is still not usable, unpack the tool instead of mounting it.
           APPIMAGE_EXTRACT_AND_RUN: 1
         with:
           args: ${{ matrix.args }}
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: Claude Anywhere ${{ github.event.inputs.tag || github.ref_name }}
+          tagName: ${{ needs.decide.outputs.tag }}
+          releaseName: Claude Anywhere ${{ needs.decide.outputs.tag }}
           releaseBody: |
             ${{ steps.notes.outputs.body }}
 
@@ -117,6 +195,26 @@ jobs:
 
             **First run:** the app asks which Claude account to use — this computer's `claude login`,
             or a token from `claude setup-token`.
+          # Draft while three runners are still attaching files to it: a half-filled
+          # release is what the app would offer people to download.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: false
+
+  publish:
+    name: Publish
+    needs: [decide, build]
+    if: needs.decide.outputs.release == 'true' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # All three installers are attached by now, so the release stops being a draft
+      # in one move. This is also the moment the running apps start offering it.
+      - name: Make it downloadable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ needs.decide.outputs.tag }}"
+          gh release edit "$tag" --draft=false --latest
+          echo "::notice::$tag is out: $(gh release view "$tag" --json url -q .url)"
+          gh release view "$tag" --json assets -q '.assets[].name'

@@ -37,6 +37,9 @@ const edit = (rel, fn) => {
 console.log(`version ${version}`);
 edit('package.json', (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 edit('src-tauri/tauri.conf.json', (s) => s.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
+// The crate's own version is what the built binary reports back to the server as
+// the app version, so it cannot be left behind: it was, for all of 0.4.0.
+edit('src-tauri/Cargo.toml', (s) => s.replace(/^(version = ")[^"]+(")/m, `$1${version}$2`));
 
 // Keep a Changelog: today's release takes what is under Unreleased, and the
 // link block at the bottom gains a line for it.
@@ -50,17 +53,11 @@ edit('CHANGELOG.md', (s) => {
     .replace(/^(\[Unreleased\]: .*)$/m, `$1\n[${version}]: ${repo}/${previous ? `compare/v${previous}...v${version}` : `releases/tag/v${version}`}`);
 });
 
-// Cargo.lock carries the version too, and a stale one fails `cargo check --locked` in CI.
-try {
-  run('cargo', 'update', '--manifest-path', 'src-tauri/Cargo.toml', '--package', 'claude-anywhere', '--precise', version);
-} catch {
-  // Without cargo on the machine cutting the release, the one line it would have
-  // changed is this package's own version, so change that line directly.
-  const lock = path.join(root, 'src-tauri', 'Cargo.lock');
-  const before = fs.readFileSync(lock, 'utf8');
-  const after = before.replace(/(name = "claude-anywhere"\r?\nversion = ")[^"]+(")/, `$1${version}$2`);
-  if (after !== before) { fs.writeFileSync(lock, after); console.log('  src-tauri/Cargo.lock'); }
-}
+// Cargo.lock carries the version too, and a stale one fails `cargo check --locked` in
+// CI. `cargo update --precise` will not do it — it exits happily without touching a
+// local package, which is how 0.4.0 shipped a lockfile still saying 0.3.0 — so the one
+// line it would have changed is written here. CI's `cargo check --locked` is the proof.
+edit('src-tauri/Cargo.lock', (s) => s.replace(/(name = "claude-anywhere"\r?\nversion = ")[^"]+(")/, `$1${version}$2`));
 
 run('git', 'add', '-A');
 run('git', 'commit', '-m', `release ${version}`);
