@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Restart server works after a rebuild — which is when you need it.** A rebuild
+  leaves the running server up on purpose so the turn in flight survives, and the
+  app that comes back adopts it instead of starting one of its own. The shell kept
+  no way to start a server it had not started, and its watchdog gave up the moment
+  it saw an adopted one, so *Restart server* told the server to exit and nothing
+  ever put one back: the window sat on "Restarting the server…" until the app was
+  quit and opened again — the exact thing the rebuild had just told you to press.
+  The shell now remembers how to start a server either way, and watches the port
+  rather than only a process handle it may not hold, so one that goes away is back
+  in about two seconds.
 - **An answered question stops being a form.** The options stayed on screen and
   stayed clickable after you had answered, so the card looked like it had not
   taken. It collapses now: the question, what you chose underneath it, and nothing

@@ -413,6 +413,12 @@ fn read_env(env_file: &Path) -> (String, u16) {
     (password, port)
 }
 
+// Node refuses the verbatim prefix Windows canonicalisation adds, so it comes off again.
+fn tidy(path: PathBuf) -> PathBuf {
+    let path = path.canonicalize().unwrap_or(path);
+    PathBuf::from(path.to_string_lossy().trim_start_matches(r"\\?\"))
+}
+
 fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     fs::create_dir_all(&data_dir)?;
@@ -446,12 +452,22 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
                 .set("Content-Type", "application/json")
                 .timeout(Duration::from_secs(3))
                 .send_string(&format!("{{\"pid\":{}}}", std::process::id()));
+            // Knowing how to start a server matters even when we did not start this one.
+            // After a rebuild the app comes back to a server that outlived it on purpose,
+            // adopts it, and "Restart server" then has to be able to put one back —
+            // without this it killed the server and nothing ever replaced it.
             return Ok(ServerState {
                 child: Mutex::new(None),
                 port,
                 token,
-                env_file,
-                spawn: None,
+                env_file: env_file.clone(),
+                spawn: find_node().map(|node| SpawnCfg {
+                    node,
+                    root: tidy(root),
+                    data_dir: data_dir.clone(),
+                    env_file,
+                    port,
+                }),
             });
         }
         port = (port + 1..port + 20)
@@ -460,11 +476,9 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
     }
 
     let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Anywhere again.")?;
-    let root = root.canonicalize().unwrap_or(root);
-    let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
     let cfg = SpawnCfg {
         node,
-        root,
+        root: tidy(root),
         data_dir: data_dir.clone(),
         env_file: env_file.clone(),
         port,
@@ -551,18 +565,24 @@ fn spawn_server(cfg: &SpawnCfg) -> Result<Child, Box<dyn std::error::Error>> {
     Ok(child)
 }
 
-// Watches the server we started. Exit code 75 means "restart me" (new code from the
-// repo): spawn it again and reload the window. Anything else is a crash: restart too,
-// but say so.
+// Watches the server. Exit code 75 means "restart me" (new code from the repo): spawn it
+// again and reload the window. Anything else is a crash: restart too, but say so.
+//
+// A server we adopted rather than spawned gives us no Child to wait on — and that is the
+// common case, because a rebuild leaves the old server running on purpose and the new app
+// picks it up. The port is the only signal then, so watch that instead; otherwise "Restart
+// server" told the server to exit and nothing ever put one back.
 fn supervise_server(app: AppHandle) {
+    let mut misses = 0u8;
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(700));
         let Some(state) = app.try_state::<ServerState>() else {
             continue;
         };
         let Some(cfg) = state.spawn.clone() else {
-            return;
+            continue;
         };
+        // Some(true) = gone and worth a word, Some(false) = gone as asked, None = alive.
         let exited = {
             let mut guard = match state.child.lock() {
                 Ok(g) => g,
@@ -571,13 +591,27 @@ fn supervise_server(app: AppHandle) {
             match guard.as_mut().map(|c| c.try_wait()) {
                 Some(Ok(Some(status))) => {
                     *guard = None;
-                    Some(status.code())
+                    Some(status.code() != Some(RESTART_CODE))
                 }
-                _ => None,
+                Some(_) => None,
+                // Adopted: two misses in a row, since a server on its way out answers
+                // nothing for a moment and we have no exit code to tell why it went.
+                None => {
+                    if port_open(cfg.port) {
+                        misses = 0;
+                        None
+                    } else {
+                        misses += 1;
+                        (misses >= 2).then(|| {
+                            misses = 0;
+                            false
+                        })
+                    }
+                }
             }
         };
-        let Some(code) = exited else { continue };
-        if code != Some(RESTART_CODE) {
+        let Some(say_so) = exited else { continue };
+        if say_so {
             let _ = app
                 .notification()
                 .builder()

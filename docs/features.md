@@ -232,8 +232,9 @@ which is what makes the next section work.
 From *Connectors & plugins* → **App**:
 
 - **Restart server** reloads `server.mjs`, `lib/` and `public/` from the
-  checkout and reloads the window. It refuses while Claude is mid-turn, since
-  that would kill the turn.
+  checkout and reloads the window. Mid-turn it waits: the restart is queued and
+  happens the moment the turn ends, so nothing in flight is lost. It works
+  whether the app started that server or adopted the one a rebuild left running.
 - **Rebuild app** is for changes to the Rust shell. It closes the window,
   runs `cargo tauri build` (1–3 minutes) and opens it again; the log streams
   into the panel. The chat does not stop — the server is a separate process, so
