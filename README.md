@@ -10,7 +10,7 @@ you paste from another — without leaving the session, and reach all of it from
 your phone over your own network.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-[![Windows](https://img.shields.io/badge/Windows-10%2F11-black.svg)](#install)
+[![Windows, macOS, Linux](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-black.svg)](#install)
 [![Built on the Claude Agent SDK](https://img.shields.io/badge/built%20on-Claude%20Agent%20SDK-d97757.svg)](https://docs.anthropic.com/en/docs/claude-code/sdk)
 
 ![The app on Windows](docs/images/hero.png)
@@ -61,7 +61,7 @@ earlier message, and a dev-server preview that reaches your phone.
 | Sidebar order | sorts itself | yours, by drag and drop |
 | Preview of your dev server | yes, on that machine | yes, and on your phone |
 | Panes: terminal, browser, worktrees | yes | not yet |
-| macOS and Linux app | yes | web client only; the native window is Windows |
+| macOS and Linux app | yes | yes, unsigned so far |
 | Support | Anthropic | an issue tracker and me |
 
 **They are not rivals.** This reads and writes the same transcripts as
@@ -90,19 +90,24 @@ on a session, this one follows along and shows what it is doing.
   before it, with the message back in the composer to change and resend.
 - **Watches your other windows**: a session being worked on in VS Code, a
   terminal or Claude Desktop streams in here as that window writes it.
-- **Native Windows app**: WebView2, a few megabytes, tray icon, start with
-  Windows, system notifications, its own title bar.
+- **Native app on all three**: the webview the machine already has, a few
+  megabytes, tray icon, start with the machine, system notifications. Windows
+  draws its own title bar; macOS and Linux keep theirs.
 
 See [docs/features.md](docs/features.md) for the whole list with the detail.
 
 ## Install
 
-### From a release (Windows 10/11)
+### From a release
 
-Download the installer from [Releases][releases] and run it. It brings its own
+Download from [Releases][releases]: a `.exe` for Windows, a `.dmg` for macOS
+(Apple silicon or Intel), a `.deb` or `.AppImage` for Linux. It brings its own
 Claude Code binary, so the `claude` CLI is not required — but [Node.js][node]
 20 or newer must be installed and on `PATH`, because the app runs the server
 with it.
+
+The macOS and Linux builds are not signed yet, so the first launch needs
+right-click → Open, or `chmod +x` for the AppImage.
 
 ### From source
 
@@ -114,13 +119,14 @@ npm start                    # http://127.0.0.1:7777
 ```
 
 That is the web app on its own — enough for a phone, a Mac, or another browser
-on the same machine. For the native Windows window you also need the
+on the same machine. For the native window you also need the
 [Rust toolchain][rust] and the Tauri CLI
-(`cargo install tauri-cli --version "^2"`):
+(`cargo install tauri-cli --version "^2"`). On Linux, the WebKitGTK development
+packages as well:
 
 ```bash
 npm run desktop              # run it as a native window
-npm run dist                 # build the installer into src-tauri/target/release/bundle/nsis
+npm run dist                 # build the installer for this platform into src-tauri/target/release/bundle
 ```
 
 New here? [docs/getting-started.md](docs/getting-started.md) walks the whole
