@@ -712,13 +712,17 @@
   fb.addEventListener('click', (e) => { if (e.target === fb) fb.classList.add('hidden'); });
 
   // ---------- model / permission mode ----------
-  const MODELS = [
-    { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', desc: 'Most capable' },
-    { id: 'claude-opus-5', name: 'Claude Opus 5', desc: 'Strong, slower' },
-    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', desc: 'Fast and capable' },
-    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', desc: 'Fastest, cheapest' },
-  ];
-  const EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }];
+  // The models come from the CLI (GET /api/models) — the same list Claude Code and
+  // Claude Desktop show, with the same names and the same effort levels per model.
+  // This is only what to draw before that answer arrives.
+  let MODELS = [{ value: 'default', displayName: 'Default (recommended)', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }];
+  let DEFAULT_EFFORT = 'high';
+  // Claude's own words for the levels, and the warning it puts on the last one.
+  const EFFORT_NAMES = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
+  const EFFORT_HINT = { max: 'May use excessive tokens resulting in long response times and may hit token limits. Use sparingly for the hardest tasks.' };
+  const EFFORT_ABOUT = 'Higher effort means more thorough responses, but takes longer and uses your limits faster.';
+  const modelRow = (id) => MODELS.find((m) => m.value === id) || MODELS.find((m) => m.resolvedModel === id) || MODELS[0];
+  const effortsFor = (id) => { const r = modelRow(id); return r && r.supportsEffort !== false ? r.supportedEffortLevels || [] : []; };
   // The Claude Desktop mode picker, word for word, in its order (1–5 are its shortcuts).
   const MODES = [
     { id: 'auto', name: 'Auto', desc: 'Claude handles permission decisions' },
@@ -727,9 +731,22 @@
     { id: 'plan', name: 'Plan', desc: 'Create a plan before making changes' },
     { id: 'bypassPermissions', name: 'Bypass permissions', desc: 'Accepts all permissions' },
   ];
-  state.model = localStorage.getItem('cr.model') || MODELS[0].id;
+  state.model = localStorage.getItem('cr.model') || MODELS[0].value;
   state.effort = localStorage.getItem('cr.effort') || '';
   state.mode = localStorage.getItem('cr.mode') || 'default';
+
+  // A saved `claude-sonnet-5` is the wire id of the CLI's `sonnet` row; the CLI wants
+  // its own value back, so the answer is also a migration of what this device saved.
+  async function loadModels(force) {
+    let r; try { r = await api('/models' + (force ? '?refresh=1' : '')); } catch { return; }
+    if (!r.models?.length) return;
+    MODELS = r.models;
+    DEFAULT_EFFORT = r.defaultEffort || 'high';
+    const row = modelRow(state.model);
+    if (row && row.value !== state.model) { state.model = row.value; if (localStorage.getItem('cr.model')) localStorage.setItem('cr.model', row.value); }
+    if (state.effort && !effortsFor(state.model).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); }
+    renderModelChip();
+  }
 
   function menuFor(btnId, menuId, render) {
     const btn = $(btnId), m = $(menuId);
@@ -744,8 +761,12 @@
     b.addEventListener('click', onPick); return b;
   }
   function renderModelChip() {
-    const mdl = MODELS.find((x) => x.id === state.model) || MODELS[0];
-    $('#model-label').textContent = mdl.name + (state.effort ? ' · ' + state.effort : '');
+    // The chip takes the short half of the name, the way Claude's does: the menu says
+    // "Opus (1M context)" and "Default (recommended)", the chip says Opus and Default.
+    const name = (modelRow(state.model)?.displayName || 'Model').replace(/\s*\([^)]*\)\s*$/, '');
+    // The effort only when the model has levels and this is not its default one.
+    const shown = effortsFor(state.model).includes(state.effort) && state.effort !== DEFAULT_EFFORT ? state.effort : '';
+    $('#model-label').textContent = name + (shown ? ' · ' + (EFFORT_NAMES[shown] || shown) : '');
   }
   function renderModeChip() { $('#mode-name').textContent = (MODES.find((x) => x.id === state.mode) || MODES[0]).name; }
   // Model, mode and effort belong to the session, like Desktop: a change is remembered for
@@ -762,29 +783,44 @@
   function applySessionSettings(s) {
     restoreDeviceDefaults(); // unknown values fall back to this device's defaults, never to the previous session's
     if (!s) return;
-    if (s.model && MODELS.some((m) => m.id === s.model)) state.model = s.model;
+    if (s.model && modelRow(s.model)) state.model = modelRow(s.model).value;
     if (s.permissionMode && MODES.some((m) => m.id === s.permissionMode)) state.mode = s.permissionMode;
     state.effort = s.effort || '';
     renderModelChip(); renderModeChip();
   }
   function restoreDeviceDefaults() {
-    state.model = localStorage.getItem('cr.model') || MODELS[0].id;
+    state.model = modelRow(localStorage.getItem('cr.model')).value;
     state.effort = localStorage.getItem('cr.effort') || '';
     state.mode = localStorage.getItem('cr.mode') || 'default';
     renderModelChip(); renderModeChip();
   }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
-    MODELS.forEach((x, i) => m.appendChild(item(x.name, '', x.id === state.model, () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); m.classList.add('hidden'); pushControls({ model: x.id }); }, { hint: x.id === state.model ? '' : String(i + 1), tag: x.id === MODELS[0].id ? 'Default' : '' })));
+    MODELS.forEach((x, i) => m.appendChild(item(x.displayName, x.description || '', x.value === state.model, () => {
+      state.model = x.value; localStorage.setItem('cr.model', x.value);
+      // Haiku has no effort levels, and Opus 4.6 has no Extra: a level the new model
+      // does not take goes back to its default rather than travelling along unused.
+      const patch = { model: x.value };
+      if (state.effort && !effortsFor(x.value).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); patch.effort = ''; }
+      renderModelChip(); m.classList.add('hidden'); pushControls(patch);
+    }, { hint: x.value === state.model ? '' : String(i + 1) })));
+    // Effort is the model's, not the app's: Haiku has none, and which levels the rest
+    // take comes with the model. Nothing is drawn for a model that has no levels.
+    const levels = effortsFor(state.model);
+    if (!levels.length) return;
     m.appendChild(el('div', 'menu-sep'));
     const row = el('div', 'seg-row'); row.appendChild(el('span', null, 'Effort'));
     const seg = el('div', 'seg');
-    for (const x of [{ id: '', name: 'Auto' }, ...EFFORTS]) {
-      const b = el('button', x.id === state.effort ? 'on' : '', x.name); b.type = 'button';
-      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = x.id; if (x.id) localStorage.setItem('cr.effort', x.id); else localStorage.removeItem('cr.effort'); renderModelChip(); render(m); pushControls({ effort: x.id }); });
+    for (const id of levels) {
+      const on = id === state.effort || (!state.effort && id === DEFAULT_EFFORT);
+      const b = el('button', on ? 'on' : '', EFFORT_NAMES[id] || id); b.type = 'button';
+      if (id === DEFAULT_EFFORT) b.title = 'Default';
+      if (EFFORT_HINT[id]) b.title = EFFORT_HINT[id];
+      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = id; localStorage.setItem('cr.effort', id); renderModelChip(); render(m); pushControls({ effort: id }); });
       seg.appendChild(b);
     }
     row.appendChild(seg); m.appendChild(row);
+    m.appendChild(el('div', 'menu-note', EFFORT_ABOUT));
   });
   menuFor('#mode-btn', '#mode-menu', (m) => {
     m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Mode'));
@@ -896,12 +932,60 @@
     }
     if (!data.plugins.length) pl.appendChild(el('div', 'muted small pad', 'No plugin marketplaces installed.'));
   }
+  // A link that leaves the app has to leave the window too: inside Tauri, window.open
+  // navigates the webview and there is no way back to the session you were in.
+  function openExternal(url) {
+    const T = window.__TAURI__;
+    if (T?.opener?.openUrl) { T.opener.openUrl(url).catch(() => window.open(url, '_blank', 'noopener')); return; }
+    window.open(url, '_blank', 'noopener');
+  }
+  const mb = (bytes) => (bytes > 0 ? Math.round(bytes / 1048576) + ' MB' : '');
+  // relTime says "now" for the last minute, and "now ago" is not a thing.
+  const ago = (ms) => { const r = relTime(ms); return r === 'now' ? 'just now' : r + ' ago'; };
+
+  // What this build is, and whether GitHub has a newer one. A released app has no
+  // checkout to ask, so the version and the commit come from the shell that was built.
+  function paintUpdate(v, checking) {
+    const box = $('#app-update'); box.innerHTML = '';
+    const u = v.update || {};
+    const again = (label) => { const b = el('button', 'link-btn small'); b.type = 'button'; b.textContent = label; b.addEventListener('click', checkUpdateNow); return b; };
+    if (u.off) { box.appendChild(el('span', 'muted', 'Update checks are off.')); return; }
+    if (checking) { box.appendChild(el('span', 'muted', 'Asking GitHub…')); return; }
+    if (u.newer) {
+      const line = el('span', 'update-yes', 'Claude Anywhere ' + u.latest + ' is available');
+      box.appendChild(line);
+      const get = el('button', 'link-btn small strong'); get.type = 'button';
+      get.textContent = u.download ? 'Download ' + (mb(u.download.size) || 'it') : 'Open the release';
+      get.addEventListener('click', () => openExternal(u.download?.url || u.url));
+      box.appendChild(get);
+      const notes = el('button', 'link-btn small'); notes.type = 'button'; notes.textContent = 'What changed';
+      notes.addEventListener('click', () => openExternal(u.url));
+      box.appendChild(notes);
+      return;
+    }
+    // Running a checkout is normally ahead of every release, and calling that
+    // "up to date" reads as if the newer thing on disk did not count.
+    if (u.latest) box.appendChild(el('span', 'muted', (u.latest === u.current ? 'Up to date' : 'Ahead of the latest release (' + u.latest + ')') + (u.checkedAt ? ' · checked ' + ago(u.checkedAt) : '')));
+    else if (u.error) box.appendChild(el('span', 'muted', 'Could not reach GitHub: ' + u.error));
+    else box.appendChild(el('span', 'muted', 'No release published yet' + (v.repo ? ' for ' + v.repo : '')));
+    box.appendChild(again('Check again'));
+  }
+  async function checkUpdateNow() {
+    let v; try { v = await api('/version'); } catch { return; }
+    paintUpdate(v, true);
+    try { v.update = await api('/update/check', { method: 'POST', body: JSON.stringify({}) }); } catch (e) { v.update = { error: e.message }; }
+    paintUpdate(v);
+    checkForUpdate();
+  }
+
   // App section: what is running, restart the server with new code, rebuild the shell.
   async function paintVersion() {
     try {
       const v = await api('/version');
-      $('#app-version').textContent = v.commit ? v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : '') : 'unknown';
-      $('#app-version-desc').textContent = [v.subject, v.when && 'committed ' + relTime(Date.parse(v.when)) + ' ago', 'server up ' + relTime(v.serverStartedAt), v.appBuiltAt && 'app built ' + relTime(v.appBuiltAt) + ' ago', v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
+      $('#app-version').textContent = v.version || v.commit || 'unknown';
+      const subject = v.subject && v.subject.length > 46 ? v.subject.slice(0, 45) + '…' : v.subject;
+      $('#app-version-desc').textContent = [v.commit && 'commit ' + v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : ''), subject, v.appBuiltAt && 'built ' + ago(v.appBuiltAt), 'server up ' + relTime(v.serverStartedAt), v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
+      paintUpdate(v);
       $('#app-restart').disabled = !v.inApp;
       // Rebuild app runs a PowerShell script that knows the Windows file locks; off Windows the button would only ever fail.
       $('#app-rebuild').classList.toggle('hidden', v.platform !== undefined && v.platform !== 'win32');
@@ -970,10 +1054,19 @@
   async function checkForUpdate() {
     let v; try { v = await api('/version'); } catch { return; }
     const bar = $('#update-banner');
-    const key = (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
+    const u = v.update || {};
+    // A published release wins over the two development ones: a release is the app
+    // everybody has, the others only mean this checkout is ahead of what is running.
+    const key = u.newer ? 'rel:' + u.latest : (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
     if (!key || key === updateSnoozed) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
-    if (v.shellStale) {
+    $('#ub-action').disabled = false; // the restart branch below disables it, and the banner outlives that reason
+    if (u.newer) {
+      $('#ub-text').textContent = 'Claude Anywhere ' + u.latest + ' is available';
+      $('#ub-detail').textContent = ['you have ' + (u.current || 'an older build'), u.publishedAt && 'published ' + ago(u.publishedAt), u.download && mb(u.download.size)].filter(Boolean).join(' · ');
+      $('#ub-action').textContent = u.download ? 'Download' : 'Open the release';
+      $('#ub-action').onclick = () => openExternal(u.download?.url || u.url);
+    } else if (v.shellStale) {
       $('#ub-text').textContent = 'The app shell changed'; $('#ub-detail').textContent = v.shellChanged.slice(0, 3).join(', ') + ' · needs a rebuild (1–3 min)';
       $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
     } else {
@@ -2541,7 +2634,7 @@
     try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
-    await Promise.all([loadSessions(), loadProjects(), loadAwake()]);
+    await Promise.all([loadSessions(), loadProjects(), loadAwake(), loadModels()]);
     route();
     // First time on this device: ask which account to use (local or token).
     let chosen = false; try { chosen = !!localStorage.getItem('cr.accountChosen'); } catch {}

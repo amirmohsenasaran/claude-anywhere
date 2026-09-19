@@ -30,6 +30,8 @@ import { searchTranscripts } from './lib/search.mjs';
 import * as worktrees from './lib/worktrees.mjs';
 import * as pr from './lib/pr.mjs';
 import * as awake from './lib/awake.mjs';
+import * as update from './lib/update.mjs';
+import * as models from './lib/models.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -636,6 +638,13 @@ function listPlugins() {
   }
   return out;
 }
+// The model menu, straight from the CLI: same names, same descriptions, same effort
+// levels per model as Claude Code and Claude Desktop show. Cached on disk, so the
+// menu is right on the first paint and a refresh happens behind it.
+models.useCache(DATA_DIR);
+models.warm().catch(() => {});
+app.get('/api/models', (req, res) => res.json(models.list({ force: req.query.refresh === '1' })));
+
 app.get('/api/connectors', async (req, res) => {
   const cwd = String(req.query.cwd || ''); const sessionId = String(req.query.sessionId || '');
   const connectors = listConnectors(cwd);
@@ -975,6 +984,15 @@ app.get('/api/addresses', (_req, res) => {
 
 // ---------- updating from anywhere: what is running, restart the server, rebuild the app ----------
 const liveCount = () => [...runs.values()].filter((r) => !r.done).length;
+
+// What this copy of the app is. A packaged install has no checkout to ask, so the
+// shell passes its own compiled-in version and commit; running from a clone, the
+// package and git are the better answer because they move with every edit.
+const PKG = (() => { try { return JSON.parse(fs.readFileSync(path.join(here, 'package.json'), 'utf8')); } catch { return {}; } })();
+const REPO = update.parseRepo(PKG.repository?.url || PKG.repository);
+let appVersion = envOf('APP_VERSION') || PKG.version || '';
+let appCommit = envOf('APP_COMMIT') || '';
+
 function gitInfo() {
   const g = (args) => { try { return execFileSync('git', ['-C', here, ...args], { encoding: 'utf8', timeout: 4000, windowsHide: true }).trim(); } catch { return ''; } };
   return { commit: g(['rev-parse', '--short', 'HEAD']), subject: g(['log', '-1', '--format=%s']), when: g(['log', '-1', '--format=%ci']), dirty: g(['status', '--porcelain']).split('\n').filter(Boolean).length };
@@ -993,7 +1011,13 @@ app.get('/api/version', (_req, res) => {
   const shellFiles = [...listDir(path.join(here, 'src-tauri', 'src'), /\.rs$/), path.join(here, 'src-tauri', 'Cargo.toml'), path.join(here, 'src-tauri', 'tauri.conf.json')];
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
-  res.json({ ...gitInfo(), platform: process.platform, serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged });
+  const git = gitInfo();
+  res.json({ ...git, commit: git.commit || appCommit.slice(0, 7), version: appVersion, repo: REPO, platform: process.platform, serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged, update: update.status({ repo: REPO, version: appVersion, platform: process.platform }) });
+});
+// "Check again" in the App panel: the hourly cache is fine for a banner, less so for
+// someone standing there having just merged a pull request.
+app.post('/api/update/check', async (_req, res) => {
+  res.json(await update.checkNow({ repo: REPO, version: appVersion, platform: process.platform }));
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.
@@ -1090,4 +1114,7 @@ if (parentPid) setInterval(() => {
   if (live) { if (!orphanSince) { orphanSince = Date.now(); console.log(`[claude-anywhere] desktop app is gone; staying up for ${live} running turn(s)`); } return; }
   console.log('[claude-anywhere] desktop app is gone and nothing is running, exiting'); process.exit(0);
 }, 2000).unref();
-app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; console.log('[claude-anywhere] adopted by app pid', pid); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });
+// The adopting app may be a newer build than the one that started this server, and
+// until the server restarts its own environment still describes the old one — so the
+// About line and the update check take the version from whoever owns it now.
+app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; if (req.body?.version) appVersion = String(req.body.version); if (req.body?.commit) appCommit = String(req.body.commit); console.log('[claude-anywhere] adopted by app pid', pid, req.body?.version ? 'v' + req.body.version : ''); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });

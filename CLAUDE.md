@@ -60,6 +60,10 @@ await page.goto('http://127.0.0.1:7779/');
 - **`perTaskStopAffordance: true`** is what keeps a Stop from killing
   background agents. Absence fails closed.
 - **`background_tasks_changed` replaces the set**; do not merge it edge by edge.
+- **A server the app adopted has no `Child` to wait on.** After a rebuild the
+  window comes back to the server it deliberately left running, so anything that
+  watches the server has to watch the port too — a handle-only watchdog makes
+  Restart server a one-way trip.
 - **WebView2 caches hard** — static files go out `Cache-Control: no-cache`.
 - **The running app locks `target/release`**: a rebuild closes the window
   first. Never wait for "no live runs" before building — the person pressing

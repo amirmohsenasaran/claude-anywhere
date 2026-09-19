@@ -103,6 +103,14 @@ options up invites a second answer that nothing is listening for.
 - Permission mode (Manual / Accept edits / Plan / Auto / Bypass), model and
   effort can all be changed mid-turn. Shift+Tab cycles the mode like the CLI,
   1–5 pick one directly.
+- **The model menu is the CLI's own.** The list, the names, the descriptions and
+  the prices come from `supportedModels()` — whatever Claude Code offers this
+  account, including the *Default (recommended)* row and the 1M-context ones — so
+  it cannot drift from Claude. **Effort** is the model's own set: Low, Medium,
+  **High** (the default, and what a model runs at when nothing is chosen), Extra
+  and Max, restricted to the levels that model takes, with Claude's own warning on
+  Max. Haiku has no effort levels, so it shows none; switching to a model that
+  does not take the level you had picked puts it back to the default.
 - Permission prompts appear as a card with **Allow**, **Allow always** and
   **Deny**, answerable from the phone.
 - The composer's stop button ends the turn. Background work is not killed by
@@ -232,8 +240,9 @@ which is what makes the next section work.
 From *Connectors & plugins* → **App**:
 
 - **Restart server** reloads `server.mjs`, `lib/` and `public/` from the
-  checkout and reloads the window. It refuses while Claude is mid-turn, since
-  that would kill the turn.
+  checkout and reloads the window. Mid-turn it waits: the restart is queued and
+  happens the moment the turn ends, so nothing in flight is lost. It works
+  whether the app started that server or adopted the one a rebuild left running.
 - **Rebuild app** is for changes to the Rust shell. It closes the window,
   runs `cargo tauri build` (1–3 minutes) and opens it again; the log streams
   into the panel. The chat does not stop — the server is a separate process, so
@@ -241,6 +250,29 @@ From *Connectors & plugins* → **App**:
 
 A banner appears by itself when the files on disk are newer than what is
 running, and says which one you need.
+
+## New versions
+
+The **App** row is the About box: the version, the commit it was built from, when
+it was built, and how long the server has been up. A packaged app has no checkout
+to ask, so the shell carries its own version and commit — compiled in by the build
+that made it.
+
+Once an hour the server asks GitHub whether the [latest release][releases] is
+newer than the running version, and a banner offers it: *Claude Anywhere 0.5.0 is
+available · you have 0.4.0 · 14 MB* with a **Download** button that opens the file
+for this platform — the `.exe`, the `.dmg` or the `.deb`, picked from the release's
+own assets. Nothing is sent anywhere; it is one unauthenticated read of a public
+page, cached for every device pointed at this server, and
+`CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` stops it asking at all. Installing is
+never automatic — replacing the app under a turn in flight is not something to do
+behind your back.
+
+Releases themselves are built by GitHub, never from a laptop: merging to `main`
+runs CI, and a green run cuts the version, tags it, builds Windows, macOS and
+Linux, and publishes them. [How that works](../CONTRIBUTING.md#releases).
+
+[releases]: https://github.com/aryasadeghy/claude-anywhere/releases
 
 ## Finding things
 

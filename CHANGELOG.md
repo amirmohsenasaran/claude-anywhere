@@ -7,8 +7,45 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Every merge to `main` becomes a release you can download.** CI goes green and
+  the Release workflow works out the next version from the changelog, writes it
+  into all four files that carry one, tags it, builds the Windows, macOS and Linux
+  installers on their own runners and publishes them — no draft left waiting, no
+  installer built on somebody's laptop. A merge that only touched docs is not a
+  release, and `[skip release]` in the merged commit's subject stops one outright.
+- **The app says which build it is, and when there is a newer one.** *Connectors &
+  plugins → App* now reads `Claude Anywhere 0.4.0 · commit adf0332 · built 2 h
+  ago`, and a banner offers a published release the moment one is newer than what
+  you are running: *Claude Anywhere 0.5.0 is available · you have 0.4.0 · 14 MB*,
+  with a Download button that opens the file for your platform. The check is one
+  read of the public Releases page, once an hour, shared by every device pointed at
+  this server — `CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` turns it off. Nothing
+  installs itself; a turn in flight is not something to replace an app under.
+
 ### Fixed
 
+- **The model menu and its effort levels are Claude's, not a list we kept here.**
+  Four models were hard-coded with hand-written names, and effort was offered as
+  Auto / Low / Medium / High for every one of them. The CLI's own answer is what
+  the menu draws now — the same rows Claude Code shows this account, with its
+  descriptions and prices, the *Default (recommended)* row included — and effort is
+  the model's own: **Low, Medium, High** (the default), **Extra, Max**, with Claude's
+  warning on Max. Haiku has no effort levels and now shows none; a level the new
+  model does not take goes back to the default instead of travelling along unused.
+  A saved `claude-sonnet-5` is recognised as the CLI's `sonnet` row, so nothing on
+  your device has to be picked again.
+- **Restart server works after a rebuild — which is when you need it.** A rebuild
+  leaves the running server up on purpose so the turn in flight survives, and the
+  app that comes back adopts it instead of starting one of its own. The shell kept
+  no way to start a server it had not started, and its watchdog gave up the moment
+  it saw an adopted one, so *Restart server* told the server to exit and nothing
+  ever put one back: the window sat on "Restarting the server…" until the app was
+  quit and opened again — the exact thing the rebuild had just told you to press.
+  The shell now remembers how to start a server either way, and watches the port
+  rather than only a process handle it may not hold, so one that goes away is back
+  in about two seconds.
 - **An answered question stops being a form.** The options stayed on screen and
   stayed clickable after you had answered, so the card looked like it had not
   taken. It collapses now: the question, what you chose underneath it, and nothing
