@@ -9,6 +9,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A question from Claude is a question, not a permission.** `AskUserQuestion`
+  arrived as a bare "Claude wants to use AskUserQuestion" with "(no summary)" and
+  an Allow button, which meant answering something you were never shown. The card
+  now carries the question, its options with their descriptions, and a box for an
+  answer that is not on the list; what you pick rides back on the tool’s own
+  `answers` field. Multiple questions and multi-select are handled, and the same
+  request arriving twice after a reconnect no longer draws two cards.
 - **A transcript reads the same here as it does in Claude Desktop.** A file path
   written as inline code is now a link you can click, and a bare file name stays
   plain code: Desktop links `out/clip.mp4` and leaves `check.py` alone, and the
