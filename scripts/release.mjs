@@ -51,7 +51,16 @@ edit('CHANGELOG.md', (s) => {
 });
 
 // Cargo.lock carries the version too, and a stale one fails `cargo check --locked` in CI.
-try { run('cargo', 'update', '--manifest-path', 'src-tauri/Cargo.toml', '--package', 'claude-anywhere', '--precise', version); } catch {}
+try {
+  run('cargo', 'update', '--manifest-path', 'src-tauri/Cargo.toml', '--package', 'claude-anywhere', '--precise', version);
+} catch {
+  // Without cargo on the machine cutting the release, the one line it would have
+  // changed is this package's own version, so change that line directly.
+  const lock = path.join(root, 'src-tauri', 'Cargo.lock');
+  const before = fs.readFileSync(lock, 'utf8');
+  const after = before.replace(/(name = "claude-anywhere"\r?\nversion = ")[^"]+(")/, `$1${version}$2`);
+  if (after !== before) { fs.writeFileSync(lock, after); console.log('  src-tauri/Cargo.lock'); }
+}
 
 run('git', 'add', '-A');
 run('git', 'commit', '-m', `release ${version}`);
