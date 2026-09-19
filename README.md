@@ -105,13 +105,12 @@ See [docs/features.md](docs/features.md) for the whole list with the detail.
 ### From a release
 
 Download from [Releases][releases]: a `.exe` for Windows, a `.dmg` for macOS
-(Apple silicon or Intel), a `.deb` or `.AppImage` for Linux. It brings its own
+(one file, both chips), a `.deb` for Linux. It brings its own
 Claude Code binary, so the `claude` CLI is not required — but [Node.js][node]
 20 or newer must be installed and on `PATH`, because the app runs the server
 with it.
 
-The macOS and Linux builds are not signed yet, so the first launch needs
-right-click → Open, or `chmod +x` for the AppImage.
+The macOS build is not signed yet, so the first launch needs right-click → Open.
 
 ### From source
 

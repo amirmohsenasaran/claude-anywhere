@@ -27,17 +27,17 @@ jobs:
           - os: windows-latest
             name: Windows installer
             args: ''
-          # Two Macs, one file each: Apple silicon and Intel. A universal binary would
-          # need both toolchains and doubles the download for everyone.
+          # One Mac file for both chips. Building them separately needed an Intel
+          # runner, and those sat queued for an hour at a time without ever starting;
+          # a universal binary is larger but it is one download and one job.
           - os: macos-latest
-            name: macOS (Apple silicon)
-            args: '--target aarch64-apple-darwin'
-          - os: macos-13
-            name: macOS (Intel)
-            args: '--target x86_64-apple-darwin'
+            name: macOS (universal)
+            args: '--target universal-apple-darwin'
+          # .deb only for now: the AppImage bundler fails on the runner without
+          # printing why, twice, after twenty-five minutes of compiling each time.
           - os: ubuntu-22.04
-            name: Linux (deb, AppImage)
-            args: ''
+            name: Linux (deb)
+            args: '--bundles deb'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,9 +46,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # A universal binary is compiled once for each chip, so the Mac runner needs both.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || matrix.os == 'macos-13' && 'x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -107,13 +108,12 @@ jobs:
 
             ---
 
-            **Install:** Windows `.exe`, macOS `.dmg` (take the Apple silicon one unless
-            your Mac is Intel), Linux `.deb` or `.AppImage`. [Node.js](https://nodejs.org/) 20
+            **Install:** Windows `.exe`, macOS `.dmg` (one file, both chips), Linux
+            `.deb`. [Node.js](https://nodejs.org/) 20
             or newer must be installed, because the app runs its server with it. Claude Code
             itself is included.
 
-            The macOS and Linux builds are not signed, so the first launch needs the usual
-            right-click → Open, or `chmod +x` for the AppImage.
+            The macOS build is not signed, so the first launch needs right-click → Open.
 
             **First run:** the app asks which Claude account to use — this computer's `claude login`,
             or a token from `claude setup-token`.
