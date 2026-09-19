@@ -50,6 +50,188 @@ struct SpawnCfg {
 // picks up new server code from the repo without touching the window.
 const RESTART_CODE: i32 = 75;
 
+// ---------- which computer this window is looking at ----------
+// The window always shows a server, and the client it shows is the one that server
+// serves. So "run it here" and "drive the machine in the other room" are the same app
+// pointed at a different address, not two programs — the sessions, files and previews
+// all belong to whichever machine is answering.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct Connection {
+    id: String,
+    name: String,
+    url: String,
+    #[serde(default)]
+    password: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct Connections {
+    active: String, // "local", or a connection id
+    #[serde(default)]
+    items: Vec<Connection>,
+}
+
+impl Default for Connections {
+    fn default() -> Self {
+        Connections {
+            active: "local".into(),
+            items: Vec::new(),
+        }
+    }
+}
+
+// The page the app carries with it, for choosing a computer. Captured at startup
+// because its URL is `tauri://localhost` on some platforms and `http://tauri.localhost`
+// on others, and guessing which is how this breaks on someone else's machine.
+struct PickerUrl(Mutex<Option<tauri::Url>>);
+
+fn connections_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("connections.json")
+}
+
+fn load_connections(app: &AppHandle) -> Connections {
+    fs::read_to_string(connections_path(app))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_connections(app: &AppHandle, c: &Connections) {
+    let p = connections_path(app);
+    if let Some(d) = p.parent() {
+        let _ = fs::create_dir_all(d);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(c) {
+        let _ = fs::write(p, s);
+    }
+}
+
+// Same derivation as server.mjs: no password means the fixed word "open".
+fn token_for(password: &str) -> String {
+    hex::encode(Sha256::digest(format!(
+        "claude-anywhere:{}",
+        if password.is_empty() {
+            "open"
+        } else {
+            password
+        }
+    )))
+}
+
+/// Start the local server if it is not running yet, and report where it is.
+/// Used as a client only, the app never starts one — which is why a Mac that only
+/// drives the PC does not need Node at all.
+fn ensure_local(app: &AppHandle) -> Result<(u16, String), String> {
+    if let Some(s) = app.try_state::<ServerState>() {
+        return Ok((s.port, s.token.clone()));
+    }
+    let state = start_server(app).map_err(|e| e.to_string())?;
+    let out = (state.port, state.token.clone());
+    app.manage(state);
+    supervise_server(app.clone());
+    Ok(out)
+}
+
+/// Where the window should point for a given connection id.
+fn target_url(app: &AppHandle, id: &str) -> Result<tauri::Url, String> {
+    if id == "local" {
+        let (port, token) = ensure_local(app)?;
+        return tauri::Url::parse(&format!("http://127.0.0.1:{port}/?auto={token}"))
+            .map_err(|e| e.to_string());
+    }
+    let c = load_connections(app);
+    let item = c
+        .items
+        .iter()
+        .find(|x| x.id == id)
+        .ok_or("That computer is not in the list any more.")?;
+    let base = item.url.trim_end_matches('/');
+    tauri::Url::parse(&format!("{base}/?auto={}", token_for(&item.password)))
+        .map_err(|_| format!("{} is not an address this can open.", item.url))
+}
+
+#[tauri::command]
+fn connections_get(app: AppHandle) -> Connections {
+    load_connections(&app)
+}
+
+#[tauri::command]
+fn connections_save(app: AppHandle, items: Vec<Connection>) -> Connections {
+    let mut c = load_connections(&app);
+    c.items = items;
+    if c.active != "local" && !c.items.iter().any(|x| x.id == c.active) {
+        c.active = "local".into();
+    }
+    save_connections(&app, &c);
+    refresh_tray(&app);
+    c
+}
+
+/// Point the window at a computer and remember it for next time.
+#[tauri::command]
+fn connection_use(app: AppHandle, id: String) -> Result<(), String> {
+    let url = target_url(&app, &id)?;
+    let mut c = load_connections(&app);
+    c.active = id;
+    save_connections(&app, &c);
+    if let Some(w) = app.get_webview_window("main") {
+        w.navigate(url).map_err(|e| e.to_string())?;
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    refresh_tray(&app);
+    Ok(())
+}
+
+/// Is anything answering there, and does the password fit? Told before it is saved,
+/// because a wrong password shows up as a login screen with no explanation.
+#[tauri::command]
+fn connection_test(url: String, password: String) -> Result<String, String> {
+    let base = url.trim_end_matches('/');
+    let cfg = ureq::get(&format!("{base}/api/config"))
+        .timeout(Duration::from_secs(6))
+        .call()
+        .map_err(|e| format!("Nothing answered at {base}: {e}"))?
+        .into_json::<serde_json::Value>()
+        .map_err(|_| format!("{base} answered, but not as Claude Anywhere."))?;
+    let needs = cfg["passwordRequired"].as_bool().unwrap_or(false);
+    if needs && password.is_empty() {
+        return Err("That computer has an app password. Put it in below.".into());
+    }
+    let ok = ureq::get(&format!("{base}/api/me"))
+        .set("Authorization", &format!("Bearer {}", token_for(&password)))
+        .timeout(Duration::from_secs(6))
+        .call()
+        .map_err(|_| "The password does not match that computer.".to_string())?
+        .into_json::<serde_json::Value>()
+        .unwrap_or_default();
+    Ok(format!(
+        "{} on {}",
+        ok["userName"].as_str().unwrap_or("Claude"),
+        ok["host"].as_str().unwrap_or("that computer")
+    ))
+}
+
+/// Show the built-in page for choosing a computer.
+#[tauri::command]
+fn open_picker(app: AppHandle) {
+    show_picker(&app);
+}
+
+fn show_picker(app: &AppHandle) {
+    let url = app
+        .try_state::<PickerUrl>()
+        .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()));
+    if let (Some(url), Some(w)) = (url, app.get_webview_window("main")) {
+        let _ = w.navigate(url);
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -62,8 +244,65 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
         ))
+        .invoke_handler(tauri::generate_handler![
+            connections_get,
+            connections_save,
+            connection_use,
+            connection_test,
+            open_picker
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
+            app.manage(PickerUrl(Mutex::new(None)));
+            let conns = load_connections(&handle);
+            let hidden = std::env::args().any(|a| a == "--hidden");
+
+            // The window is built on the picker page so its URL can be read for what it
+            // actually is on this platform, then sent where it belongs.
+            let win =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("connect.html".into()))
+                    .title("Claude")
+                    .inner_size(1200.0, 820.0)
+                    .min_inner_size(380.0, 600.0)
+                    // On Windows there is no caption bar: the page draws the title bar and
+                    // the minimise / maximise / close buttons itself, as Claude Desktop
+                    // does. macOS and Linux keep their own — the traffic lights belong
+                    // where every other window on that machine puts them.
+                    .decorations(!cfg!(windows))
+                    .shadow(true)
+                    .visible(false)
+                    .build()?;
+            if let Ok(u) = win.url() {
+                if let Some(s) = app.try_state::<PickerUrl>() {
+                    if let Ok(mut g) = s.0.lock() {
+                        *g = Some(u);
+                    }
+                }
+            }
+            let _ = win.set_title("Claude");
+
+            // Pointed at another computer: no server of our own, so this machine needs
+            // neither Node nor a Claude login to be a window onto that one.
+            if conns.active != "local" {
+                match target_url(&handle, &conns.active) {
+                    Ok(url) => {
+                        let _ = win.navigate(url);
+                    }
+                    Err(e) => {
+                        let _ = win.eval(&format!(
+                            "window.__caError={}",
+                            serde_json::to_string(&e).unwrap_or_else(|_| "null".into())
+                        ));
+                    }
+                }
+                if !hidden {
+                    let _ = win.show();
+                }
+                build_tray(&handle)?;
+                spawn_notifier(handle.clone());
+                return Ok(());
+            }
+
             let state = start_server(&handle).map_err(|e| {
                 // Keep the reason on disk too, for when the dialog is gone.
                 if let Ok(dir) = app.path().app_data_dir() {
@@ -83,21 +322,10 @@ fn main() {
             })?;
             let url = format!("http://127.0.0.1:{}/?auto={}", state.port, state.token);
             app.manage(state);
-
-            let hidden = std::env::args().any(|a| a == "--hidden");
-            let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
-                .title("Claude")
-                .inner_size(1200.0, 820.0)
-                .min_inner_size(380.0, 600.0)
-                // On Windows there is no caption bar: the page draws the title bar and
-                // the minimise / maximise / close buttons itself, as Claude Desktop
-                // does. macOS and Linux keep their own — the traffic lights belong
-                // where every other window on that machine puts them.
-                .decorations(!cfg!(windows))
-                .shadow(true)
-                .visible(!hidden)
-                .build()?;
-            let _ = win.set_title("Claude");
+            let _ = win.navigate(url.parse()?);
+            if !hidden {
+                let _ = win.show();
+            }
 
             build_tray(&handle)?;
             spawn_notifier(handle.clone());
@@ -477,54 +705,117 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+// The menu is rebuilt whenever the computers change, so the tick is always against the
+// one the window is actually showing.
+fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let conns = load_connections(app);
     let open = MenuItem::with_id(app, "open", "Open Claude", true, None::<&str>)?;
     let phone = MenuItem::with_id(app, "phone", "Phone connection…", true, None::<&str>)?;
-    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+    let computers = MenuItem::with_id(app, "computers", "Computers…", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
-        "Start with Windows",
+        if cfg!(target_os = "macos") {
+            "Start at login"
+        } else if cfg!(windows) {
+            "Start with Windows"
+        } else {
+            "Start at login"
+        },
         true,
-        autostart_on,
+        app.autolaunch().is_enabled().unwrap_or(false),
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open,
-            &PredefinedMenuItem::separator(app)?,
-            &phone,
-            &autostart,
-            &PredefinedMenuItem::separator(app)?,
-            &quit,
-        ],
-    )?;
 
+    let local = CheckMenuItem::with_id(
+        app,
+        "conn:local",
+        "This computer",
+        true,
+        conns.active == "local",
+        None::<&str>,
+    )?;
+    let mut remotes: Vec<CheckMenuItem<tauri::Wry>> = Vec::new();
+    for c in &conns.items {
+        remotes.push(CheckMenuItem::with_id(
+            app,
+            format!("conn:{}", c.id),
+            if c.name.trim().is_empty() {
+                c.url.clone()
+            } else {
+                c.name.clone()
+            },
+            true,
+            conns.active == c.id,
+            None::<&str>,
+        )?);
+    }
+
+    let sep = PredefinedMenuItem::separator(app)?;
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &sep, &local];
+    for r in &remotes {
+        items.push(r);
+    }
+    items.push(&computers);
+    items.push(&sep);
+    items.push(&phone);
+    items.push(&autostart);
+    items.push(&sep);
+    items.push(&quit);
+    Menu::with_items(app, &items)
+}
+
+fn refresh_tray(app: &AppHandle) {
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), tray_menu(app)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = tray_menu(app)?;
     let icon = app.default_window_icon().cloned().expect("window icon");
     TrayIconBuilder::with_id("main")
         .icon(icon)
         .tooltip("Claude Anywhere")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "open" => show_main(app),
-            "phone" => show_phone_info(app),
-            "autostart" => {
-                let on = app.autolaunch().is_enabled().unwrap_or(false);
-                let _ = if on {
-                    app.autolaunch().disable()
-                } else {
-                    app.autolaunch().enable()
-                };
-                let _ = autostart.set_checked(!on);
+        .on_menu_event(move |app, event| {
+            let id = event.id().as_ref().to_string();
+            if let Some(which) = id.strip_prefix("conn:") {
+                let which = which.to_string();
+                let app = app.clone();
+                // Starting a server can take a moment; the menu should not sit open for it.
+                thread::spawn(move || {
+                    if let Err(e) = connection_use(app.clone(), which) {
+                        app.dialog()
+                            .message(e)
+                            .title("Could not switch computer")
+                            .kind(MessageDialogKind::Error)
+                            .show(|_| {});
+                    }
+                });
+                return;
             }
-            "quit" => {
-                stop_server(app);
-                app.exit(0);
+            match id.as_str() {
+                "open" => show_main(app),
+                "phone" => show_phone_info(app),
+                "computers" => show_picker(app),
+                "autostart" => {
+                    let on = app.autolaunch().is_enabled().unwrap_or(false);
+                    let _ = if on {
+                        app.autolaunch().disable()
+                    } else {
+                        app.autolaunch().enable()
+                    };
+                    refresh_tray(app);
+                }
+                "quit" => {
+                    stop_server(app);
+                    app.exit(0);
+                }
+                _ => {}
             }
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -542,6 +833,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn show_phone_info(app: &AppHandle) {
     let Some(state) = app.try_state::<ServerState>() else {
+        // Used as a window onto another computer, this one is serving nothing.
+        app.dialog()
+            .message("This computer is not serving anything right now. Switch to This computer in the tray, then the addresses for your phone will be here.")
+            .title("Claude on your phone")
+            .kind(MessageDialogKind::Info)
+            .show(|_| {});
         return;
     };
     let (password, port) = read_env(&state.env_file);
@@ -586,16 +883,28 @@ fn show_phone_info(app: &AppHandle) {
 
 // Follows the server's notification stream and raises a system notification
 // when the window is not in front: a permission to answer, or a finished turn.
+/// Base address and token of whatever the window is looking at, so notifications come
+/// from the machine doing the work rather than always from this one.
+fn active_base(app: &AppHandle) -> Option<(String, String)> {
+    let conns = load_connections(app);
+    if conns.active == "local" {
+        let s = app.try_state::<ServerState>()?;
+        return Some((format!("http://127.0.0.1:{}", s.port), s.token.clone()));
+    }
+    let c = conns.items.into_iter().find(|x| x.id == conns.active)?;
+    Some((
+        c.url.trim_end_matches('/').to_string(),
+        token_for(&c.password),
+    ))
+}
+
 fn spawn_notifier(app: AppHandle) {
     thread::spawn(move || loop {
-        let Some(state) = app.try_state::<ServerState>() else {
+        let Some((base, token)) = active_base(&app) else {
             thread::sleep(Duration::from_secs(1));
             continue;
         };
-        let url = format!(
-            "http://127.0.0.1:{}/api/notify?token={}",
-            state.port, state.token
-        );
+        let url = format!("{base}/api/notify?token={token}");
         match ureq::get(&url).call() {
             Ok(resp) => {
                 let reader = BufReader::new(resp.into_reader());

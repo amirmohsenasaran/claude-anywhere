@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Releases are cut and built on GitHub.** Actions → *Cut a release* takes a
+  version, sets it everywhere, moves the changelog under it, tags and pushes;
+  the tag builds Windows, both Macs and Linux into one draft whose notes are
+  that version’s changelog section. Nothing is published from a laptop.
+- **One app, either computer.** The window shows one machine at a time, and which
+  one is now a choice: run Claude on this computer, or point the window at
+  another that is running Claude Anywhere and drive that one instead. Its
+  sessions, its files, its dev servers, its worktrees. There is no separate
+  client: the page always comes from the machine that is answering, so a Mac
+  used only as a window onto a PC never starts a server and does not need Node.
+  Computers are added in the app, switched from the tray, and remembered.
 - **Deleting a session puts it aside instead of destroying it.** The transcript
   moves to a trash folder and *Deleted sessions* in the funnel menu puts it back;
   only emptying the trash removes anything. The confirmation now names what is

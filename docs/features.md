@@ -17,6 +17,30 @@
   somewhere else. Opening it clears the dot, and the unread mark survives a
   restart (`data/attention.json`).
 
+## Which computer this window shows
+
+The window shows one machine at a time: its sessions, its files, its dev
+servers, its worktrees. Which machine is a choice.
+
+- **This computer** runs Claude here, as the app always has.
+- **Another computer** points the window at a machine that is running Claude
+  Anywhere — over Tailscale or your own network — and everything you do belongs
+  to that machine instead.
+
+There is no separate client application. The page always comes from whichever
+server is answering, so both modes are the same app and the same code. A Mac
+used only as a window onto a PC never starts a server of its own, and does not
+need Node installed at all.
+
+Computers are added from the app's own picker, which the tray opens under
+*Computers…*: an address, a name, and the app password if that machine has one.
+**Test** says who answered before anything is saved, because a wrong password
+otherwise shows up as a login screen with no explanation. Switching is a click
+in the tray, and the choice is remembered for next time.
+
+Sessions live on the machine running the server, so this is not a merged list:
+connect to the PC and you see the PC's sessions. That is the point of it.
+
 ## Deleting, and undoing it
 
 Delete moves a session’s transcript to a trash folder inside the app’s data

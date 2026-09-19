@@ -77,6 +77,19 @@ jobs:
           fi
           echo "version $tag"
 
+      # What people read on the release page should be what changed, not a link to it.
+      - name: Release notes from the changelog
+        id: notes
+        shell: bash
+        run: |
+          node scripts/release-notes.mjs "${{ github.event.inputs.tag || github.ref_name }}" > RELEASE_NOTES.md
+          echo "--- notes ---"; cat RELEASE_NOTES.md
+          {
+            echo "body<<CHANGELOG_SECTION"
+            cat RELEASE_NOTES.md
+            echo "CHANGELOG_SECTION"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,7 +98,9 @@ jobs:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: Claude Anywhere ${{ github.event.inputs.tag || github.ref_name }}
           releaseBody: |
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what changed.
+            ${{ steps.notes.outputs.body }}
+
+            ---
 
             **Install:** Windows `.exe`, macOS `.dmg` (take the Apple silicon one unless
             your Mac is Intel), Linux `.deb` or `.AppImage`. [Node.js](https://nodejs.org/) 20
