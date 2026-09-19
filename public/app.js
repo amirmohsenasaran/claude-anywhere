@@ -197,6 +197,8 @@
     for (const [id, name, desc] of SORTS) m.appendChild(item(name, id === 'manual' && state.view.group !== 'project' ? 'Only when grouped by project' : desc, state.view.sort === id, () => { m.classList.add('hidden'); setView({ sort: id }); }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item('Show archived', '', state.view.archived, () => { m.classList.add('hidden'); setView({ archived: !state.view.archived }); }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('Deleted sessions…', 'Put one back', false, () => { m.classList.add('hidden'); openTrash(); }));
   });
 
   $('#filter-btn').classList.toggle('on', state.view.group !== 'project' || state.view.sort !== 'manual' || state.view.archived);
@@ -248,7 +250,7 @@
     add('Fork', 'F', async () => { try { const r = await api(`/sessions/${s.id}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } });
     ctx.appendChild(el('div', 'menu-sep'));
     add(s.archived ? 'Unarchive' : 'Archive', 'A', async () => { try { await api(`/sessions/${s.id}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (state.current === s.id && !s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } });
-    add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}" from this computer? This cannot be undone.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
+    add('Delete', 'D', async () => { if (!confirm(`Delete "${s.title}"? It moves to the trash and can be put back from Deleted sessions.`)) return; try { await api(`/sessions/${s.id}`, { method: 'DELETE' }); await loadSessions(); if (state.current === s.id) location.hash = '#/'; } catch (e) { alert(e.message); } }, 'danger');
     place();
   }
   document.addEventListener('click', (e) => { if (!ctx.contains(e.target)) ctx.classList.add('hidden'); });
@@ -266,9 +268,15 @@
   function pick(id, { range = false, toggle = false } = {}) {
     const ranged = range && selectAnchor; // a Shift+click with nothing picked yet is the first pick
     if (ranged) {
-      // the range is what is on screen between the anchor and this row, whatever groups it crosses
-      const ids = [...$('#session-list').querySelectorAll('.session-item')].map((n) => n.dataset.id);
-      let a = ids.indexOf(selectAnchor), b = ids.indexOf(id); if (a < 0) a = b; if (a > b) [a, b] = [b, a];
+      // The range stays inside the group it started in. Sweeping across every project
+      // at once is how a Shift+click takes far more than it looks like it is taking.
+      const from = $('#session-list').querySelector('.session-item[data-id="' + selectAnchor + '"]');
+      const scope = from ? from.closest('.project-group') || $('#session-list') : $('#session-list');
+      const ids = [...scope.querySelectorAll('.session-item')].map((n) => n.dataset.id);
+      let a = ids.indexOf(selectAnchor), b = ids.indexOf(id);
+      if (b < 0) { selected.add(id); selectAnchor = id; renderSessions(); return; } // another project: start again there
+      if (a < 0) a = b;
+      if (a > b) [a, b] = [b, a];
       for (const x of ids.slice(a, b + 1)) selected.add(x);
     } else if (toggle && selected.has(id)) selected.delete(id);
     else selected.add(id);
@@ -334,11 +342,55 @@
     if (failed.length) alert(`${label}: ${failed.length} of ${ids.length} did not work. ${failed[0].reason?.message || ''}`.trim());
     return ids;
   }
+  // Say which sessions, not just how many: a range that quietly crossed a project is
+  // the way to delete far more than you meant to.
+  function deletePrompt(all) {
+    const names = all.slice(0, 6).map((s) => '  • ' + (s.title || 'Untitled') + (s.project ? '  (' + s.project + ')' : ''));
+    if (all.length > names.length) names.push('  … and ' + (all.length - names.length) + ' more');
+    const projects = [...new Set(all.map((s) => s.project).filter(Boolean))];
+    return `Delete ${all.length === 1 ? 'this session' : all.length + ' sessions'}`
+      + (projects.length > 1 ? ` across ${projects.length} projects` : '') + '?\n\n'
+      + names.join('\n')
+      + '\n\nThey move to the trash and can be put back from Deleted sessions.';
+  }
   async function deleteSelected() {
     const all = selectedSessions(); if (!all.length) return;
-    const what = all.length === 1 ? `"${all[0].title}"` : all.length + ' sessions';
-    const ids = await bulk('Delete', (id) => api(`/sessions/${id}`, { method: 'DELETE' }), `Delete ${what} from this computer? This cannot be undone.`);
+    const ids = await bulk('Delete', (id) => api(`/sessions/${id}`, { method: 'DELETE' }), deletePrompt(all));
     if (ids && ids.includes(state.current) && !state.sessions.some((s) => s.id === state.current)) location.hash = '#/';
+  }
+
+  // ---------- deleted sessions ----------
+  async function openTrash() {
+    ctx.innerHTML = '';
+    ctx.appendChild(el('div', 'menu-title', 'Deleted sessions'));
+    ctx.appendChild(el('div', 'muted small pad', 'Reading…'));
+    ctx.classList.remove('hidden');
+    let items = [];
+    try { items = (await api('/trash')).items || []; } catch (e) { ctx.innerHTML = ''; ctx.appendChild(el('div', 'note error', e.message)); return; }
+    ctx.innerHTML = '';
+    ctx.classList.remove('hidden'); // the opening click has been and gone by now
+    ctx.appendChild(el('div', 'menu-title', items.length ? items.length + ' in the trash' : 'Deleted sessions'));
+    if (!items.length) ctx.appendChild(el('div', 'muted small pad', 'Nothing has been deleted.'));
+    for (const it of items.slice(0, 40)) {
+      const row = el('div', 'wt-row');
+      const nm = el('span', 'nm', it.title || 'Untitled'); nm.title = it.from || ''; row.appendChild(nm);
+      if (it.project) row.appendChild(el('span', 'tag', it.project));
+      row.appendChild(el('span', 'tag', relTime(it.at) + ' ago'));
+      const back = el('button', 'link-btn small', 'Restore'); back.type = 'button';
+      back.addEventListener('click', async () => { try { await api(`/trash/${it.id}/restore`, { method: 'POST' }); await loadSessions(); openTrash(); } catch (e) { alert(e.message); } });
+      row.appendChild(back);
+      ctx.appendChild(row);
+    }
+    if (items.length) {
+      ctx.appendChild(el('div', 'menu-sep'));
+      const empty = item('Empty the trash', 'Removes ' + items.length + ' for good', false, async () => {
+        if (!confirm('Remove ' + items.length + ' deleted ' + (items.length === 1 ? 'session' : 'sessions') + ' for good? This one really cannot be undone.')) return;
+        try { await api('/trash', { method: 'DELETE' }); ctx.classList.add('hidden'); toast('Trash emptied.'); } catch (e) { alert(e.message); }
+      });
+      empty.classList.add('danger');
+      ctx.appendChild(empty);
+    }
+    if (!isPhone()) { const r = ctx.getBoundingClientRect(); ctx.style.left = Math.max(8, Math.min(320, window.innerWidth - r.width - 24)) + 'px'; ctx.style.top = '64px'; }
   }
   async function archiveSelected() {
     const all = selectedSessions(); if (!all.length) return;
@@ -585,10 +637,12 @@
     fb.classList.remove('hidden');
     await browseTo(start || '');
   }
+  let fbDir = ''; // the folder being looked at, which is not the same as the one selected in it
   async function browseTo(p) {
     const list = $('#fb-list'); list.innerHTML = '<div class="muted small pad">Loading…</div>';
     try {
       const d = await api('/browse?path=' + encodeURIComponent(p || ''));
+      fbDir = d.path || '';
       $('#fb-path').value = d.path || '';
       $('#fb-use').disabled = !d.path;
       list.innerHTML = '';
@@ -603,8 +657,34 @@
         list.appendChild(b);
       }
       if (!d.dirs.length) list.appendChild(el('div', 'muted small pad', 'No subfolders'));
-    } catch (e) { list.innerHTML = ''; list.appendChild(el('div', 'note error', e.message)); }
+    } catch (e) {
+      list.innerHTML = '';
+      list.appendChild(el('div', 'note error', e.message));
+      // Typing the folder you are about to start is the normal way to begin a project,
+      // so a path that is not there yet is an offer, not a dead end.
+      const wanted = $('#fb-path').value.trim();
+      if (wanted) {
+        const make = el('button', 'btn btn-ghost fb-make', 'Create ' + wanted.split(/[\\/]/).filter(Boolean).pop());
+        make.type = 'button';
+        make.addEventListener('click', () => makeFolder(wanted));
+        list.appendChild(make);
+      }
+    }
   }
+  // `path` is created whole; with `name` it is a new folder inside the one being looked at.
+  async function makeFolder(p, name) {
+    try {
+      const r = await api('/browse/mkdir', { method: 'POST', body: JSON.stringify({ path: p, name }) });
+      await browseTo(r.path);
+      $('#fb-path').value = r.path; $('#fb-use').disabled = false;
+    } catch (e) { alert(e.message); }
+  }
+  $('#fb-new').addEventListener('click', () => {
+    const here = fbDir || $('#fb-path').value.trim();
+    if (!here) return alert('Open a folder first, then make one inside it.');
+    const name = prompt('Name for the new folder in\n' + here, 'new-project');
+    if (name && name.trim()) makeFolder(here, name.trim());
+  });
   $('#fb-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') browseTo($('#fb-path').value.trim()); });
   $('#fb-home').addEventListener('click', async () => { try { const d = await api('/browse'); browseTo(d.home); } catch {} });
   $('#fb-use').addEventListener('click', () => { const p = $('#fb-path').value.trim(); if (p) { pickFolder(p); fb.classList.add('hidden'); } });
@@ -741,7 +821,7 @@
     }));
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(s.archived ? 'Unarchive' : 'Archive', '', false, async () => { m.classList.add('hidden'); try { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'A' }));
-    const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session from this computer? This cannot be undone.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
+    const del = item('Delete', '', false, async () => { m.classList.add('hidden'); if (!confirm('Delete this session? It moves to the trash and can be put back from Deleted sessions.')) return; try { await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } catch (e) { alert(e.message); } }, { hint: 'D' });
     del.classList.add('danger'); m.appendChild(del);
   });
 
@@ -1391,11 +1471,12 @@
   // ---------- Preview: whatever this project's dev server is serving ----------
   // The page is proxied through our own origin, so the phone can see a server
   // that only listens on the PC's localhost, and hot reload keeps working.
-  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note');
-  let previewOpen = false, pvPort = 0, pvPorts = [];
+  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr');
+  let previewOpen = false, pvPort = 0, pvPath = '/', pvPorts = [], pvAll = false;
   const pvKey = () => 'cr.preview.' + (state.cwd || 'any');
-  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: $('#pv-path').value })); } catch {} }
+  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: pvPath })); } catch {} }
   function pvRecall() { try { return JSON.parse(localStorage.getItem(pvKey()) || '{}'); } catch { return {}; } }
+  const setAddr = (port, p) => { pvAddr.value = port ? 'localhost:' + port + (p || '/') : ''; };
 
   async function openPreview() {
     if (tasksOpen) closeTasks();
@@ -1405,43 +1486,87 @@
     // The frame cannot send our token, so the server hands out a cookie first.
     try { await api('/preview/grant'); } catch (e) { pvNote.textContent = e.message; }
     const saved = pvRecall();
-    if (saved.path) $('#pv-path').value = saved.path;
     await loadPorts();
-    const pick = saved.port && pvPorts.some((p) => p.port === saved.port) ? saved.port : (pvPorts.find((p) => p.port >= 3000 && p.port <= 9999) || pvPorts[0])?.port;
-    if (pick) usePort(pick); else { pvNote.textContent = 'Nothing is listening on this machine yet. Start the dev server and press refresh.'; pvNote.classList.remove('hidden'); }
+    // What was open here last time, if it is still up; otherwise the likeliest dev
+    // server. Never a guess: with nothing to show, it says so and waits.
+    const still = saved.port && pvPorts.some((x) => x.port === saved.port && x.serves);
+    const pick = still ? saved.port : (pvPorts.find((x) => x.dev) || pvPorts.find((x) => x.serves))?.port;
+    if (pick) go(pick, still && saved.path ? saved.path : '/');
+    else showNote('Nothing on this computer is serving a page yet. Start the dev server, then press reload.');
   }
+  function showNote(text) { pvNote.textContent = text; pvNote.classList.remove('hidden'); pvFrame.classList.add('hidden'); }
   function closePreview() { previewOpen = false; pvPanel.classList.add('hidden'); app.classList.remove('panel-open'); pvFrame.src = 'about:blank'; }
   $('#pv-close').addEventListener('click', closePreview);
 
   async function loadPorts() {
     try { const r = await api('/preview/ports'); pvPorts = r.ports || []; }
-    catch (e) { pvPorts = []; pvNote.textContent = e.message; }
+    catch (e) { pvPorts = []; showNote(e.message); }
   }
-  function usePort(port) {
-    pvPort = port;
-    const found = pvPorts.find((p) => p.port === port);
-    $('#pv-port-name').textContent = port + (found?.label ? ' · ' + found.label : '');
-    show();
-  }
-  function show() {
-    if (!pvPort) return;
-    let p = $('#pv-path').value.trim() || '/';
-    if (!p.startsWith('/')) p = '/' + p;
+  function go(port, p) {
+    pvPort = port; pvPath = p && p.startsWith('/') ? p : '/' + (p || '');
     pvNote.classList.add('hidden'); pvFrame.classList.remove('hidden');
-    pvFrame.src = '/preview/' + pvPort + p;
-    pvRemember();
+    pvFrame.src = '/preview/' + pvPort + pvPath;
+    setAddr(pvPort, pvPath); pvRemember();
   }
-  $('#pv-reload').addEventListener('click', () => { loadPorts(); show(); });
-  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + ($('#pv-path').value || '/'), '_blank'); });
-  $('#pv-path').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); show(); } });
-  pvFrame.addEventListener('load', () => { pvNote.classList.add('hidden'); });
-  menuFor('#pv-port', '#pv-port-menu', (m) => {
+  // What someone types in an address bar: a port, a localhost address, a bare path, or
+  // a full URL. Anything that is not this machine is refused rather than fetched —
+  // the proxy is a window onto what is already running here, not a way out to the web.
+  function parseAddr(text) {
+    let s = String(text || '').trim();
+    if (!s) return null;
+    if (/^\d{1,5}$/.test(s)) return { port: Number(s), path: '/' };
+    if (s.startsWith('/')) return { port: pvPort, path: s };
+    const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
+    if (scheme && !/^https?$/i.test(scheme[1])) return null;
+    s = s.replace(/^https?:\/\//i, '');
+    let m = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::(\d+))?(\/.*)?$/i.exec(s);
+    if (m) return { port: Number(m[1] || pvPort), path: m[2] || '/' };
+    m = /^(\d{1,5})(\/.*)$/.exec(s); // "5173/settings"
+    if (m) return { port: Number(m[1]), path: m[2] };
+    return null;
+  }
+  function submitAddr() {
+    const a = parseAddr(pvAddr.value);
+    if (!a || !a.port) { showNote('Only a server on this computer can be shown here. Try a port, like 5173, or localhost:5173/settings.'); return; }
+    go(a.port, a.path);
+  }
+  pvAddr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitAddr(); } if (e.key === 'Escape') setAddr(pvPort, pvPath); });
+  pvAddr.addEventListener('focus', () => pvAddr.select());
+  // The frame is served from our own origin, so its history is ours to drive and its
+  // address is ours to read: clicking a link inside the page updates the bar.
+  const inFrame = (fn) => { try { return fn(pvFrame.contentWindow); } catch { return undefined; } };
+  $('#pv-back').addEventListener('click', () => inFrame((w) => w.history.back()));
+  $('#pv-fwd').addEventListener('click', () => inFrame((w) => w.history.forward()));
+  $('#pv-home').addEventListener('click', () => { if (pvPort) go(pvPort, '/'); });
+  $('#pv-reload').addEventListener('click', async () => {
+    await loadPorts();
+    if (!inFrame((w) => { w.location.reload(); return true; }) && pvPort) go(pvPort, pvPath);
+  });
+  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + pvPath, '_blank', 'noopener'); });
+  pvFrame.addEventListener('load', () => {
+    pvNote.classList.add('hidden');
+    const here = inFrame((w) => w.location.pathname + w.location.search + w.location.hash);
+    const m = here && /^\/preview\/(\d+)(\/[\s\S]*)?$/.exec(here);
+    if (m) { pvPort = Number(m[1]); pvPath = m[2] || '/'; setAddr(pvPort, pvPath); pvRemember(); }
+  });
+  menuFor('#pv-servers', '#pv-port-menu', (m) => {
     m.innerHTML = '';
-    if (!pvPorts.length) { m.appendChild(el('div', 'muted small pad', 'Nothing is listening.')); return; }
-    m.appendChild(el('div', 'menu-title', 'Listening on this machine'));
-    for (const p of pvPorts) {
-      m.appendChild(item(String(p.port), p.label || p.process || '', p.port === pvPort, () => { m.classList.add('hidden'); usePort(p.port); }));
+    const shown = pvAll ? pvPorts : pvPorts.filter((p) => p.serves);
+    if (!shown.length) { m.appendChild(el('div', 'muted small pad', pvAll ? 'Nothing is listening.' : 'Nothing is serving a page.')); }
+    let group = '';
+    for (const p of shown) {
+      const kind = p.dev ? 'Servers for your projects' : p.serves ? 'Other pages on this computer' : 'Listening, but not a web server';
+      if (kind !== group) { group = kind; m.appendChild(el('div', 'menu-title', kind)); }
+      // The page's own title says far more than the name of the process behind the socket.
+      const desc = [p.title, p.label].filter(Boolean).join(' · ') || p.process || '';
+      m.appendChild(item('localhost:' + p.port, desc, p.port === pvPort, () => { m.classList.add('hidden'); go(p.port, '/'); }));
     }
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item(pvAll ? 'Only what serves a page' : 'Show everything listening', '', false, () => { pvAll = !pvAll; $('#pv-servers').click(); $('#pv-servers').click(); }));
+    // Everything here is served under /preview/<port>/, which a few finished apps read
+    // as part of their own route and answer with their own "not found". Those still
+    // work the ordinary way, on this computer.
+    if (pvPort) m.appendChild(item('Open localhost:' + pvPort + ' outside the app', 'For a page whose router does not expect the preview path', false, () => { m.classList.add('hidden'); window.open('http://localhost:' + pvPort + pvPath, '_blank', 'noopener'); }));
   });
 
   // ---------- Files: what is in the session's folder, read only ----------
@@ -1523,6 +1648,7 @@
     let d;
     try { d = await api('/worktrees?cwd=' + encodeURIComponent(cwd)); } catch (e) { d = { git: false, error: e.message }; }
     ctx.innerHTML = '';
+    ctx.classList.remove('hidden'); // ditto: opened from a menu item, whose click closes menus
     ctx.appendChild(el('div', 'menu-title', 'Worktrees'));
     if (!d.git) { ctx.appendChild(el('div', 'muted small pad', d.error || 'Not a git repository.')); return; }
     for (const w of d.worktrees) {
@@ -2040,6 +2166,7 @@
     for (const [id, name] of GROUPS.map((g) => [g[0], g[1]])) out.push({ name: 'Group sessions by ' + name.toLowerCase(), group: 'View', on: state.view.group === id, run: () => setView({ group: id }) });
     for (const [id, name] of SORTS.map((g) => [g[0], g[1]])) out.push({ name: 'Sort sessions by ' + name.toLowerCase(), group: 'View', on: state.view.sort === id, run: () => setView({ sort: id }) });
     out.push({ name: (state.view.archived ? 'Hide' : 'Show') + ' archived sessions', group: 'View', run: () => setView({ archived: !state.view.archived }) });
+    out.push({ name: 'Deleted sessions', group: 'View', run: () => openTrash() });
     if (hasSession()) out.push(
       { name: 'Changes', group: 'Session', run: () => (changesOpen ? closeChanges() : openChanges()) },
       { name: 'Files', group: 'Session', run: () => (filesOpen ? closeFiles() : openFiles()) },
@@ -2051,7 +2178,7 @@
       { name: 'Fork session', hint: 'F', group: 'Session', run: async () => { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } },
       { name: s.pinned ? 'Unpin session' : 'Pin session', hint: 'P', group: 'Session', run: () => togglePin(state.current, !s.pinned) },
       { name: s.archived ? 'Unarchive session' : 'Archive session', hint: 'A', group: 'Session', run: async () => { await api(`/sessions/${state.current}/archive`, { method: 'POST', body: JSON.stringify({ archived: !s.archived }) }); await loadSessions(); if (!s.archived) location.hash = '#/'; } },
-      { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session from this computer? This cannot be undone.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
+      { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session? It moves to the trash and can be put back from Deleted sessions.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
     );
     if (prData?.has) out.push({ name: 'Open pull request #' + prData.number + ' on GitHub', group: 'Session', run: () => window.open(prData.url, '_blank', 'noopener') });
     for (const x of MODELS) out.push({ name: 'Model: ' + x.name, group: 'Turn', on: state.model === x.id, run: () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); pushControls({ model: x.id }); } });

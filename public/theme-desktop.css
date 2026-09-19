@@ -495,9 +495,7 @@ button.sb-diff:hover { background: var(--bg-3); }
 /* ---------- v27: the preview panel ---------- */
 .preview-panel { width: 520px; }
 .preview-panel .tp-head { gap: 6px; }
-.pv-path { flex: 1; min-width: 60px; font-family: var(--mono); font-size: 12px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); color: var(--ink); direction: ltr; }
-.pv-path:focus { outline: none; border-color: var(--line-2); }
-#pv-port.chip { flex: none; }
+/* the address bar and its buttons live in v33, below */
 .pv-frame { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
 #pv-note:empty { display: none; }
 @media (max-width: 860px) { .preview-panel { width: auto; } .preview-panel .tp-head { flex-wrap: wrap; } }
@@ -603,3 +601,21 @@ button.sb-diff:hover { background: var(--bg-3); }
   .in-app:not(.framed-by-us) #live-pill { max-width: none; padding: 0 12px; }
   .in-app:not(.framed-by-us) #live-pill #live-text { display: inline; }
 }
+
+/* ---------- v33: the preview panel is a browser ---------- */
+/* Back, forward, reload, home and an address bar on their own row: the port picker
+   was a menu that opened upward from the very top of the window, so it was drawn
+   off-screen and never seen. */
+.pv-bar { display: flex; align-items: center; gap: 2px; padding: 0 10px 8px; }
+.pv-addr-wrap { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; margin-inline-start: 4px; }
+.pv-addr { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 6px 30px 6px 10px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--bg-2); color: var(--ink); outline: none; direction: ltr; }
+.pv-addr:focus { border-color: var(--accent); background: var(--bg); }
+.pv-servers { position: absolute; inset-inline-end: 4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-3); }
+.pv-servers:hover { background: var(--bg-3); color: var(--ink); }
+.pv-menu { min-width: 300px; max-width: min(420px, 90vw); max-height: 60vh; }
+.pv-menu .menu-item .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-bar .icon-btn.small { flex: none; }
+@media (max-width: 860px) { .pv-bar { padding-bottom: 6px; } .pv-menu { min-width: 0; } }
+/* the footer already lays itself out; New folder just needs the hint pushed along */
+.fb-foot .muted { margin-inline-start: auto; }
+.fb-make { display: block; margin: 10px auto 4px; }

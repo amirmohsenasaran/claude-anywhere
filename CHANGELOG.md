@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Deleting a session puts it aside instead of destroying it.** The transcript
+  moves to a trash folder and *Deleted sessions* in the funnel menu puts it back;
+  only emptying the trash removes anything. The confirmation now names what is
+  about to go and which projects it spans, and a Shift+click range stays inside
+  the project it started in rather than sweeping across all of them.
+- **Make a folder from the folder picker.** Typing a path that is not there yet
+  offers to create it, and a *New folder* button makes one inside the folder you
+  are looking at, so starting a new project no longer means creating its folder
+  somewhere else first.
 - **Several sessions at once.** Shift+click picks a range in the sidebar,
   Ctrl/Cmd+click adds or removes one, and on the phone "Select" in the
   long-press menu turns taps into picks. A bar above the list pins, archives or
@@ -60,6 +69,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The preview panel is a browser now, and its list is useful.** Its server
+  picker was a menu that opened upward from the very top of the window, so it
+  was drawn off-screen and could not be read at all; and it listed every
+  listening port on the machine, which on Windows is thirty of them, so it
+  opened on a GPU monitor's web interface instead of the project. Each port is
+  now asked once whether it actually serves a page, and the ones that do are
+  grouped into the servers behind your projects and the other pages on the
+  machine, each labelled with the page's own title. In place of the port chip
+  and path box there is a browser bar: back, forward, reload, home and an
+  address you can type into.
+- **Links inside a previewed page stay in the preview.** A page served at
+  `/preview/5173/` that linked to `/about` navigated the frame to this app's
+  own `/about`, and the hop after that had nothing left to go on, so the panel
+  filled with the app itself. Pages are now rewritten as they pass through:
+  links, forms, assets, `history.pushState` and the hot-reload socket all keep
+  the preview in front of them. A page that asked for no referer, which used to
+  come back blank because its scripts were answered with this app's HTML, works
+  too.
 - **Opening two sessions in a row could show one under the other's name.**
   Opening a session fetches and renders its whole transcript, which takes
   seconds for a big one; opening another before that finished let the slow one

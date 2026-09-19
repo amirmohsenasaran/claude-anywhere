@@ -17,6 +17,18 @@
   somewhere else. Opening it clears the dot, and the unread mark survives a
   restart (`data/attention.json`).
 
+## Deleting, and undoing it
+
+Delete moves a session’s transcript to a trash folder inside the app’s data
+directory and takes it out of the list. **Deleted sessions**, in the funnel menu
+or the command palette, puts one back. Only *Empty the trash* removes anything
+for good.
+
+The confirmation names the sessions it is about to take and says how many
+projects they span, and a Shift+click range stays inside the group it started
+in, because the quiet way to delete far more than you meant is a range that
+crossed a project boundary without saying so.
+
 ## Reading and continuing
 
 - Open a session to read it: text, thinking, tool calls with input and result,
@@ -75,16 +87,30 @@ added. It refreshes when a turn ends.
 serving, inside the app — and therefore on your phone, which cannot reach the
 PC's localhost by itself.
 
-- The port list is every local server that is listening, with the process
-  behind it, so you pick "5173 · Node" rather than remembering a number.
-- Everything is proxied through the app's own origin, so relative URLs,
-  absolute ones and the hot-reload socket all keep working, and a page that
-  sets `X-Frame-Options` still appears.
-- The path box takes any route (`/settings`, `/api/health`), and the arrow
-  opens the same page in a full tab.
+It behaves like a browser: back, forward, reload, home, and an address bar you
+can type into. `5173`, `localhost:5173`, `localhost:5173/settings` and a bare
+`/deep/page` all work, and the bar follows along as you click through the page.
+
+- **The list only offers things that serve a page.** A listening port is not a
+  web server — a normal Windows machine has thirty of them, and offering that
+  list meant the panel opened on a GPU monitor. Each candidate is asked once
+  whether it speaks HTTP, and what comes back is grouped into the servers behind
+  your projects and the other pages on the machine, each labelled with the
+  page's own title: "localhost:5173 — Vite + React". Everything else is behind
+  *Show everything listening*.
+- Everything is proxied through the app's own origin, so a page that sets
+  `X-Frame-Options` still appears. Pages are rewritten on the way through so
+  that links, forms, assets, `history.pushState` and the hot-reload socket all
+  stay inside the preview instead of landing back on this app.
+- The arrow at the top right opens the same page in a full tab.
 - Localhost only, by construction: the proxy takes a port, and the host is
-  always `127.0.0.1`. It is a window onto what is already running on your
+  always `127.0.0.1`. Type anything that is not this machine and it says so
+  rather than fetching it. It is a window onto what is already running on your
   machine, never a way to browse the internet through it.
+- **One limit worth knowing.** Pages live under `/preview/<port>/`, and a
+  finished single-page app whose router reads the path for itself can answer
+  with its own "page not found". The menu offers to open that server directly
+  instead, which works on the computer itself.
 
 ## Watching your other windows
 
@@ -96,6 +122,13 @@ carry a dot.
 
 > Do not *continue* a session from here while it is mid-turn somewhere else —
 > two processes would append to the same transcript. Reading is always safe.
+
+## Starting a project in a new folder
+
+The folder chip on a new session opens a picker. Typing a path that does not
+exist yet offers to create it, and **New folder** makes one inside the folder
+you are looking at, so the folder for a new project can be made here rather than
+somewhere else first.
 
 ## Accounts
 
