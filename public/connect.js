@@ -7,6 +7,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
 
   let state = { active: 'local', items: [] };
+  let defaultPassword = '';
   let editing = null; // id being edited, or null when adding
 
   // A command that fails rejects with the shell's own sentence; an Error only shows up
@@ -23,6 +24,9 @@
 
   async function load() {
     state = await invoke('connections_get');
+    // Older shells do not have this command; an empty box is the old behaviour.
+    try { defaultPassword = (await invoke('default_password')) || ''; } catch {}
+    if (!editing && !$('#f-pass').value) $('#f-pass').value = defaultPassword;
     paint();
   }
 
@@ -79,11 +83,14 @@
   }
   function cancelEdit() {
     editing = null;
-    $('#f-url').value = ''; $('#f-name').value = ''; $('#f-pass').value = '';
+    $('#f-url').value = ''; $('#f-name').value = '';
+    // One password, set once: a new computer starts with this one's, because that is
+    // what people do anyway and typing it twice invents a second password by accident.
+    $('#f-pass').value = defaultPassword;
     $('#add-title').textContent = 'Add a computer';
     $('#save').textContent = 'Add';
     $('#cancel').hidden = true;
-    note('');
+    note(defaultPassword ? 'The password box holds this computer’s app password. Change it if that computer uses another one.' : '');
   }
   $('#cancel').addEventListener('click', cancelEdit);
 

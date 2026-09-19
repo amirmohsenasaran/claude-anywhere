@@ -7,6 +7,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **"Which computer?" — the question the window now answers before "which
+  account?".** The sidebar names the machine that is answering instead of calling
+  it *This computer* whatever it is, a chip appears beside the session title when
+  that machine is not this one, and clicking either opens a list of every computer
+  you have added: what each one is called, its host name, which Claude account it
+  is signed in with, how many turns are running on it, and **Open** to point the
+  window at it. A computer that is switched off says so rather than being missing.
+  The account dialog is about one named computer now — *Claude Code login on
+  DESKTOP-JAG2O5O* — with *Another computer…* as the way out, and the login screen
+  offers the same list, since "wrong password for the machine you just chose" used
+  to be a dead end with only the tray icon as an exit.
+- **One password, set once.** Adding a computer starts with this one's app
+  password already filled in, so the usual case is a name and an address.
+
+### Fixed
+
+- **A computer whose password is still `change-me` can be reached at all.** The
+  server treats that word as "no password", but the shell hashed it literally, so
+  every request to such a machine came back as *the password does not match* — and
+  in the new list, as *Not answering*.
+- **`connections.json` with a byte-order mark no longer empties your list.** Open
+  it in Notepad, save, and serde refused the file: every computer silently
+  disappeared.
+
 ## [0.5.0] — 2026-09-19
 
 ### Added

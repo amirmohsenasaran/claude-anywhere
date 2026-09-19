@@ -95,7 +95,10 @@ fn connections_path(app: &AppHandle) -> PathBuf {
 fn load_connections(app: &AppHandle) -> Connections {
     fs::read_to_string(connections_path(app))
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        // Edited by hand in Notepad (or written by PowerShell) and the file starts with
+        // a byte-order mark, which serde_json refuses — the list then reads as empty and
+        // every computer quietly disappears.
+        .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
         .unwrap_or_default()
 }
 
@@ -109,8 +112,15 @@ fn save_connections(app: &AppHandle, c: &Connections) {
     }
 }
 
-// Same derivation as server.mjs: no password means the fixed word "open".
+// Same derivation as server.mjs, including its rule that the sample password means no
+// password at all: a computer left on `change-me` answered every request with "the
+// password does not match", because only the local path knew about that word.
 fn token_for(password: &str) -> String {
+    let password = if password.trim() == "change-me" {
+        ""
+    } else {
+        password.trim()
+    };
     hex::encode(Sha256::digest(format!(
         "claude-anywhere:{}",
         if password.is_empty() {
@@ -215,6 +225,167 @@ fn connection_test(url: String, password: String) -> Result<String, String> {
     ))
 }
 
+/// Every computer this device knows, and what each one is doing right now — so the
+/// window can ask "which computer?" before it asks "which account?".
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputerStatus {
+    id: String,
+    name: String,
+    url: String,
+    active: bool,
+    local: bool,
+    online: bool,
+    host: String,
+    account: String,
+    plan: String,
+    auth: String,
+    live_runs: u64,
+    error: String,
+}
+
+fn probe(
+    id: String,
+    name: String,
+    url: String,
+    password: Option<String>,
+    active: bool,
+    local: bool,
+) -> ComputerStatus {
+    let mut s = ComputerStatus {
+        id,
+        name,
+        url: url.trim_end_matches('/').to_string(),
+        active,
+        local,
+        online: false,
+        host: String::new(),
+        account: String::new(),
+        plan: String::new(),
+        auth: String::new(),
+        live_runs: 0,
+        error: String::new(),
+    };
+    // No local server yet: say so rather than starting one. Listing computers must not
+    // spawn Node on a Mac that is only ever used as a window onto the PC.
+    let Some(password) = password else {
+        s.error = "Not started yet".into();
+        return s;
+    };
+    let token = if local {
+        password
+    } else {
+        token_for(&password)
+    };
+    let get = |path: &str| {
+        ureq::get(&format!("{}{path}", s.url))
+            .set("Authorization", &format!("Bearer {token}"))
+            .timeout(Duration::from_secs(4))
+            .call()
+            .ok()
+            .and_then(|r| r.into_json::<serde_json::Value>().ok())
+    };
+    let Some(me) = get("/api/me") else {
+        s.error = "Not answering".into();
+        return s;
+    };
+    s.online = true;
+    s.host = me["host"].as_str().unwrap_or_default().to_string();
+    s.auth = me["active"].as_str().unwrap_or_default().to_string();
+    let acc = &me["account"];
+    s.account = acc["email"]
+        .as_str()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| match acc["auth"].as_str() {
+            Some("oauth_token") => "Token account".into(),
+            _ if acc["loggedIn"] == serde_json::Value::Bool(false) => "Not signed in".into(),
+            _ => "Signed in".into(),
+        });
+    s.plan = acc["plan"].as_str().unwrap_or_default().to_string();
+    s.live_runs = get("/api/runs")
+        .and_then(|v| v.as_array().map(|a| a.len() as u64))
+        .unwrap_or(0);
+    s
+}
+
+#[tauri::command]
+fn computers(app: AppHandle) -> Vec<ComputerStatus> {
+    let c = load_connections(&app);
+    let local = app
+        .try_state::<ServerState>()
+        .map(|s| (s.port, s.token.clone()));
+    let mut jobs = vec![];
+    let (local_url, local_token) = match local {
+        Some((port, token)) => (format!("http://127.0.0.1:{port}"), Some(token)),
+        None => (String::from("http://127.0.0.1"), None),
+    };
+    jobs.push((
+        "local".to_string(),
+        "This computer".to_string(),
+        local_url,
+        local_token,
+        c.active == "local",
+        true,
+    ));
+    for item in &c.items {
+        jobs.push((
+            item.id.clone(),
+            item.name.clone(),
+            item.url.clone(),
+            Some(item.password.clone()),
+            c.active == item.id,
+            false,
+        ));
+    }
+    // One thread each: a computer that is switched off must not hold up the list.
+    let handles: Vec<_> = jobs
+        .into_iter()
+        .map(|(id, name, url, pw, active, local)| {
+            thread::spawn(move || probe(id, name, url, pw, active, local))
+        })
+        .collect();
+    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+}
+
+/// Which computer the window is showing, without asking anything over the network —
+/// the chat page wants this on every paint, and the answer is two fields.
+#[derive(serde::Serialize)]
+struct ActiveComputer {
+    id: String,
+    name: String,
+    remote: bool,
+}
+
+#[tauri::command]
+fn active_computer(app: AppHandle) -> ActiveComputer {
+    let c = load_connections(&app);
+    let item = c.items.iter().find(|x| x.id == c.active);
+    ActiveComputer {
+        remote: c.active != "local",
+        name: match (&c.active[..], item) {
+            ("local", _) => "This computer".into(),
+            (_, Some(i)) => i.name.clone(),
+            _ => "Another computer".into(),
+        },
+        id: c.active,
+    }
+}
+
+/// The app password of this computer, so adding another one can reuse it instead of
+/// asking for a second password nobody wanted to invent.
+#[tauri::command]
+fn default_password(app: AppHandle) -> String {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return String::new();
+    };
+    let (password, _) = read_env(&dir.join(".env"));
+    if password == "change-me" {
+        String::new()
+    } else {
+        password
+    }
+}
+
 /// Show the built-in page for choosing a computer.
 #[tauri::command]
 fn open_picker(app: AppHandle) {
@@ -249,6 +420,9 @@ fn main() {
             connections_save,
             connection_use,
             connection_test,
+            computers,
+            active_computer,
+            default_password,
             open_picker
         ])
         .setup(|app| {
