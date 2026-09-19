@@ -1,0 +1,16 @@
+"$schema" = "schemas/schema.json"
+
+# The chat page is served over http — a remote origin, even when the server is this
+# computer's — so by default it may not call the shell at all: `connections_get not
+# allowed. Plugin not found`. These four are what the window needs to answer "which
+# computer am I looking at, and what else is there?".
+#
+# Deliberately not in here: connections_get, connections_save, connection_test and
+# default_password. Those carry the app passwords of every computer you have added,
+# and a page has no business reading them — the picker that edits them is a page the
+# app carries itself, which is local and needs no permission.
+
+[[permission]]
+identifier = "allow-computer-switching"
+description = "List your computers with what each is doing, see which one this window is showing, switch to another, and open the page that edits the list."
+commands.allow = ["computers", "active_computer", "connection_use", "open_picker"]

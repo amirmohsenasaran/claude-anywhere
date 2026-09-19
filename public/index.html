@@ -29,6 +29,9 @@
       <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
       <button type="submit" class="btn btn-primary" id="login-submit">Continue</button>
       <p id="login-error" class="login-error" hidden></p>
+      <!-- A wrong password for another computer lands here, and the way back must not be
+           the tray icon nobody thinks to look at. Shown only inside the app. -->
+      <button type="button" id="login-computers" class="link-btn small hidden">Show another computer…</button>
     </form>
   </section>
 
@@ -88,7 +91,7 @@
         <div class="sidebar-user" id="sidebar-user" title="">
           <div id="sidebar-name" class="sidebar-user-name">…</div>
           <div id="sidebar-account" class="sidebar-user-plan">…</div>
-          <div id="sidebar-host" class="sidebar-user-plan">…</div>
+          <button id="sidebar-host" class="sidebar-user-plan computer-line" type="button" title="Which computer this window is showing">…</button>
         </div>
         <button id="switch-account" class="link-btn small" title="Choose which Claude account runs this app">Switch</button>
       </div>
@@ -100,6 +103,8 @@
           <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 4h14M3 10h14M3 16h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
         </button>
         <div class="topbar-title">
+          <!-- Only when this window is showing another computer: which one, never guessed at. -->
+          <button id="topbar-computer" class="chat-meta computer-chip hidden" type="button" title="Switch computer"></button>
           <div id="chat-title" class="chat-title">New session</div>
           <div id="chat-meta" class="chat-meta"></div>
         </div>
@@ -369,10 +374,10 @@
   <div id="account-modal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head"><span class="spark">✱</span><span>Which Claude account?</span><button id="account-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
-      <p class="modal-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
+      <p class="modal-hint" id="acct-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
       <div class="account-list">
         <button class="account-card" data-which="local">
-          <div class="account-title">This computer's login <span class="tag">Local</span></div>
+          <div class="account-title"><span id="acct-local-title">This computer's login</span> <span class="tag">Local</span></div>
           <div class="account-desc" id="acct-local-desc">…</div>
           <div class="account-check">✓</div>
         </button>
@@ -387,9 +392,24 @@
           <input id="acct-token-input" type="password" placeholder="Paste a token from claude setup-token, or a Console API key" autocomplete="off" spellcheck="false" />
           <button id="acct-token-add" class="btn btn-primary">Add</button>
         </div>
-        <div class="token-actions"><button id="acct-token-remove" class="link-btn small hidden">Remove token</button></div>
+        <div class="token-actions">
+          <button id="acct-token-remove" class="link-btn small hidden">Remove token</button>
+          <!-- These are one computer's accounts. The other computers are a click away. -->
+          <button id="acct-computers" class="link-btn small">Another computer…</button>
+        </div>
         <p id="acct-error" class="login-error" hidden></p>
       </div>
+    </div>
+  </div>
+
+  <!-- Which computer this window is showing. Its sessions, files and account are the ones you see. -->
+  <div id="computers-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span class="spark">✱</span><span>Which computer?</span><button id="computers-refresh" class="link-btn small" type="button">Refresh</button><button id="computers-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+      <p class="modal-hint">One computer answers this window at a time — its sessions, its files, its Claude account. Everything stays on the machine it belongs to.</p>
+      <div id="computers-list" class="ct-list"><div class="muted small pad">Looking…</div></div>
+      <div class="token-actions"><button id="computers-edit" class="link-btn small">Add or edit computers…</button></div>
+      <p id="computers-error" class="login-error" hidden></p>
     </div>
   </div>
 

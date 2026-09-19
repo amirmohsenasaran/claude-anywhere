@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "computers",
+  "description": "Which computer this window is showing, and switching to another one. The page may be served by any of your computers, not only this one, so the origins are not just localhost - and nothing here reveals a password.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://*:*", "https://*:*", "http://*", "https://*"]
+  },
+  "permissions": ["allow-computer-switching"]
+}

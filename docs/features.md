@@ -189,9 +189,32 @@ exist yet offers to create it, and **New folder** makes one inside the folder
 you are looking at, so the folder for a new project can be made here rather than
 somewhere else first.
 
+## Which computer
+
+One computer answers the window at a time: its sessions, its files, its previews,
+its Claude account. So the window says which one — the bottom of the sidebar names
+the machine that is answering (`Work PC · BIG-PC`), and a chip appears beside the
+session title whenever that machine is not this one. A project called
+`claude-remote` exists on both of your computers; the name above the list is what
+tells them apart.
+
+Clicking either opens **Which computer?**: every computer you have added, with its
+host name, the Claude account it is signed in with, how many turns are running on
+it, and **Open** to point the window there. One that is switched off says *Not
+answering* instead of vanishing. *Add or edit computers…* is the picker that holds
+the list, and adding one starts with this computer's app password already filled
+in — one password, typed once.
+
+The list belongs to the device you are sitting at, not to any server, so it lives
+in the app. A browser talks to exactly one computer, the one that served the page,
+and says so. The page may ask the shell which computers exist and to switch to one;
+it may not read their passwords (`src-tauri/permissions/computers.toml`).
+
 ## Accounts
 
-Two accounts, switchable at any time from the bottom of the sidebar:
+Two accounts **on the computer that is answering**, switchable at any time from the
+bottom of the sidebar — the dialog names it, because from a Mac driving the PC
+"this computer" is the PC:
 
 - **This computer's login** — whatever `claude login` signed into.
 - **A token** — from `claude setup-token`, or a Console API key, pasted into

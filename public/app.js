@@ -90,6 +90,9 @@
     $('#app').classList.add('hidden');
     $('#login').classList.remove('hidden');
     const e = $('#login-error'); e.hidden = !err; e.textContent = err || '';
+    // Asked for a password by a computer whose password you got wrong: the list of the
+    // others is the only useful thing on this screen, so it is on it.
+    $('#login-computers').classList.toggle('hidden', !window.__TAURI__?.core?.invoke);
     $('#login-password').focus();
   }
   function logout() { try { localStorage.removeItem('cr.token'); } catch {} state.token = null; showLogin(); }
@@ -120,7 +123,12 @@
   }
   function renderAccounts() {
     if (!accounts) return;
-    $('#acct-local-desc').textContent = describe(accounts.local) || 'No Claude Code login found on this computer';
+    // These are one computer's accounts — the one answering this window. Saying "this
+    // computer" from a Mac that is driving the PC named the wrong machine.
+    const on = state.host ? ' on ' + state.host : '';
+    $('#acct-local-title').textContent = 'Claude Code login' + on;
+    $('#acct-hint').textContent = 'Everything this app sends to Claude is billed to the account you pick here. These are the accounts of ' + (state.host || 'the computer this window is showing') + '; its sessions and code stay there.';
+    $('#acct-local-desc').textContent = describe(accounts.local) || 'No Claude Code login found on ' + (state.host || 'that computer');
     $('#acct-token-desc').textContent = accounts.token ? describe(accounts.token) + ' · paste a new token below to replace it' : 'Not added yet';
     for (const card of acctModal.querySelectorAll('.account-card')) {
       const w = card.dataset.which;
@@ -147,6 +155,86 @@
     try { await api('/accounts/token', { method: 'DELETE' }); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
   });
+  // ---------- which computer this window is showing ----------
+  // The list of your computers belongs to this device, not to any server, so it comes
+  // from the shell. A browser is by definition looking at exactly one: the one that
+  // served it.
+  const bridge = () => window.__TAURI__?.core?.invoke;
+  const cmptModal = $('#computers-modal');
+  let activeComputer = null; // { id, name, remote } once the shell has been asked
+
+  // Two fields and no network: this runs on every repaint. The list of computers is
+  // the shell's, but the page is served over http and may not read the part of it
+  // that holds passwords — see src-tauri/permissions/computers.toml.
+  async function whichComputer() {
+    const invoke = bridge();
+    if (!invoke) return null;
+    try { return await invoke('active_computer'); } catch { return null; }
+  }
+
+  function computerRow(c) {
+    const r = el('div', 'ct-row');
+    const info = el('div', 'ct-info');
+    const name = el('div', 'ct-name');
+    name.appendChild(document.createTextNode(c.name || c.url || 'Computer'));
+    if (c.active) name.appendChild(el('span', 'tag', 'Showing'));
+    if (c.local) name.appendChild(el('span', 'tag', 'Here'));
+    info.appendChild(name);
+    const bits = c.online === false
+      ? [c.error || 'Not answering', c.url]
+      : [c.host !== c.name && c.host, c.account, c.plan, c.liveRuns ? c.liveRuns + (c.liveRuns === 1 ? ' turn running' : ' turns running') : '', !c.local && c.url];
+    info.appendChild(el('div', 'ct-desc', bits.filter(Boolean).join(' · ') || (c.online === null ? '' : 'Ready')));
+    r.appendChild(info);
+    const btn = el('button', 'btn btn-ghost', c.active ? 'Reload' : 'Open');
+    btn.type = 'button';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'Opening…';
+      // The window navigates to that computer; this page is replaced by its own.
+      try { await bridge()('connection_use', { id: c.id }); }
+      catch (e) { btn.disabled = false; btn.textContent = 'Open'; $('#computers-error').hidden = false; $('#computers-error').textContent = String(e?.message || e); }
+    });
+    r.appendChild(btn);
+    return r;
+  }
+
+  async function openComputers() {
+    cmptModal.classList.remove('hidden');
+    $('#computers-error').hidden = true;
+    const list = $('#computers-list');
+    const invoke = bridge();
+    if (!invoke) {
+      list.innerHTML = '';
+      list.appendChild(computerRow({ id: 'local', name: state.host || 'This computer', active: true, host: state.host, account: $('#sidebar-account').textContent, online: true }));
+      list.appendChild(el('div', 'muted small pad', 'A browser talks to one computer: the one that served this page. The desktop app is what keeps a list of them and switches between them.'));
+      $('#computers-edit').classList.add('hidden');
+      return;
+    }
+    $('#computers-edit').classList.remove('hidden');
+    list.innerHTML = ''; list.appendChild(el('div', 'muted small pad', 'Looking…'));
+    let items = [];
+    try {
+      items = await invoke('computers');
+    } catch (e) {
+      // A shell built before this command says "not allowed. Plugin not found".
+      $('#computers-error').hidden = false;
+      $('#computers-error').textContent = /not allowed|not found/i.test(String(e?.message || e))
+        ? 'This app was built before it could list your computers. Rebuild it (Connectors & plugins → App) and they appear here.'
+        : String(e?.message || e);
+    }
+    list.innerHTML = '';
+    items.forEach((c) => list.appendChild(computerRow(c)));
+    if (items.length === 1) list.appendChild(el('div', 'muted small pad', 'No other computers yet. Add one and this window can show it instead.'));
+  }
+
+  $('#sidebar-host').addEventListener('click', (e) => { e.stopPropagation(); openComputers(); });
+  $('#login-computers').addEventListener('click', openComputers);
+  $('#topbar-computer').addEventListener('click', openComputers);
+  $('#acct-computers').addEventListener('click', () => { acctModal.classList.add('hidden'); openComputers(); });
+  $('#computers-refresh').addEventListener('click', openComputers);
+  $('#computers-close').addEventListener('click', () => cmptModal.classList.add('hidden'));
+  cmptModal.addEventListener('click', (e) => { if (e.target === cmptModal) cmptModal.classList.add('hidden'); });
+  $('#computers-edit').addEventListener('click', () => { const invoke = bridge(); if (invoke) invoke('open_picker').catch(() => {}); });
+
   $('#account-close').addEventListener('click', () => { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); });
   acctModal.addEventListener('click', (e) => { if (e.target === acctModal) { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); } });
   $('#switch-account').addEventListener('click', openAccounts);
@@ -160,7 +248,13 @@
     $('#sidebar-account').innerHTML = '';
     $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'oauth_token' ? 'Token account' : acc.loggedIn === false ? 'Not signed in' : 'Signed in')));
     if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
-    $('#sidebar-host').textContent = (me.active === 'token' ? 'Token' : 'This computer') + ' · ' + me.host;
+    // Which machine is answering, said plainly: "This computer" only when it is.
+    activeComputer = await whichComputer();
+    const named = activeComputer?.remote ? activeComputer.name + ' · ' + me.host : activeComputer ? 'This computer · ' + me.host : me.host;
+    $('#sidebar-host').textContent = named;
+    const chip = $('#topbar-computer');
+    chip.classList.toggle('hidden', !activeComputer?.remote);
+    chip.textContent = activeComputer?.remote ? activeComputer.name : '';
     $('#sidebar-user').title = 'Click to switch account\n' + [acc.name, acc.email, acc.org, acc.plan && 'Plan: ' + acc.plan, 'Auth: ' + (acc.auth || '?'), 'Source: ' + (acc.source || '?'), acc.projectsDir && 'Sessions: ' + acc.projectsDir].filter(Boolean).join('\n');
     $('#sidebar-avatar').textContent = (me.userName || 'U')[0].toUpperCase(); $('#foot-host').textContent = me.host;
     return me;
@@ -2446,11 +2540,13 @@
       { name: 'Delete session', group: 'Session', run: async () => { if (!confirm('Delete this session? It moves to the trash and can be put back from Deleted sessions.')) return; await api(`/sessions/${state.current}`, { method: 'DELETE' }); await loadSessions(); location.hash = '#/'; } },
     );
     if (prData?.has) out.push({ name: 'Open pull request #' + prData.number + ' on GitHub', group: 'Session', run: () => window.open(prData.url, '_blank', 'noopener') });
-    for (const x of MODELS) out.push({ name: 'Model: ' + x.name, group: 'Turn', on: state.model === x.id, run: () => { state.model = x.id; localStorage.setItem('cr.model', x.id); renderModelChip(); pushControls({ model: x.id }); } });
+    for (const x of MODELS) out.push({ name: 'Model: ' + x.displayName, group: 'Turn', on: state.model === x.value, run: () => { state.model = x.value; localStorage.setItem('cr.model', x.value); const patch = { model: x.value }; if (state.effort && !effortsFor(x.value).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); patch.effort = ''; } renderModelChip(); pushControls(patch); } });
+    for (const id of effortsFor(state.model)) out.push({ name: 'Effort: ' + (EFFORT_NAMES[id] || id), group: 'Turn', on: (state.effort || DEFAULT_EFFORT) === id, run: () => { state.effort = id; localStorage.setItem('cr.effort', id); renderModelChip(); pushControls({ effort: id }); } });
     for (const x of MODES) out.push({ name: 'Mode: ' + x.name, group: 'Turn', on: state.mode === x.id, run: () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); pushControls({ permissionMode: x.id }); } });
     for (const [id, name] of AWAKE) out.push({ name: 'Keep computer awake: ' + name.toLowerCase(), group: 'This computer', on: awakeMode === id, run: () => setAwake(id) });
     out.push({ name: 'Connectors and plugins', group: 'This computer', run: () => openConnectors() });
     out.push({ name: 'Switch account', group: 'This computer', run: () => openAccounts() });
+    out.push({ name: 'Switch computer', group: 'This computer', run: () => openComputers() });
     return out;
   }
   // Typing the actual word beats letters that merely appear in order, or searching for

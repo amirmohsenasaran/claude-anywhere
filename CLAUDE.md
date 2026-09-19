@@ -39,6 +39,11 @@ await page.goto('http://127.0.0.1:7779/');
 - For the native window: it renders through WebView2, so take the shot with a
   DPI-aware script (`SetProcessDPIAware`) or the right-hand side is cut off and
   you will chase a bug that is not there.
+- **The native window can be driven, not only photographed.** Start it with
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and
+  `chromium.connectOverCDP('http://127.0.0.1:9222')` attaches Playwright to the
+  real window — the only way to test anything that calls the shell, since those
+  commands do not exist in a browser.
 
 ## Style
 
@@ -60,6 +65,10 @@ await page.goto('http://127.0.0.1:7779/');
 - **`perTaskStopAffordance: true`** is what keeps a Stop from killing
   background agents. Absence fails closed.
 - **`background_tasks_changed` replaces the set**; do not merge it edge by edge.
+- **The chat page is a remote origin to Tauri**, even when the server is this
+  computer's: app commands answer `not allowed. Plugin not found` until they are
+  listed in `src-tauri/permissions/*.toml` and a capability with a matching
+  `remote.urls`. Put nothing password-bearing in that list.
 - **A server the app adopted has no `Child` to wait on.** After a rebuild the
   window comes back to the server it deliberately left running, so anything that
   watches the server has to watch the port too — a handle-only watchdog makes
