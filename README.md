@@ -74,6 +74,10 @@ on a session, this one follows along and shows what it is doing.
 - **Two accounts, one set of sessions**: this computer's `claude login` and a
   token you paste, switched from the sidebar whenever you like. Plan usage is
   shown for whichever one is answering.
+- **One app, either computer**: run Claude here, or point the same window at
+  another machine running Claude Anywhere and drive that one — its sessions, its
+  files, its dev servers. No separate client, and nothing to install on the
+  machine you are sitting at beyond the app itself.
 - **Every session, every project** in one sidebar, in an order you set by drag
   and drop and that nothing re-sorts behind your back.
 - **Live turns**: streaming text and thinking, tool calls with their input and
