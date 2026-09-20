@@ -85,6 +85,46 @@ impl Default for Connections {
 // on others, and guessing which is how this breaks on someone else's machine.
 struct PickerUrl(Mutex<Option<tauri::Url>>);
 
+// Is this the page the app carries, rather than a server it is showing? The app's own
+// origin is `tauri://localhost` on macOS and Linux and `http://tauri.localhost` on
+// Windows, which is why it is recognised rather than assumed.
+fn is_app_url(u: &tauri::Url) -> bool {
+    u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
+}
+
+/// Where the picker page lives. Reading it off the window at build time gave
+/// `about:blank` — the navigation has not started yet — and navigating there later
+/// left a white window that looks exactly like a crash. So: the value is taken when a
+/// page has actually loaded, and if it was never taken, the platform's own origin is
+/// used rather than whatever happened to be in the box.
+fn picker_url(app: &AppHandle) -> Option<tauri::Url> {
+    let stored = app
+        .try_state::<PickerUrl>()
+        .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()));
+    if let Some(u) = stored {
+        if is_app_url(&u) {
+            return Some(u);
+        }
+    }
+    let base = if cfg!(windows) {
+        "http://tauri.localhost/connect.html"
+    } else {
+        "tauri://localhost/connect.html"
+    };
+    tauri::Url::parse(base).ok()
+}
+
+fn remember_picker_url(app: &AppHandle, u: tauri::Url) {
+    if !is_app_url(&u) {
+        return;
+    }
+    if let Some(s) = app.try_state::<PickerUrl>() {
+        if let Ok(mut g) = s.0.lock() {
+            *g = Some(u);
+        }
+    }
+}
+
 fn connections_path(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
@@ -393,10 +433,7 @@ fn open_picker(app: AppHandle) {
 }
 
 fn show_picker(app: &AppHandle) {
-    let url = app
-        .try_state::<PickerUrl>()
-        .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()));
-    if let (Some(url), Some(w)) = (url, app.get_webview_window("main")) {
+    if let (Some(url), Some(w)) = (picker_url(app), app.get_webview_window("main")) {
         let _ = w.navigate(url);
         let _ = w.show();
         let _ = w.set_focus();
@@ -432,9 +469,16 @@ fn main() {
             let hidden = std::env::args().any(|a| a == "--hidden");
 
             // The window is built on the picker page so its URL can be read for what it
-            // actually is on this platform, then sent where it belongs.
+            // actually is on this platform, then sent where it belongs. The reading has
+            // to wait for a page to load: straight after build() the window says
+            // `about:blank`, and that is what used to be saved.
             let win =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("connect.html".into()))
+                    .on_page_load(|w, _| {
+                        if let Ok(u) = w.url() {
+                            remember_picker_url(w.app_handle(), u);
+                        }
+                    })
                     .title("Claude")
                     .inner_size(1200.0, 820.0)
                     .min_inner_size(380.0, 600.0)
@@ -447,11 +491,7 @@ fn main() {
                     .visible(false)
                     .build()?;
             if let Ok(u) = win.url() {
-                if let Some(s) = app.try_state::<PickerUrl>() {
-                    if let Ok(mut g) = s.0.lock() {
-                        *g = Some(u);
-                    }
-                }
+                remember_picker_url(&handle, u); // about:blank at this point is ignored
             }
             let _ = win.set_title("Claude");
 

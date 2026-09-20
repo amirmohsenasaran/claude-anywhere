@@ -14,3 +14,12 @@
 identifier = "allow-computer-switching"
 description = "List your computers with what each is doing, see which one this window is showing, switch to another, and open the page that edits the list."
 commands.allow = ["computers", "active_computer", "connection_use", "open_picker"]
+
+# The picker is a page the app carries inside its own binary, and on Windows that page
+# is served from http://tauri.localhost — an http origin, which any remote rule with a
+# host wildcard also matches. Once it counts as remote it loses every command it exists
+# to call, and shows "Loading…" for ever. So it is named, and gets the rest back.
+[[permission]]
+identifier = "allow-computer-editing"
+description = "Read, test and save the list of computers, including their app passwords. For the picker page the app carries itself - never for a page a server sent."
+commands.allow = ["connections_get", "connections_save", "connection_test", "default_password"]

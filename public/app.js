@@ -172,7 +172,7 @@
     try { return await invoke('active_computer'); } catch { return null; }
   }
 
-  function computerRow(c) {
+  function computerRow(c, me) {
     const r = el('div', 'ct-row');
     const info = el('div', 'ct-info');
     const name = el('div', 'ct-name');
@@ -184,6 +184,8 @@
       ? [c.error || 'Not answering', c.url]
       : [c.host !== c.name && c.host, c.account, c.plan, c.liveRuns ? c.liveRuns + (c.liveRuns === 1 ? ' turn running' : ' turns running') : '', !c.local && c.url];
     info.appendChild(el('div', 'ct-desc', bits.filter(Boolean).join(' · ') || (c.online === null ? '' : 'Ready')));
+    // Only the computer that is answering can be asked for its own addresses.
+    if (c.active && me) info.appendChild(addressBlock(me));
     r.appendChild(info);
     const btn = el('button', 'btn btn-ghost', c.active ? 'Reload' : 'Open');
     btn.type = 'button';
@@ -197,14 +199,33 @@
     return r;
   }
 
+  // What to type on the phone or the Mac to reach the computer that is answering.
+  // Nobody should have to go looking for an IP address in Windows settings.
+  function addressBlock(me) {
+    const box = el('div', 'addresses');
+    if (!me?.addresses?.length) return box;
+    box.appendChild(el('span', 'muted', me.listensEverywhere ? 'Reachable from another device at' : 'Only this computer can reach it — set HOST=0.0.0.0 in .env for'));
+    for (const a of me.addresses) {
+      const b = el('button', 'addr ' + a.kind, a.url); b.type = 'button';
+      b.title = (a.kind === 'tailscale' ? 'Over Tailscale, from anywhere' : a.kind === 'virtual' ? 'A virtual adapter (' + a.nic + ') — other devices cannot reach this one' : 'On this network (' + a.nic + ')') + ' · click to copy';
+      b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(a.url); b.textContent = 'Copied'; setTimeout(() => { b.textContent = a.url; }, 1200); } catch {} });
+      box.appendChild(b);
+    }
+    if (!me.passwordRequired) box.appendChild(el('span', 'muted warn-plain', 'No app password: anyone who can reach that address can use Claude here.'));
+    return box;
+  }
+
   async function openComputers() {
     cmptModal.classList.remove('hidden');
     $('#computers-error').hidden = true;
     const list = $('#computers-list');
     const invoke = bridge();
+    // The computer answering this window is the only one that can be asked where it
+    // can be reached from; the others answer that question about themselves.
+    let me = null; try { me = await api('/me'); } catch {}
     if (!invoke) {
       list.innerHTML = '';
-      list.appendChild(computerRow({ id: 'local', name: state.host || 'This computer', active: true, host: state.host, account: $('#sidebar-account').textContent, online: true }));
+      list.appendChild(computerRow({ id: 'local', name: state.host || 'This computer', active: true, host: state.host, account: $('#sidebar-account').textContent, online: true }, me));
       list.appendChild(el('div', 'muted small pad', 'A browser talks to one computer: the one that served this page. The desktop app is what keeps a list of them and switches between them.'));
       $('#computers-edit').classList.add('hidden');
       return;
@@ -222,7 +243,7 @@
         : String(e?.message || e);
     }
     list.innerHTML = '';
-    items.forEach((c) => list.appendChild(computerRow(c)));
+    items.forEach((c) => list.appendChild(computerRow(c, me)));
     if (items.length === 1) list.appendChild(el('div', 'muted small pad', 'No other computers yet. Add one and this window can show it instead.'));
   }
 

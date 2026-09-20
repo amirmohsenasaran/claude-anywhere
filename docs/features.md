@@ -205,6 +205,13 @@ answering* instead of vanishing. *Add or edit computers…* is the picker that h
 the list, and adding one starts with this computer's app password already filled
 in — one password, typed once.
 
+The row for the computer that is answering also shows **where to reach it from
+another device**: the Tailscale address first (it works from anywhere), then the
+one on this network, with a virtual adapter dimmed because nothing else can reach
+it. Click an address to copy it — that is what you type on the phone or the Mac. If
+the server is listening on this machine only, it says so instead of offering
+addresses that cannot work; if there is no app password, it says that too.
+
 The list belongs to the device you are sitting at, not to any server, so it lives
 in the app. A browser talks to exactly one computer, the one that served the page,
 and says so. The page may ask the shell which computers exist and to switch to one;
