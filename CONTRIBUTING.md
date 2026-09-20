@@ -57,7 +57,11 @@ There is no test runner yet. What is expected instead:
 - One subject per commit, lower case, no trailing period, in the imperative or
   as a statement of what now happens: `tasks: stop a single background task`.
   Say the *why* in the body when the change is not obvious.
-- Rebase rather than merge; keep the history readable.
+- **Do not rewrite a branch that is already pushed.** When `main` has moved and a
+  pull request conflicts, pull `main`, start a fresh branch from it and apply the
+  work there — history you can trust beats history that is tidy. Check the PR is
+  still open before adding to its branch: `main` releases on every green run, so a
+  commit pushed after the merge is orphaned and misses the build.
 - A pull request explains what changed, how you checked it, and carries a
   screenshot if anything visible moved.
 

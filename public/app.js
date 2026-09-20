@@ -1172,8 +1172,14 @@
       $('#app-version-desc').textContent = [v.commit && 'commit ' + v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : ''), subject, v.appBuiltAt && 'built ' + ago(v.appBuiltAt), 'server up ' + relTime(v.serverStartedAt), v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
       paintUpdate(v);
       $('#app-restart').disabled = !v.inApp;
-      // Rebuild app runs a PowerShell script that knows the Windows file locks; off Windows the button would only ever fail.
-      $('#app-rebuild').classList.toggle('hidden', v.platform !== undefined && v.platform !== 'win32');
+      // Rebuild app runs a PowerShell script that knows the Windows file locks; off Windows
+      // the button would only ever fail. And it compiles into this checkout's target
+      // directory and starts what it finds there, so it is only the right button when the
+      // window *is* that build — an installed release is replaced by its own installer.
+      $('#app-rebuild').classList.toggle('hidden', (v.platform !== undefined && v.platform !== 'win32') || v.devBuild === false);
+      // Rust changes in the checkout cannot reach an installed app. Say that, rather than
+      // offering a button that would appear to do it.
+      $('#app-shell-note').textContent = v.shellStale && v.devBuild === false ? 'The shell changed here (' + v.shellChanged.slice(0, 2).join(', ') + '). An installed app takes that from the next release, not from a rebuild.' : '';
       paintRebuildLog();
     } catch (e) { $('#app-version').textContent = '?'; $('#app-version-desc').textContent = e.message; }
   }
@@ -1243,7 +1249,7 @@
     const deviceOld = deviceApp && newerThanMine(u.latest, deviceApp.version);
     // A published release wins over the two development ones: a release is the app
     // everybody has, the others only mean this checkout is ahead of what is running.
-    const key = u.newer || deviceOld ? 'rel:' + u.latest : (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
+    const key = u.newer || deviceOld ? 'rel:' + u.latest : (v.shellStale && v.devBuild !== false ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
     if (!key || key === updateSnoozed) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     $('#ub-action').disabled = false; // the restart branch below disables it, and the banner outlives that reason
@@ -1270,7 +1276,7 @@
         $('#ub-action').textContent = forMe ? 'Download' : 'Open the release';
         $('#ub-action').onclick = () => openExternal(forMe?.url || u.url);
       }
-    } else if (v.shellStale) {
+    } else if (v.shellStale && v.devBuild !== false) {
       $('#ub-text').textContent = 'The app shell changed'; $('#ub-detail').textContent = v.shellChanged.slice(0, 3).join(', ') + ' · needs a rebuild (1–3 min)';
       $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
     } else {

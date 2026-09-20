@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dropping a file on the Mac app did nothing.** Tauri handles dropped files
+  itself unless told not to, and that swallows the `drop` event before the page
+  sees it — and the page is where a dropped file becomes an attachment. The window
+  is built with `disable_drag_drop_handler()` now, so drag and drop is the
+  ordinary HTML5 kind, the same path a browser takes.
+- **Rebuild app is offered only when it can do anything.** It compiles into
+  `src-tauri/target` and starts what it finds there, so pressing it while an
+  installed release is running spent three minutes and changed nothing: the second
+  binary started and single-instance closed it again. The button now appears only
+  when the running window *is* the checkout's build, and the banner stops pushing
+  it at installed apps. In their place the panel says what is true — shell changes
+  here arrive in the next release — and *Update DESKTOP-…* is the button that acts.
+
+
 ## [0.8.0] — 2026-09-20
 
 ### Added

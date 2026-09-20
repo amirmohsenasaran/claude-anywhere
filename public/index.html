@@ -325,6 +325,9 @@
           <div class="ct-name">Claude Anywhere <span id="app-version" class="tag">…</span></div>
           <div id="app-version-desc" class="ct-desc"></div>
           <div id="app-update" class="ct-desc app-update"></div>
+          <!-- Only when Rust changed here and the window is an installed release: there is
+               nothing to press, and the old banner pressed Rebuild anyway. -->
+          <div id="app-shell-note" class="ct-desc app-update muted"></div>
         </div>
         <div class="app-actions">
           <button id="app-restart" class="btn btn-ghost" type="button" title="Picks up new server and page code from the repo; the window reloads">Restart server</button>

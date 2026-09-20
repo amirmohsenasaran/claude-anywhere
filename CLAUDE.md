@@ -65,6 +65,9 @@ await page.goto('http://127.0.0.1:7779/');
 - **`perTaskStopAffordance: true`** is what keeps a Stop from killing
   background agents. Absence fails closed.
 - **`background_tasks_changed` replaces the set**; do not merge it edge by edge.
+- **Tauri eats the page's drag and drop.** Its own handler is on by default, so
+  `drop` never reaches the web page and a dropped file does nothing — most
+  visibly on macOS. Build the window with `disable_drag_drop_handler()`.
 - **macOS blocks plain http in a web view.** A window pointed at
   `http://<ip>:7777` shows white and reports nothing; the bundle needs
   `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by
