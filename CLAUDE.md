@@ -69,6 +69,12 @@ await page.goto('http://127.0.0.1:7779/');
   `http://<ip>:7777` shows white and reports nothing; the bundle needs
   `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by
   `bundle.macOS.infoPlist` — which takes a path, not an inline object).
+- **A `#[tauri::command]` that is not `async` runs on the main thread.** Put a
+  network call in one and the window freezes — buttons stick mid-label and it
+  reads as a crash. `async fn` + `spawn_blocking` for anything that waits.
+- **A dead host swallows the SYN and Windows retries for ~20 s.** `ureq`'s
+  per-request `.timeout()` does not shorten that; build an agent with
+  `timeout_connect`.
 - **The chat page is a remote origin to Tauri**, even when the server is this
   computer's: app commands answer `not allowed. Plugin not found` until they are
   listed in `src-tauri/permissions/*.toml` and a capability with a matching
