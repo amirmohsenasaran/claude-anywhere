@@ -182,7 +182,7 @@
     info.appendChild(name);
     const bits = c.online === false
       ? [c.error || 'Not answering', c.url]
-      : [c.host !== c.name && c.host, c.account, c.plan, c.liveRuns ? c.liveRuns + (c.liveRuns === 1 ? ' turn running' : ' turns running') : '', !c.local && c.url];
+      : [c.host !== c.name && c.host, c.version && 'v' + c.version, c.account, c.plan, c.liveRuns ? c.liveRuns + (c.liveRuns === 1 ? ' turn running' : ' turns running') : '', !c.local && c.url];
     info.appendChild(el('div', 'ct-desc', bits.filter(Boolean).join(' · ') || (c.online === null ? '' : 'Ready')));
     // Only the computer that is answering can be asked for its own addresses.
     if (c.active && me) info.appendChild(addressBlock(me));
@@ -272,7 +272,9 @@
     // Which machine is answering, said plainly: "This computer" only when it is.
     activeComputer = await whichComputer();
     const named = activeComputer?.remote ? activeComputer.name + ' · ' + me.host : activeComputer ? 'This computer · ' + me.host : me.host;
-    $('#sidebar-host').textContent = named;
+    // The version belongs where you already look to see which machine you are on.
+    $('#sidebar-host').textContent = named + (me.version ? ' · ' + me.version : '');
+    $('#sidebar-host').title = 'Which computer this window is showing' + (me.version ? ' — Claude Anywhere ' + me.version : '');
     const chip = $('#topbar-computer');
     chip.classList.toggle('hidden', !activeComputer?.remote);
     chip.textContent = activeComputer?.remote ? activeComputer.name : '';
@@ -833,8 +835,15 @@
   let MODELS = [{ value: 'default', displayName: 'Default (recommended)', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }];
   let DEFAULT_EFFORT = 'high';
   // Claude's own words for the levels, and the warning it puts on the last one.
-  const EFFORT_NAMES = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
-  const EFFORT_HINT = { max: 'May use excessive tokens resulting in long response times and may hit token limits. Use sparingly for the hardest tasks.' };
+  const EFFORT_NAMES = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max', ultracode: 'Ultracode' };
+  const EFFORT_HINT = {
+    max: 'May use excessive tokens resulting in long response times and may hit token limits. Use sparingly for the hardest tasks.',
+    ultracode: 'Extra effort and standing workflow orchestration: Claude spreads the work over agents. The most it can bring, and the most it can spend.',
+  };
+  // Ultracode is not an effort level but a flag of its own (xhigh plus workflows), and
+  // only a model that takes Extra can take it — which is exactly how Claude stacks them.
+  const effortStops = (id) => { const lv = effortsFor(id); return lv.includes('xhigh') ? [...lv, 'ultracode'] : lv; };
+  const stopOf = (id) => (state.ultracode ? 'ultracode' : state.effort || DEFAULT_EFFORT);
   const EFFORT_ABOUT = 'Higher effort means more thorough responses, but takes longer and uses your limits faster.';
   const modelRow = (id) => MODELS.find((m) => m.value === id) || MODELS.find((m) => m.resolvedModel === id) || MODELS[0];
   const effortsFor = (id) => { const r = modelRow(id); return r && r.supportsEffort !== false ? r.supportedEffortLevels || [] : []; };
@@ -848,6 +857,7 @@
   ];
   state.model = localStorage.getItem('cr.model') || MODELS[0].value;
   state.effort = localStorage.getItem('cr.effort') || '';
+  state.ultracode = !!localStorage.getItem('cr.ultracode');
   state.mode = localStorage.getItem('cr.mode') || 'default';
 
   // A saved `claude-sonnet-5` is the wire id of the CLI's `sonnet` row; the CLI wants
@@ -860,7 +870,7 @@
     const row = modelRow(state.model);
     if (row && row.value !== state.model) { state.model = row.value; if (localStorage.getItem('cr.model')) localStorage.setItem('cr.model', row.value); }
     if (state.effort && !effortsFor(state.model).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); }
-    renderModelChip();
+    renderModelChip(); renderEffortChip();
   }
 
   function menuFor(btnId, menuId, render) {
@@ -901,13 +911,15 @@
     if (s.model && modelRow(s.model)) state.model = modelRow(s.model).value;
     if (s.permissionMode && MODES.some((m) => m.id === s.permissionMode)) state.mode = s.permissionMode;
     state.effort = s.effort || '';
-    renderModelChip(); renderModeChip();
+    state.ultracode = !!s.ultracode;
+    renderModelChip(); renderModeChip(); renderEffortChip();
   }
   function restoreDeviceDefaults() {
     state.model = modelRow(localStorage.getItem('cr.model')).value;
     state.effort = localStorage.getItem('cr.effort') || '';
+    state.ultracode = !!localStorage.getItem('cr.ultracode');
     state.mode = localStorage.getItem('cr.mode') || 'default';
-    renderModelChip(); renderModeChip();
+    renderModelChip(); renderModeChip(); renderEffortChip();
   }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
@@ -917,26 +929,104 @@
       // does not take goes back to its default rather than travelling along unused.
       const patch = { model: x.value };
       if (state.effort && !effortsFor(x.value).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); patch.effort = ''; }
-      renderModelChip(); m.classList.add('hidden'); pushControls(patch);
+      if (state.ultracode && !effortStops(x.value).includes('ultracode')) { state.ultracode = false; localStorage.removeItem('cr.ultracode'); patch.ultracode = false; }
+      renderModelChip(); renderEffortChip(); m.classList.add('hidden'); pushControls(patch);
     }, { hint: x.value === state.model ? '' : String(i + 1) })));
-    // Effort is the model's, not the app's: Haiku has none, and which levels the rest
-    // take comes with the model. Nothing is drawn for a model that has no levels.
-    const levels = effortsFor(state.model);
-    if (!levels.length) return;
-    m.appendChild(el('div', 'menu-sep'));
-    const row = el('div', 'seg-row'); row.appendChild(el('span', null, 'Effort'));
-    const seg = el('div', 'seg');
-    for (const id of levels) {
-      const on = id === state.effort || (!state.effort && id === DEFAULT_EFFORT);
-      const b = el('button', on ? 'on' : '', EFFORT_NAMES[id] || id); b.type = 'button';
-      if (id === DEFAULT_EFFORT) b.title = 'Default';
-      if (EFFORT_HINT[id]) b.title = EFFORT_HINT[id];
-      b.addEventListener('click', (e) => { e.stopPropagation(); state.effort = id; localStorage.setItem('cr.effort', id); renderModelChip(); render(m); pushControls({ effort: id }); });
-      seg.appendChild(b);
-    }
-    row.appendChild(seg); m.appendChild(row);
-    m.appendChild(el('div', 'menu-note', EFFORT_ABOUT));
   });
+
+  // ---------- effort: a chip beside the model, and a slider from Faster to Smarter ----
+  // Claude puts effort next to the model rather than inside its menu, because it is a
+  // thing you change on its own — and shows it as one travel, not five buttons.
+  function renderEffortChip() {
+    const btn = $('#effort-btn');
+    if (!btn) return; // an older page being served a newer script
+    const stops = effortStops(state.model);
+    btn.classList.toggle('hidden', stops.length < 2);
+    if (stops.length < 2) { $('#effort-pop').classList.add('hidden'); return; }
+    const at = stopOf(state.model);
+    $('#effort-label').textContent = EFFORT_NAMES[at] || at;
+    btn.classList.toggle('ultra', at === 'ultracode');
+    btn.title = 'Effort: ' + (EFFORT_NAMES[at] || at) + (EFFORT_HINT[at] ? ' — ' + EFFORT_HINT[at] : '');
+  }
+
+  function paintEffortPop() {
+    const stops = effortStops(state.model);
+    const at = stopOf(state.model);
+    const i = Math.max(0, stops.indexOf(at));
+    const pop = $('#effort-pop');
+    pop.classList.toggle('ultra', at === 'ultracode');
+    const level = $('#ef-level');
+    level.textContent = EFFORT_NAMES[at] || at;
+    // Restarting the animation is what makes the name look like it followed the knob.
+    level.classList.remove('changed'); void level.offsetWidth; level.classList.add('changed');
+    $('#ef-note').textContent = EFFORT_HINT[at] || EFFORT_ABOUT;
+    const track = $('#ef-track');
+    track.style.setProperty('--ef-pos', (stops.length > 1 ? (i / (stops.length - 1)) * 100 : 50) + '%');
+    track.setAttribute('aria-valuemin', '1');
+    track.setAttribute('aria-valuemax', String(stops.length));
+    track.setAttribute('aria-valuenow', String(i + 1));
+    track.setAttribute('aria-valuetext', EFFORT_NAMES[at] || at);
+    const dots = $('#ef-dots'); dots.innerHTML = '';
+    stops.forEach((id, n) => {
+      const d = el('button', 'ef-dot' + (n <= i ? ' past' : '') + (id === DEFAULT_EFFORT ? ' default' : ''));
+      d.type = 'button'; d.tabIndex = -1;
+      d.title = (EFFORT_NAMES[id] || id) + (id === DEFAULT_EFFORT ? ' · default' : '');
+      d.style.left = (stops.length > 1 ? (n / (stops.length - 1)) * 100 : 50) + '%';
+      d.addEventListener('click', (e) => { e.stopPropagation(); pickEffort(id); });
+      dots.appendChild(d);
+    });
+  }
+
+  function pickEffort(id) {
+    const stops = effortStops(state.model);
+    if (!stops.includes(id)) return;
+    const wasUltra = !!state.ultracode;
+    state.ultracode = id === 'ultracode';
+    // Ultracode rides on Extra; every other stop is the level itself.
+    state.effort = id === 'ultracode' ? 'xhigh' : id;
+    try {
+      if (state.ultracode) localStorage.setItem('cr.ultracode', '1'); else localStorage.removeItem('cr.ultracode');
+      localStorage.setItem('cr.effort', state.effort);
+    } catch {}
+    renderEffortChip(); paintEffortPop();
+    const patch = { effort: state.effort };
+    if (state.ultracode || wasUltra) patch.ultracode = state.ultracode;
+    pushControls(patch);
+  }
+
+  // Click anywhere on the track, or drag the knob: the nearest stop wins, the way a
+  // slider with stops behaves everywhere else.
+  function stopFromPointer(e) {
+    const stops = effortStops(state.model);
+    if (stops.length < 2) return null;
+    const r = $('#ef-track').getBoundingClientRect();
+    const x = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+    return stops[Math.round(x * (stops.length - 1))];
+  }
+  (function effortSlider() {
+    const track = $('#ef-track');
+    // This checkout is live for a running app: a window that loaded the page a minute
+    // ago can meet a newer script, and a missing element must not take the whole client
+    // down with it — a thrown TypeError here leaves a white window.
+    if (!track) return;
+    let dragging = false;
+    track.addEventListener('pointerdown', (e) => { dragging = true; track.setPointerCapture && track.setPointerCapture(e.pointerId); const id = stopFromPointer(e); if (id) pickEffort(id); });
+    track.addEventListener('pointermove', (e) => { if (!dragging) return; const id = stopFromPointer(e); if (id && id !== stopOf(state.model)) pickEffort(id); });
+    track.addEventListener('pointerup', () => { dragging = false; });
+    track.addEventListener('pointercancel', () => { dragging = false; });
+    track.addEventListener('keydown', (e) => {
+      const stops = effortStops(state.model);
+      const i = stops.indexOf(stopOf(state.model));
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); pickEffort(stops[Math.min(i + 1, stops.length - 1)]); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); pickEffort(stops[Math.max(i - 1, 0)]); }
+      if (e.key === 'Home') { e.preventDefault(); pickEffort(stops[0]); }
+      if (e.key === 'End') { e.preventDefault(); pickEffort(stops[stops.length - 1]); }
+    });
+    $('#ef-help')?.addEventListener('click', (e) => { e.stopPropagation(); $('#ef-note')?.classList.toggle('open'); });
+  })();
+
+  menuFor('#effort-btn', '#effort-pop', () => paintEffortPop());
+
   menuFor('#mode-btn', '#mode-menu', (m) => {
     m.innerHTML = ''; m.appendChild(el('div', 'menu-title', 'Mode'));
     MODES.forEach((x, i) => m.appendChild(item(x.name, x.desc, x.id === state.mode, () => { state.mode = x.id; localStorage.setItem('cr.mode', x.id); renderModeChip(); m.classList.add('hidden'); pushControls({ permissionMode: x.id }); }, { hint: String(i + 1) })));
@@ -956,7 +1046,7 @@
     }
   });
   renderModelChip(); renderModeChip();
-  const turnOptions = () => ({ model: state.model, permissionMode: state.mode, ...(state.effort ? { effort: state.effort } : {}) });
+  const turnOptions = () => ({ model: state.model, permissionMode: state.mode, ...(state.effort ? { effort: state.effort } : {}), ...(state.ultracode ? { ultracode: true } : {}) });
 
   // ---------- session bar (project · branch · +added −removed · Create PR), session ⋮ menu, usage popover ----------
   async function refreshGit() {
@@ -2260,10 +2350,10 @@
         }
         case 'init':
           mode = 'run'; setRunning(true);
-          if (ev.controls) { if (ev.controls.permissionMode) state.mode = ev.controls.permissionMode; if (ev.controls.model) state.model = ev.controls.model; state.effort = ev.controls.effort || ''; renderModeChip(); renderModelChip(); }
+          if (ev.controls) { if (ev.controls.permissionMode) state.mode = ev.controls.permissionMode; if (ev.controls.model) state.model = ev.controls.model; state.effort = ev.controls.effort || ''; if (ev.controls.ultracode !== undefined) state.ultracode = !!ev.controls.ultracode; renderModeChip(); renderModelChip(); renderEffortChip(); }
           break;
         case 'controls':
-          if (ev.permissionMode) state.mode = ev.permissionMode; if (ev.model) state.model = ev.model; if (ev.effort !== undefined) state.effort = ev.effort;
+          if (ev.permissionMode) state.mode = ev.permissionMode; if (ev.model) state.model = ev.model; if (ev.effort !== undefined) state.effort = ev.effort; if (ev.ultracode !== undefined) state.ultracode = !!ev.ultracode;
           renderModeChip(); renderModelChip(); break;
         case 'status': if (ev.permissionMode) { state.mode = ev.permissionMode; renderModeChip(); } break;
         case 'context': usage.context = ev; paintUsage(); break;
@@ -2663,6 +2753,7 @@
     out.push({ name: 'Connectors and plugins', group: 'This computer', run: () => openConnectors() });
     out.push({ name: 'Switch account', group: 'This computer', run: () => openAccounts() });
     out.push({ name: 'Switch computer', group: 'This computer', run: () => openComputers() });
+    out.push({ name: 'Check for updates', group: 'This computer', run: async () => { openConnectors(); paintVersion(); await checkUpdateNow(); } });
     return out;
   }
   // Typing the actual word beats letters that merely appear in order, or searching for
@@ -2847,6 +2938,9 @@
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
     deviceApp = await whatAmI();
+    // Opening the app is exactly when "is there a new one?" should be answered afresh:
+    // a merge publishes in about eight minutes, and a stale answer reads as "nothing new".
+    api('/version').then((v) => { if (!v.update?.checkedAt || Date.now() - v.update.checkedAt > 120000) return api('/update/check', { method: 'POST', body: JSON.stringify({}) }); }).then(() => checkForUpdate()).catch(() => {});
     await Promise.all([loadSessions(), loadProjects(), loadAwake(), loadModels()]);
     route();
     // First time on this device: ask which account to use (local or token).

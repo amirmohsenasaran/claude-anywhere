@@ -213,6 +213,24 @@
                 <button id="model-btn" class="chip" type="button" title="Model"><span id="model-label">Claude Fable 5.1</span><svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
                 <div id="model-menu" class="menu menu-end hidden"></div>
               </div>
+              <!-- Effort sits beside the model, as it does in Claude: its own chip, and a
+                   slider from Faster to Smarter rather than five buttons in a menu. -->
+              <div class="composer-left">
+                <button id="effort-btn" class="chip effort-chip hidden" type="button" title="Effort"><span id="effort-label">High</span></button>
+                <div id="effort-pop" class="menu menu-end effort-pop hidden">
+                  <div class="ef-head">
+                    <span class="ef-what">Effort</span>
+                    <span id="ef-level" class="ef-level">High</span>
+                    <button id="ef-help" class="ef-help" type="button" aria-label="What effort does">?</button>
+                  </div>
+                  <div class="ef-ends"><span>Faster</span><span>Smarter</span></div>
+                  <div id="ef-track" class="ef-track" role="slider" tabindex="0" aria-label="Effort" aria-valuemin="1" aria-valuenow="3" aria-valuemax="5">
+                    <div id="ef-dots" class="ef-dots"></div>
+                    <div id="ef-knob" class="ef-knob"></div>
+                  </div>
+                  <p id="ef-note" class="ef-note"></p>
+                </div>
+              </div>
               <div class="composer-left">
                 <button id="usage-btn" class="usage-ring hidden" type="button" title="Context window"><i></i></button>
                 <div id="usage-pop" class="menu menu-end usage-pop hidden">

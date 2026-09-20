@@ -401,6 +401,7 @@ struct ComputerStatus {
     host: String,
     account: String,
     plan: String,
+    version: String,
     auth: String,
     live_runs: u64,
     error: String,
@@ -424,6 +425,7 @@ fn probe(
         host: String::new(),
         account: String::new(),
         plan: String::new(),
+        version: String::new(),
         auth: String::new(),
         live_runs: 0,
         error: String::new(),
@@ -464,6 +466,7 @@ fn probe(
             _ => "Signed in".into(),
         });
     s.plan = acc["plan"].as_str().unwrap_or_default().to_string();
+    s.version = me["version"].as_str().unwrap_or_default().to_string();
     s.live_runs = get("/api/runs")
         .and_then(|v| v.as_array().map(|a| a.len() as u64))
         .unwrap_or(0);
@@ -571,6 +574,49 @@ fn default_password(app: AppHandle) -> String {
     } else {
         password
     }
+}
+
+/// Ask this computer's server to look now, and say what it found. The server holds the
+/// answer for a few minutes so every device shares one call to GitHub; this is the way to
+/// jump that queue when you have just merged something.
+fn check_for_updates(app: AppHandle) {
+    thread::spawn(move || {
+        let Some(state) = app.try_state::<ServerState>() else {
+            return;
+        };
+        let (port, token) = (state.port, state.token.clone());
+        let answer = quick_agent(3, 12)
+            .post(&format!("http://127.0.0.1:{port}/api/update/check"))
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Content-Type", "application/json")
+            .send_string("{}")
+            .ok()
+            .and_then(|r| r.into_json::<serde_json::Value>().ok());
+        let (title, body) = match answer {
+            Some(v) if v["newer"] == serde_json::Value::Bool(true) => (
+                format!(
+                    "Claude Anywhere {} is available",
+                    v["latest"].as_str().unwrap_or("")
+                ),
+                format!(
+                    "You have {}. Open the window to install it.",
+                    v["current"].as_str().unwrap_or("an older build")
+                ),
+            ),
+            Some(v) if v["latest"].is_string() => (
+                "Up to date".to_string(),
+                format!(
+                    "{} is the latest release.",
+                    v["latest"].as_str().unwrap_or("")
+                ),
+            ),
+            _ => (
+                "Could not check".to_string(),
+                "GitHub did not answer. Try again in a moment.".to_string(),
+            ),
+        };
+        let _ = app.notification().builder().title(title).body(body).show();
+    });
 }
 
 /// Show the built-in page for choosing a computer.
@@ -1148,6 +1194,7 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", "Open Claude", true, None::<&str>)?;
     let phone = MenuItem::with_id(app, "phone", "Phone connection…", true, None::<&str>)?;
     let computers = MenuItem::with_id(app, "computers", "Computers…", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for updates…", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
@@ -1195,6 +1242,7 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     }
     items.push(&computers);
     items.push(&sep);
+    items.push(&updates);
     items.push(&phone);
     items.push(&autostart);
     items.push(&sep);
@@ -1237,6 +1285,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 "open" => show_main(app),
                 "phone" => show_phone_info(app),
                 "computers" => show_picker(app),
+                "updates" => check_for_updates(app.clone()),
                 "autostart" => {
                     let on = app.autolaunch().is_enabled().unwrap_or(false);
                     let _ = if on {

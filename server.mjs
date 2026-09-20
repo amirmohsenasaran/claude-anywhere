@@ -689,7 +689,7 @@ function reachableAt() {
   const rank = (k) => (k === 'tailscale' ? 0 : k === 'lan' ? 1 : 2);
   return out.sort((a, b) => rank(a.kind) - rank(b.kind));
 }
-app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
+app.get('/api/me', (_req, res) => res.json({ version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
 
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
 app.get('/api/accounts', (_req, res) => {
@@ -820,7 +820,7 @@ app.get('/api/sessions/:id', async (req, res, next) => {
 app.post('/api/sessions/:id/prefs', (req, res) => {
   const p = readPrefs(); p.sessionPrefs = p.sessionPrefs || {};
   const cur = p.sessionPrefs[req.params.id] || {};
-  for (const k of ['model', 'permissionMode', 'effort']) if (req.body?.[k] !== undefined) cur[k] = req.body[k];
+  for (const k of ['model', 'permissionMode', 'effort', 'ultracode']) if (req.body?.[k] !== undefined) cur[k] = req.body[k];
   p.sessionPrefs[req.params.id] = cur; writePrefs(p);
   res.json(cur);
 });
@@ -863,8 +863,8 @@ app.post('/api/sessions/:id/controls', async (req, res, next) => {
   try {
     const run = runs.get(req.params.id);
     if (!run || run.done) return res.json({ applied: {}, live: false });
-    const { permissionMode, model, effort } = req.body || {};
-    res.json({ applied: await run.setControls({ permissionMode, model, effort }), live: true });
+    const { permissionMode, model, effort, ultracode } = req.body || {};
+    res.json({ applied: await run.setControls({ permissionMode, model, effort, ultracode }), live: true });
   } catch (e) { next(e); }
 });
 
