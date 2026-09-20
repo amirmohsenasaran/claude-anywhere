@@ -103,14 +103,17 @@ options up invites a second answer that nothing is listening for.
 - Permission mode (Manual / Accept edits / Plan / Auto / Bypass), model and
   effort can all be changed mid-turn. Shift+Tab cycles the mode like the CLI,
   1–5 pick one directly.
+- **Effort is a chip beside the model**, as it is in Claude: press it and a slider runs
+  from *Faster* to *Smarter* — Low, Medium, **High** (the default), Extra, Max, and
+  **Ultracode** at the top for a model that takes Extra, which is xhigh effort plus
+  standing workflow orchestration. Drag it, click a stop, or use the arrow keys; the knob
+  travels and the name follows. A model with no effort levels has no chip.
 - **The model menu is the CLI's own.** The list, the names, the descriptions and
   the prices come from `supportedModels()` — whatever Claude Code offers this
   account, including the *Default (recommended)* row and the 1M-context ones — so
-  it cannot drift from Claude. **Effort** is the model's own set: Low, Medium,
-  **High** (the default, and what a model runs at when nothing is chosen), Extra
-  and Max, restricted to the levels that model takes, with Claude's own warning on
-  Max. Haiku has no effort levels, so it shows none; switching to a model that
-  does not take the level you had picked puts it back to the default.
+  it cannot drift from Claude. The effort levels above come from the same answer, so
+  switching to a model that does not take the level you had picked puts it back to the
+  default rather than sending one that model has never heard of.
 - Permission prompts appear as a card with **Allow**, **Allow always** and
   **Deny**, answerable from the phone.
 - The composer's stop button ends the turn. Background work is not killed by
@@ -305,8 +308,12 @@ it was built, and how long the server has been up. A packaged app has no checkou
 to ask, so the shell carries its own version and commit — compiled in by the build
 that made it.
 
-Once an hour the server asks GitHub whether the [latest release][releases] is
-newer, and a banner offers it. Nothing is sent anywhere; it is one
+The server asks GitHub whether the [latest release][releases] is newer — when the app
+opens, when you ask it to, and otherwise at most every five minutes — and a banner offers
+it. An hour was the first interval and it was wrong by exactly the width of the problem: a
+merge publishes in about eight minutes, so a check landing five minutes early said "up to
+date" for another fifty-five. *Check for updates* is in the command palette and in the
+tray menu, where it answers with a notification whether the window is open or not. Nothing is sent anywhere; it is one
 unauthenticated read of a public page, cached for every device pointed at this
 server, and `CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` stops it asking at all.
 
@@ -320,7 +327,10 @@ shows whichever apply:
   chosen from the release's own assets by what this device is. A phone gets no
   such button, because there is nothing there to install.
 - **Update DESKTOP-JAG2O5O** — that computer downloads its own installer, closes
-  its window, installs and opens again, with the progress in the panel. It is the
+  its window, installs and opens again, with the progress in the panel. It waits for the
+  binary on disk to actually change before starting it: the installer hands off to a
+  second stage and returns, and starting the app on that signal opened a half-written file
+  that died immediately, leaving no window at all. It is the
   half you cannot do by tapping Download on a phone, and it is refused while
   Claude is working, because the app has to close to be replaced. Windows only so
   far; elsewhere it says to open the file on that machine.

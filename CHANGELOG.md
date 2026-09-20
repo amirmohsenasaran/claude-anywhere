@@ -7,8 +7,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Effort is a chip beside the model now, with Claude's slider behind it.** It was a row
+  of five buttons inside the model menu. Press *High* and a panel opens: *Faster* on the
+  left, *Smarter* on the right, a stop for each level the model actually takes, and a knob
+  that travels to the one you pick — by drag, click or arrow key. Above Max sits
+  **Ultracode** for a model that takes Extra: xhigh effort plus standing workflow
+  orchestration, which is a flag of its own in the CLI and now has a place to be turned on.
+  A model with no effort levels has no chip at all.
+- **The version is where you can see it**: the sidebar footer says which computer *and*
+  which build (`This computer · DESKTOP-JAG2O5O · 0.8.1`), and every row of *Which
+  computer?* names the build that machine is on — so "which one is behind" is something
+  you can read rather than guess.
+- **Check for updates on demand**: in the command palette, and in the tray menu, which
+  answers with a notification whether the window is open or not.
+
 ### Fixed
 
+- **A new release could go unnoticed for the better part of an hour.** The answer from
+  GitHub was kept for an hour, and a check landing five minutes before a release then said
+  "up to date" for another fifty-five — which is exactly what happened: 0.8.1 published at
+  04:20, the check had run at 04:15. The app asks when it opens, when you ask it to, and
+  otherwise at most every five minutes: twelve calls an hour against a limit of sixty,
+  shared by every device on that server.
+- **Update DESKTOP-… installed, then left no window.** The installer hands off to a second
+  stage and returns, so the script started the app on that signal — into a binary that was
+  still being written, which opened and died. It now waits for the file on disk to change,
+  says which version replaced which, and tries once more if the window does not come up.
 - **Dropping a file on the Mac app did nothing.** Tauri handles dropped files
   itself unless told not to, and that swallows the `drop` event before the page
   sees it — and the page is where a dropped file becomes an attachment. The window
@@ -21,7 +47,6 @@ All notable changes to this project are documented here. The format follows
   when the running window *is* the checkout's build, and the banner stops pushing
   it at installed apps. In their place the panel says what is true — shell changes
   here arrive in the next release — and *Update DESKTOP-…* is the button that acts.
-
 
 ## [0.8.0] — 2026-09-20
 
