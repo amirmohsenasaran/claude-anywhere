@@ -60,7 +60,8 @@ earlier message, and a dev-server preview that reaches your phone.
 | Source | closed | MIT, ~4,000 lines you can read and change |
 | Sidebar order | sorts itself | yours, by drag and drop |
 | Preview of your dev server | yes, on that machine | yes, and on your phone |
-| Panes: terminal, browser, worktrees | yes | not yet |
+| Per-session git worktrees | yes | yes |
+| Panes: terminal, split view | yes | not yet |
 | macOS and Linux app | yes | yes, unsigned so far |
 | Support | Anthropic | an issue tracker and me |
 
@@ -77,13 +78,30 @@ on a session, this one follows along and shows what it is doing.
 - **One app, either computer**: run Claude here, or point the same window at
   another machine running Claude Anywhere and drive that one — its sessions, its
   files, its dev servers. No separate client, and nothing to install on the
-  machine you are sitting at beyond the app itself.
+  machine you are sitting at beyond the app itself. The window always says which
+  machine is answering, and *Which computer?* lists them with what each one is
+  doing, the address to type on your phone, and the Claude account it is signed
+  in with.
+
+<div align="center"><img src="docs/images/computers.png" alt="Which computer? — this computer with the addresses it can be reached at, another that is online, one that is not answering" width="560"></div>
+
 - **Every session, every project** in one sidebar, in an order you set by drag
   and drop and that nothing re-sorts behind your back.
 - **Live turns**: streaming text and thinking, tool calls with their input and
   result, a status line, queued messages that reach Claude at the next tool
   boundary rather than at the end of the turn.
-- **Permission prompts from the phone** — Allow, Allow always, Deny.
+- **The model menu is the CLI's own**: the models Claude Code offers this
+  account, with its descriptions and prices, and the effort levels each model
+  actually takes — Low, Medium, **High**, Extra, Max — rather than a list kept
+  here that drifts. Haiku has none, so it shows none.
+
+<div align="center"><img src="docs/images/model-menu.png" alt="The model menu: the CLI's own models, with Effort from Low to Max" width="420"></div>
+
+- **Permission prompts from the phone** — Allow, Allow always, Deny. A question
+  from Claude arrives as a question: its options, a box for an answer that is
+  not on the list, and the card collapses to what you chose.
+- **Deleting is undoable**: a deleted session goes to a trash folder and comes
+  back from *Deleted sessions*; only emptying the trash removes anything.
 - **Tasks panel**: every command, subagent and workflow the turn is running,
   with elapsed time, live output and its own Stop; send one to the background
   and let Claude carry on.
@@ -97,6 +115,13 @@ on a session, this one follows along and shows what it is doing.
 - **Native app on all three**: the webview the machine already has, a few
   megabytes, tray icon, start with the machine, system notifications. Windows
   draws its own title bar; macOS and Linux keep theirs.
+- **It updates itself, both ways**: every merge to `main` is built and published
+  by GitHub Actions, and the app notices within the hour. The banner offers the
+  file for the device you are holding **and** an *Update DESKTOP-…* button that
+  tells the computer you are driving to fetch and install its own — the half you
+  cannot do by tapping Download on a phone.
+- **Restart the server or rebuild the app from anywhere**, including mid-turn:
+  the server is a separate process, so the chat survives its own window closing.
 
 See [docs/features.md](docs/features.md) for the whole list with the detail.
 
@@ -116,6 +141,12 @@ Every release is built and published by GitHub Actions when a change lands on
 `main`, so what is on that page is what the code is. The app checks it once an
 hour and offers the new one in a banner — the version and the commit it was built
 from are in *Connectors & plugins → App*.
+
+Two apps can be out of date at once, and they are different files: the one in
+your hands and the one on the computer you are driving. The banner knows the
+difference. **Download** takes the build for the device you are on;
+**Update DESKTOP-…** tells that computer to fetch its own installer, close its
+window, install and come back — so a phone can update the PC it is driving.
 
 ### From source
 
@@ -193,6 +224,8 @@ Near term, in the order they are likely to happen:
 - [x] The PR bar's monitoring: CI failures, review comments, auto-merge.
 - [x] Per-session git worktrees, and *Keep computer awake*.
 - [x] macOS and Linux shells, so the native window is not Windows-only.
+- [x] Releases built and published by CI, and an app that offers them — to the
+      device you are holding, and to the computer you are driving.
 - [ ] Preview tools for Claude: the previewed page's console, network errors
       and DOM, so it can fix what it is looking at.
 - [ ] Terminal pane and split view.

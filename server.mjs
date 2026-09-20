@@ -1031,12 +1031,70 @@ app.get('/api/version', (_req, res) => {
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
   const git = gitInfo();
-  res.json({ ...git, commit: git.commit || appCommit.slice(0, 7), version: appVersion, repo: REPO, platform: process.platform, serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged, update: update.status({ repo: REPO, version: appVersion, platform: process.platform }) });
+  res.json({ ...git, commit: git.commit || appCommit.slice(0, 7), version: appVersion, repo: REPO, platform: process.platform, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this computer', serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged, update: update.status({ repo: REPO, version: appVersion, platform: process.platform }) });
 });
 // "Check again" in the App panel: the hourly cache is fine for a banner, less so for
 // someone standing there having just merged a pull request.
 app.post('/api/update/check', async (_req, res) => {
   res.json(await update.checkNow({ repo: REPO, version: appVersion, platform: process.platform }));
+});
+
+// Installing the new version **on this computer**, asked for from anywhere — the phone,
+// or the Mac that is using this machine. The device you are holding downloads its own
+// file; this is the other half, the one you cannot do by tapping Download.
+const UPDATE_LOG = path.join(DATA_DIR, 'update.log');
+const stampLine = (m) => '[' + new Date().toTimeString().slice(0, 8) + '] ' + m + '\n';
+let installing = false;
+app.post('/api/update/install', async (_req, res) => {
+  if (installing) return res.status(409).json({ error: 'Already installing.' });
+  const u = update.status({ repo: REPO, version: appVersion, platform: process.platform });
+  if (!u?.newer) return res.status(400).json({ error: 'There is nothing newer to install on this computer.' });
+  if (process.platform !== 'win32') return res.status(400).json({ error: 'Installing from here is a Windows thing for now. On this computer, open ' + (u.download?.name || 'the release') + ' yourself.' });
+  const script = path.join(here, 'scripts', 'update.ps1');
+  if (!fs.existsSync(script)) return res.status(400).json({ error: 'scripts/update.ps1 is missing' });
+  if (!u.download?.url) return res.status(400).json({ error: 'That release has no installer for this computer.' });
+  if (liveCount()) return res.status(409).json({ error: 'Claude is working. The app has to close to be replaced, so finish the turn first.' });
+
+  installing = true;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const mb = (n) => (n >= 10485760 ? Math.round(n / 1048576) + ' MB' : (n / 1048576).toFixed(1) + ' MB');
+  fs.writeFileSync(UPDATE_LOG, stampLine('downloading ' + u.download.name + ' (' + mb(u.download.size) + ')'));
+  res.json({ ok: true, log: UPDATE_LOG, asset: u.download.name });
+
+  // The download is here rather than in the script so its progress can be reported,
+  // and so a half-written installer is never run.
+  const target = path.join(os.tmpdir(), u.download.name);
+  try {
+    const r = await fetch(u.download.url, { redirect: 'follow', headers: { 'User-Agent': 'claude-anywhere' } });
+    if (!r.ok) throw new Error('GitHub answered ' + r.status);
+    const total = Number(r.headers.get('content-length')) || u.download.size || 0;
+    let got = 0, lastSaid = 0;
+    const out = fs.createWriteStream(target);
+    for await (const chunk of r.body) {
+      out.write(chunk);
+      got += chunk.length;
+      const pct = total ? Math.round((got / total) * 100) : 0;
+      if (pct >= lastSaid + 10) { lastSaid = pct; fs.appendFileSync(UPDATE_LOG, stampLine(pct + '%')); }
+    }
+    out.end();
+    await new Promise((done, fail) => { out.on('finish', done); out.on('error', fail); });
+    fs.appendFileSync(UPDATE_LOG, stampLine('downloaded; closing the window to install'));
+    // Same two Windows traps as the rebuild: a detached PowerShell with no console
+    // exits at once, and an attached one dies with whatever started it.
+    const q = (v) => "'" + String(v).replace(/'/g, "''") + "'";
+    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Installer', target, '-Exe', envOf('APP_EXE') || '', '-Log', UPDATE_LOG];
+    const launcher = `Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList ${args.map(q).join(',')}`;
+    spawn('powershell.exe', ['-NoProfile', '-Command', launcher], { stdio: 'ignore', windowsHide: true }).unref();
+  } catch (e) {
+    fs.appendFileSync(UPDATE_LOG, stampLine('could not download it: ' + (e.message || e)) + stampLine('done'));
+    installing = false;
+  }
+});
+app.get('/api/update/install/log', (_req, res) => {
+  let text = '', at = 0;
+  try { text = fs.readFileSync(UPDATE_LOG, 'utf8'); at = fs.statSync(UPDATE_LOG).mtimeMs; } catch {}
+  const done = /\]\s*done\s*$/.test(text.trim());
+  res.json({ text, at, done, running: !!text.trim() && !done && Date.now() - at < 300000 });
 });
 // New server code (server.mjs, lib/, public/) without touching the window: the app
 // restarts the server on exit code 75 and reloads the page.

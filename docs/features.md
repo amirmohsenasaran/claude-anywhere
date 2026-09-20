@@ -296,14 +296,27 @@ to ask, so the shell carries its own version and commit — compiled in by the b
 that made it.
 
 Once an hour the server asks GitHub whether the [latest release][releases] is
-newer than the running version, and a banner offers it: *Claude Anywhere 0.5.0 is
-available · you have 0.4.0 · 14 MB* with a **Download** button that opens the file
-for this platform — the `.exe`, the `.dmg` or the `.deb`, picked from the release's
-own assets. Nothing is sent anywhere; it is one unauthenticated read of a public
-page, cached for every device pointed at this server, and
-`CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` stops it asking at all. Installing is
-never automatic — replacing the app under a turn in flight is not something to do
-behind your back.
+newer, and a banner offers it. Nothing is sent anywhere; it is one
+unauthenticated read of a public page, cached for every device pointed at this
+server, and `CLAUDE_ANYWHERE_UPDATE_CHECK=off` in `.env` stops it asking at all.
+
+**Two apps can be out of date at once**, and they are different files on
+different machines: the app in your hands, and the app on the computer this
+window is showing. From the Mac driving the PC, a single *Download* button used
+to hand you the PC's Windows installer. So there are two offers, and the panel
+shows whichever apply:
+
+- **Download for this Mac · 101 MB** — the file for the device you are holding,
+  chosen from the release's own assets by what this device is. A phone gets no
+  such button, because there is nothing there to install.
+- **Update DESKTOP-JAG2O5O** — that computer downloads its own installer, closes
+  its window, installs and opens again, with the progress in the panel. It is the
+  half you cannot do by tapping Download on a phone, and it is refused while
+  Claude is working, because the app has to close to be replaced. Windows only so
+  far; elsewhere it says to open the file on that machine.
+
+Installing is never automatic. Replacing the app under a turn in flight is not
+something to do behind your back.
 
 Releases themselves are built by GitHub, never from a laptop: merging to `main`
 runs CI, and a green run cuts the version, tags it, builds Windows, macOS and
