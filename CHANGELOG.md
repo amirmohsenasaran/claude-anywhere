@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-09-20
+
 ### Added
 
 - **The update banner knows which app it is talking about.** Two can be out of date
@@ -394,7 +396,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.5.0...v0.6.0
