@@ -961,23 +961,26 @@
     level.classList.remove('changed'); void level.offsetWidth; level.classList.add('changed');
     $('#ef-note').textContent = EFFORT_HINT[at] || EFFORT_ABOUT;
     const track = $('#ef-track');
-    track.style.setProperty('--ef-pos', (stops.length > 1 ? (i / (stops.length - 1)) * 100 : 50) + '%');
+    // A fraction, not a percentage: the knob and the fill are placed by the same
+    // calc() so the dots line up with where the knob actually stops.
+    const fraction = (n) => (stops.length > 1 ? n / (stops.length - 1) : 0.5);
+    track.style.setProperty('--ef-f', String(fraction(i)));
     track.setAttribute('aria-valuemin', '1');
     track.setAttribute('aria-valuemax', String(stops.length));
     track.setAttribute('aria-valuenow', String(i + 1));
     track.setAttribute('aria-valuetext', EFFORT_NAMES[at] || at);
     const dots = $('#ef-dots'); dots.innerHTML = '';
     stops.forEach((id, n) => {
-      const d = el('button', 'ef-dot' + (n <= i ? ' past' : '') + (id === DEFAULT_EFFORT ? ' default' : ''));
+      const d = el('button', 'ef-dot' + (id === DEFAULT_EFFORT ? ' default' : ''));
       d.type = 'button'; d.tabIndex = -1;
-      d.title = (EFFORT_NAMES[id] || id) + (id === DEFAULT_EFFORT ? ' · default' : '');
-      d.style.left = (stops.length > 1 ? (n / (stops.length - 1)) * 100 : 50) + '%';
+      d.setAttribute('aria-label', EFFORT_NAMES[id] || id); // a native tooltip here floats over the panel
+      d.style.setProperty('--ef-f', String(fraction(n)));
       d.addEventListener('click', (e) => { e.stopPropagation(); pickEffort(id); });
       dots.appendChild(d);
     });
   }
 
-  function pickEffort(id) {
+  function pickEffort(id, push = true) {
     const stops = effortStops(state.model);
     if (!stops.includes(id)) return;
     const wasUltra = !!state.ultracode;
@@ -989,6 +992,7 @@
       localStorage.setItem('cr.effort', state.effort);
     } catch {}
     renderEffortChip(); paintEffortPop();
+    if (!push) return; // mid-drag: show it, tell the session when the finger lifts
     const patch = { effort: state.effort };
     if (state.ultracode || wasUltra) patch.ultracode = state.ultracode;
     pushControls(patch);
@@ -1000,7 +1004,9 @@
     const stops = effortStops(state.model);
     if (stops.length < 2) return null;
     const r = $('#ef-track').getBoundingClientRect();
-    const x = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+    // The knob's middle never reaches the ends of the bar — it stops 12px in — so the
+    // pointer is measured against the travel, not the width, or the ends never pick.
+    const x = Math.min(Math.max((e.clientX - r.left - 12) / Math.max(r.width - 24, 1), 0), 1);
     return stops[Math.round(x * (stops.length - 1))];
   }
   (function effortSlider() {
@@ -1010,10 +1016,12 @@
     // down with it — a thrown TypeError here leaves a white window.
     if (!track) return;
     let dragging = false;
-    track.addEventListener('pointerdown', (e) => { dragging = true; track.setPointerCapture && track.setPointerCapture(e.pointerId); const id = stopFromPointer(e); if (id) pickEffort(id); });
-    track.addEventListener('pointermove', (e) => { if (!dragging) return; const id = stopFromPointer(e); if (id && id !== stopOf(state.model)) pickEffort(id); });
-    track.addEventListener('pointerup', () => { dragging = false; });
-    track.addEventListener('pointercancel', () => { dragging = false; });
+    const commit = () => { if (!dragging) return; dragging = false; pickEffort(stopOf(state.model)); };
+    track.addEventListener('pointerdown', (e) => { dragging = true; track.setPointerCapture && track.setPointerCapture(e.pointerId); const id = stopFromPointer(e); if (id) pickEffort(id, false); });
+    track.addEventListener('pointermove', (e) => { if (!dragging) return; const id = stopFromPointer(e); if (id && id !== stopOf(state.model)) pickEffort(id, false); });
+    track.addEventListener('pointerup', commit);
+    track.addEventListener('pointercancel', commit);
+    track.addEventListener('lostpointercapture', commit);
     track.addEventListener('keydown', (e) => {
       const stops = effortStops(state.model);
       const i = stops.indexOf(stopOf(state.model));
@@ -2648,6 +2656,34 @@
   for (const evn of ['dragover', 'dragenter']) document.addEventListener(evn, (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); $('#composer').classList.add('drop'); } });
   document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) $('#composer').classList.remove('drop'); });
   document.addEventListener('drop', (e) => { $('#composer').classList.remove('drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles([...e.dataTransfer.files]); } });
+
+  // The native window never sees those events: Tauri takes the drop itself and emits
+  // `tauri://drag-drop` with the paths instead. (Turning its handler off, which was the
+  // first attempt, left macOS with no drop at all.) A path is no use to the server — the
+  // file is on the computer that was dropped on, which is not the one running the session
+  // when this window is showing another computer — so the shell reads it and the bytes
+  // join the same queue as a file picked from the disk.
+  const DROP_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', svg: 'image/svg+xml', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', json: 'application/json', csv: 'text/csv' };
+  async function addPaths(paths) {
+    const invoke = bridge();
+    if (!invoke || !paths?.length) return;
+    const files = [];
+    for (const p of paths.slice(0, 10)) {
+      const name = String(p).split(/[\\/]/).pop();
+      try {
+        const bytes = await invoke('dropped_file', { path: p }); // an ArrayBuffer
+        files.push(new File([bytes], name, { type: DROP_TYPES[name.split('.').pop().toLowerCase()] || 'application/octet-stream' }));
+      } catch (e) { thread.appendChild(el('div', 'note error', name + ' ' + (e.message || e))); }
+    }
+    if (files.length) addFiles(files);
+  }
+  (function nativeDrops() {
+    const ev = window.__TAURI__?.event;
+    if (!ev?.listen) return; // a browser: the HTML5 handlers above are the whole story
+    ev.listen('tauri://drag-enter', () => $('#composer').classList.add('drop')).catch(() => {});
+    ev.listen('tauri://drag-leave', () => $('#composer').classList.remove('drop')).catch(() => {});
+    ev.listen('tauri://drag-drop', (e) => { $('#composer').classList.remove('drop'); addPaths(e.payload?.paths || []); }).catch(() => {});
+  })();
 
   async function submit() {
     const text = input.value.trim(); if (!text && !pending.length) return;

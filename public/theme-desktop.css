@@ -691,32 +691,37 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 /* ---------- v40: effort as its own chip, and a slider from Faster to Smarter ---------- */
 .effort-chip { font-variant-numeric: tabular-nums; }
 .effort-chip.ultra { color: #a78bfa; border-color: rgba(167, 139, 250, .45); }
-.effort-pop { min-width: 268px; padding: 14px 16px 12px; }
+/* Every number in this panel is measured off Claude's own at 2x, because matching it by
+   eye got all of them wrong: 220 wide with 11px sides, a 196x20 track, and a 16x20 knob
+   that stays inside the track instead of riding over its edges. */
+.effort-pop { width: 220px; min-width: 0; padding: 11px 11px 13px; border-radius: 12px; }
 /* The popover arrives rather than appears — 120ms is enough to be noticed, not waited for. */
 .effort-pop:not(.hidden) { animation: ef-in 130ms cubic-bezier(.2, .8, .3, 1); transform-origin: bottom right; }
 @keyframes ef-in { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
-.ef-head { display: flex; align-items: baseline; gap: 8px; }
-.ef-what { color: var(--ink-3); font-size: 14px; }
-.ef-level { font-size: 15px; font-weight: 500; color: var(--ink); }
+.ef-head { display: flex; align-items: center; gap: 10px; height: 18px; font-size: 13px; }
+.ef-what { color: var(--ink-3); }
+.ef-level { font-weight: 500; color: var(--ink); }
 .effort-pop.ultra .ef-level { color: #a78bfa; }
 .ef-level.changed { animation: ef-name 220ms ease-out; }
 @keyframes ef-name { from { opacity: .3; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-.ef-help { margin-inline-start: auto; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-2); background: none; color: var(--ink-3); font-size: 11px; line-height: 1; cursor: pointer; }
+.ef-help { margin-inline-start: auto; display: grid; place-items: center; width: 13px; height: 13px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: none; color: var(--ink-3); font-size: 9px; line-height: 1; cursor: pointer; }
 .ef-help:hover { color: var(--ink); border-color: var(--ink-3); }
-.ef-ends { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 13px; margin: 12px 0 8px; }
-.ef-track { position: relative; height: 26px; border-radius: 13px; background: var(--bg-3); cursor: pointer; touch-action: none; }
+.ef-ends { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 13px; line-height: 18px; margin: 20px 0 8px; }
+.ef-track { position: relative; height: 20px; border-radius: 10px; background: rgba(255, 255, 255, .13); cursor: pointer; touch-action: none; }
 .ef-track:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Six stops, 34.4px apart, from the knob's own travel: 4px in from each end of the track.
+   The bar behind the knob is filled; the fill stops at the knob's middle, under it. */
+.ef-fill { position: absolute; inset: 0 auto 0 0; width: calc(12px + (100% - 24px) * var(--ef-f, 0)); border-radius: 10px; background: rgba(255, 255, 255, .35); transition: width 170ms cubic-bezier(.2, .8, .3, 1); }
 .ef-dots { position: absolute; inset: 0; }
-.ef-dot { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
-.ef-dot::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--ink-3); opacity: .5; transition: opacity 140ms ease, background 140ms ease; }
-.ef-dot.past::after { opacity: .85; }
-.ef-dot:hover::after { opacity: 1; }
-.effort-pop.ultra .ef-dot.past::after { background: #a78bfa; opacity: .9; }
+.ef-dot { position: absolute; top: 50%; left: calc(12px + (100% - 24px) * var(--ef-f, 0)); width: 14px; height: 14px; margin: -7px 0 0 -7px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+/* One alpha for every dot: over the fill it reads light, over the bare bar it reads dim,
+   which is exactly the two greys Claude's panel shows. */
+.ef-dot::after { content: ""; position: absolute; inset: 5.5px; border-radius: 50%; background: rgba(255, 255, 255, .25); transition: background 140ms ease; }
+.ef-dot:hover::after { background: rgba(255, 255, 255, .55); }
 /* The knob travels; it does not jump. Everything else here is still. */
-.ef-knob { position: absolute; top: 3px; left: var(--ef-pos, 50%); width: 20px; height: 20px; margin-inline-start: -10px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); transition: left 170ms cubic-bezier(.2, .8, .3, 1); pointer-events: none; }
-.ef-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--ink-3); max-height: 0; overflow: hidden; opacity: 0; transition: max-height 180ms ease, opacity 180ms ease; }
-.ef-note.open { max-height: 80px; opacity: 1; }
-@media (max-width: 860px) { .effort-pop { min-width: 240px; } }
-/* Ultracode fills the track rather than merely tinting its dots, the way Claude shows it. */
-.effort-pop.ultra .ef-track { background-image: radial-gradient(rgba(167, 139, 250, .55) 1px, transparent 1.2px); background-size: 7px 7px; background-position: 3px 3px; }
-.effort-pop.ultra .ef-dot::after { opacity: 0; }
+.ef-knob { position: absolute; top: 0; left: calc(4px + (100% - 24px) * var(--ef-f, 0)); width: 16px; height: 20px; border-radius: 8px; background: #fff; transition: left 170ms cubic-bezier(.2, .8, .3, 1); pointer-events: none; }
+.ef-note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--ink-3); max-height: 0; overflow: hidden; opacity: 0; transition: max-height 180ms ease, opacity 180ms ease, margin 180ms ease; }
+.ef-note.open { margin-top: 10px; max-height: 80px; opacity: 1; }
+/* Ultracode keeps the dark bar and fills it with violet dots that gather towards the knob
+   — brighter to the right, not a flat tint, which is how Claude draws that one stop. */
+.effort-pop.ultra .ef-fill { background-color: transparent; background-image: radial-gradient(#a78bfa .9px, transparent 1.1px); background-size: 4px 4px; -webkit-mask-image: linear-gradient(to right, transparent 4%, #000 88%); mask-image: linear-gradient(to right, transparent 4%, #000 88%); }

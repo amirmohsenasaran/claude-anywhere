@@ -561,6 +561,33 @@ fn app_version() -> ThisApp {
     }
 }
 
+/// The bytes of a file dropped on this window. Tauri takes the drop itself and gives the
+/// page paths rather than data (see the drag-drop listener in app.js), and the file is on
+/// the machine the window is on - which is not the machine running the server when this
+/// app is showing another computer. So the shell reads it and the page sends it on, the
+/// same way it sends a file picked from the disk.
+///
+/// Async on purpose: a #[tauri::command] that is not async runs on the main thread, and a
+/// 20 MB read there freezes the window mid-drop.
+#[tauri::command]
+async fn dropped_file(path: String) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(&path);
+        let meta = fs::metadata(&p).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            return Err("is a folder".into());
+        }
+        if meta.len() > 25 * 1024 * 1024 {
+            return Err("is larger than 25 MB".into());
+        }
+        fs::read(&p)
+            .map(tauri::ipc::Response::new)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The app password of this computer, so adding another one can reuse it instead of
 /// asking for a second password nobody wanted to invent.
 #[tauri::command]
@@ -653,6 +680,7 @@ fn main() {
             computers,
             active_computer,
             app_version,
+            dropped_file,
             default_password,
             open_picker
         ])
@@ -688,12 +716,11 @@ fn main() {
                     // where every other window on that machine puts them.
                     .decorations(!cfg!(windows))
                     .shadow(true)
-                    // Tauri handles dropped files itself by default, which means the page
-                    // never gets a `drop` event — and the page is where dropping a file on
-                    // the composer is handled, so on macOS nothing happened at all. Turning
-                    // it off gives the web view its ordinary HTML5 drag and drop back, the
-                    // same path a browser takes.
-                    .disable_drag_drop_handler()
+                    // Tauri's own drag-drop handler stays on: turning it off was meant to
+                    // give the page ordinary HTML5 drops, and on macOS that produced no
+                    // drop at all — neither the native one nor the web one. What it does
+                    // emit is `tauri://drag-drop` carrying the paths, which the page picks
+                    // up (see app.js). Paths beat bytes here: the file is on this machine.
                     .visible(false)
                     .build()?;
             if let Ok(u) = win.url() {

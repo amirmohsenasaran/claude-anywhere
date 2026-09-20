@@ -23,3 +23,11 @@ commands.allow = ["computers", "active_computer", "app_version", "connection_use
 identifier = "allow-computer-editing"
 description = "Read, test and save the list of computers, including their app passwords. For the picker page the app carries itself - never for a page a server sent."
 commands.allow = ["connections_get", "connections_save", "connection_test", "default_password"]
+
+# A file dropped on the window is read by the app, not by the server: the two are on
+# different computers whenever this window is showing another one. Reading is confined
+# to a path the person just dropped - the page cannot name one itself.
+[[permission]]
+identifier = "allow-dropped-files"
+description = "Read a file that was dropped on this window, so it can be attached to a message."
+commands.allow = ["dropped_file"]

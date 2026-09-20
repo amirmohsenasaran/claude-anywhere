@@ -53,6 +53,13 @@ panel. A path that is only mentioned does not embed a player in the middle of th
 message — media appears inline where it was actually handed over: a file sent to you,
 or a picture Claude read.
 
+Going the other way, a file reaches Claude by the **+** button, by pasting it, or by
+dropping it on the window — up to ten at a time, 25 MB each. In the native app the
+drop is the window's own, not the page's: it arrives as a path and the app reads it
+from the computer you dropped it on. That is what makes dropping a screenshot on the
+Mac work while the session it joins is running on the PC. A folder is declined by
+name rather than ignored.
+
 ## Deleting, and undoing it
 
 Delete moves a session’s transcript to a trash folder inside the app’s data
