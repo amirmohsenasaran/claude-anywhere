@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The update banner knows which app it is talking about.** Two can be out of date
+  at once and they are different files on different machines: the app in your hands,
+  and the app on the computer the window is showing. From a Mac driving the PC, one
+  *Download* button handed you the PC's Windows installer. Now the panel offers
+  **Download for this Mac** — the file for the device you are actually holding — and
+  **Update DESKTOP-…**, which tells that computer to fetch its own installer, close
+  its window, install and come back, with the progress streaming into the panel. A
+  phone gets the second one only: there is nothing on a phone to install. Refused
+  while Claude is working, because the app has to close to be replaced.
+- **The README shows the app as it is now**, with the computer list and the model
+  menu in it.
+
 ## [0.7.1] — 2026-09-20
 
 ### Fixed
