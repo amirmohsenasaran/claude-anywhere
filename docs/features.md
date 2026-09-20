@@ -280,13 +280,23 @@ From *Connectors & plugins* → **App**:
   checkout and reloads the window. Mid-turn it waits: the restart is queued and
   happens the moment the turn ends, so nothing in flight is lost. It works
   whether the app started that server or adopted the one a rebuild left running.
-- **Rebuild app** is for changes to the Rust shell. It closes the window,
-  runs `cargo tauri build` (1–3 minutes) and opens it again; the log streams
-  into the panel. The chat does not stop — the server is a separate process, so
-  a turn in flight keeps running and the phone keeps working.
+- **Rebuild app** is for changes to the Rust shell, **when the window is the
+  build in this checkout**. It closes the window, runs `cargo tauri build` (1–3
+  minutes) and opens it again; the log streams into the panel. The chat does not
+  stop — the server is a separate process, so a turn in flight keeps running and
+  the phone keeps working.
 
 A banner appears by itself when the files on disk are newer than what is
 running, and says which one you need.
+
+**An installed app is not rebuilt, it is replaced.** `cargo tauri build` compiles
+into `src-tauri/target` and starts what it finds there, so pressing Rebuild while
+a release is running spends three minutes and changes nothing you can see — the
+second binary starts and single-instance closes it again. So the button is only
+offered when the running window *is* the checkout's build; otherwise the panel
+says plainly that shell changes arrive in the next release, and **Update
+DESKTOP-…** below it is the button that does something. That is the ordinary
+path: merge, CI builds and publishes, the app offers it within the hour.
 
 ## New versions
 

@@ -642,6 +642,12 @@ fn main() {
                     // where every other window on that machine puts them.
                     .decorations(!cfg!(windows))
                     .shadow(true)
+                    // Tauri handles dropped files itself by default, which means the page
+                    // never gets a `drop` event — and the page is where dropping a file on
+                    // the composer is handled, so on macOS nothing happened at all. Turning
+                    // it off gives the web view its ordinary HTML5 drag and drop back, the
+                    // same path a browser takes.
+                    .disable_drag_drop_handler()
                     .visible(false)
                     .build()?;
             if let Ok(u) = win.url() {

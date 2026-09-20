@@ -1023,6 +1023,15 @@ function newerThan(files, since) {
   for (const f of files) { try { if (fs.statSync(f).mtimeMs > since + 1000) out.push(path.relative(here, f).replace(/\\/g, '/')); } catch {} }
   return out;
 }
+// Is the running window the build in this checkout, or an installed release? Rebuild
+// only means anything for the first: it compiles into src-tauri/target and starts what
+// it finds there, so pressing it while an installed app is running spends three minutes
+// and changes nothing you can see.
+const devBuild = () => {
+  const exe = envOf('APP_EXE');
+  if (!exe) return false;
+  try { return path.resolve(exe).toLowerCase().startsWith(path.join(here, 'src-tauri', 'target').toLowerCase()); } catch { return false; }
+};
 const listDir = (d, ext) => { try { return fs.readdirSync(d).filter((f) => ext.test(f)).map((f) => path.join(d, f)); } catch { return []; } };
 app.get('/api/version', (_req, res) => {
   let exeAt = null; try { exeAt = fs.statSync(envOf('APP_EXE')).mtimeMs; } catch {}
@@ -1031,7 +1040,7 @@ app.get('/api/version', (_req, res) => {
   const changed = newerThan(serverFiles, SERVER_STARTED_AT);
   const shellChanged = exeAt ? newerThan(shellFiles, exeAt) : [];
   const git = gitInfo();
-  res.json({ ...git, commit: git.commit || appCommit.slice(0, 7), version: appVersion, repo: REPO, platform: process.platform, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this computer', serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged, update: update.status({ repo: REPO, version: appVersion, platform: process.platform }) });
+  res.json({ ...git, commit: git.commit || appCommit.slice(0, 7), version: appVersion, repo: REPO, platform: process.platform, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this computer', serverDir: here, serverStartedAt: SERVER_STARTED_AT, appExe: envOf('APP_EXE') || null, appBuiltAt: exeAt, devBuild: devBuild(), liveRuns: liveCount(), inApp: !!envOf('PARENT_PID'), restartQueued, stale: changed.length > 0, changed, shellStale: shellChanged.length > 0, shellChanged, update: update.status({ repo: REPO, version: appVersion, platform: process.platform }) });
 });
 // "Check again" in the App panel: the hourly cache is fine for a banner, less so for
 // someone standing there having just merged a pull request.
