@@ -13,7 +13,7 @@
 [[permission]]
 identifier = "allow-computer-switching"
 description = "List your computers with what each is doing, see which one this window is showing, switch to another, and open the page that edits the list."
-commands.allow = ["computers", "active_computer", "connection_use", "open_picker"]
+commands.allow = ["computers", "active_computer", "app_version", "connection_use", "open_picker"]
 
 # The picker is a page the app carries inside its own binary, and on Windows that page
 # is served from http://tauri.localhost — an http origin, which any remote rule with a

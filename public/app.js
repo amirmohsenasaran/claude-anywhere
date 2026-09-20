@@ -1058,6 +1058,54 @@
   // relTime says "now" for the last minute, and "now ago" is not a thing.
   const ago = (ms) => { const r = relTime(ms); return r === 'now' ? 'just now' : r + ' ago'; };
 
+  // Two apps can be out of date at once, and they are not the same app: the one in your
+  // hands, and the one on the computer answering this window. From a Mac driving the PC,
+  // "Download" used to hand you the PC's Windows installer.
+  let deviceApp = null; // { version, commit, platform } when a shell is there
+  const PLATFORM_OF = { windows: 'win32', macos: 'darwin', linux: 'linux' };
+  const PLATFORM_NAME = { win32: 'Windows', darwin: 'Mac', linux: 'Linux' };
+  async function whatAmI() {
+    const invoke = bridge();
+    if (invoke) { try { const a = await invoke('app_version'); return { ...a, platform: PLATFORM_OF[a.platform] || a.platform }; } catch {} }
+    return null;
+  }
+  // In a browser there is no app to update, but there is still a machine that could
+  // install one — a Mac in Safari can take the .dmg.
+  function devicePlatform() {
+    if (deviceApp?.platform) return deviceApp.platform;
+    const ua = navigator.userAgent;
+    if (/iPhone|iPad|Android/i.test(ua)) return null; // nothing here to install
+    if (/Macintosh|Mac OS X/i.test(ua)) return 'darwin';
+    if (/Windows/i.test(ua)) return 'win32';
+    if (/Linux/i.test(ua)) return 'linux';
+    return null;
+  }
+  const onThisComputer = () => (activeComputer ? !activeComputer.remote : /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname));
+  // Same rule as the server's, for the copy of the app this device is running.
+  function newerThanMine(latest, mine) {
+    const n = (v) => String(v || '').replace(/^v/, '').split(/[.-]/).slice(0, 3).map((x) => Number(x) || 0);
+    const [a, b] = [n(latest), n(mine)];
+    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+    return false;
+  }
+
+  // Ask that computer to install it on itself — the half you cannot do by tapping
+  // Download, because the file belongs on a machine you are not sitting at.
+  async function installThere(hostName, btn) {
+    const log = $('#app-log'); log.classList.remove('hidden'); log.classList.remove('old');
+    log.textContent = 'Asking ' + hostName + ' to install it…';
+    if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+    try { await api('/update/install', { method: 'POST', body: JSON.stringify({}) }); }
+    catch (e) { log.textContent = e.message; if (btn) { btn.disabled = false; btn.textContent = 'Update ' + hostName; } return; }
+    // The window it is replacing may be this one; the log survives either way.
+    const poll = setInterval(async () => {
+      let j; try { j = await api('/update/install/log'); } catch { log.textContent += '\n(that computer is restarting…)'; return; }
+      log.textContent = j.text || 'Starting…';
+      log.scrollTop = log.scrollHeight;
+      if (j.done) { clearInterval(poll); if (btn) { btn.disabled = false; btn.textContent = 'Update ' + hostName; } setTimeout(() => location.reload(), 4000); }
+    }, 2000);
+  }
+
   // What this build is, and whether GitHub has a newer one. A released app has no
   // checkout to ask, so the version and the commit come from the shell that was built.
   function paintUpdate(v, checking) {
@@ -1066,16 +1114,38 @@
     const again = (label) => { const b = el('button', 'link-btn small'); b.type = 'button'; b.textContent = label; b.addEventListener('click', checkUpdateNow); return b; };
     if (u.off) { box.appendChild(el('span', 'muted', 'Update checks are off.')); return; }
     if (checking) { box.appendChild(el('span', 'muted', 'Asking GitHub…')); return; }
-    if (u.newer) {
-      const line = el('span', 'update-yes', 'Claude Anywhere ' + u.latest + ' is available');
-      box.appendChild(line);
-      const get = el('button', 'link-btn small strong'); get.type = 'button';
-      get.textContent = u.download ? 'Download ' + (mb(u.download.size) || 'it') : 'Open the release';
-      get.addEventListener('click', () => openExternal(u.download?.url || u.url));
-      box.appendChild(get);
+    const mine = devicePlatform();
+    const deviceOld = deviceApp && newerThanMine(u.latest, deviceApp.version);
+    if (u.newer || deviceOld) {
+      box.appendChild(el('span', 'update-yes', 'Claude Anywhere ' + u.latest + ' is available'));
+      const here = onThisComputer();
+      // That computer: it can fetch and install its own file, which is the only way to
+      // update a machine you are not sitting at.
+      if (u.newer && v.platform === 'win32') {
+        const name = v.host || 'that computer';
+        const b = el('button', 'link-btn small strong'); b.type = 'button';
+        b.textContent = 'Update ' + name;
+        b.title = name + ' downloads it, closes the window, installs, and opens it again';
+        b.addEventListener('click', () => installThere(name, b));
+        box.appendChild(b);
+      } else if (u.newer && u.download) {
+        const b = el('button', 'link-btn small' + (here ? ' strong' : '')); b.type = 'button';
+        b.textContent = here ? 'Download ' + (mb(u.download.size) || 'it') : (v.host || 'That computer') + ' needs ' + u.download.name;
+        b.addEventListener('click', () => openExternal(u.download.url));
+        box.appendChild(b);
+      }
+      // And the app you are holding, which is a different file on a different machine.
+      const forMe = mine && u.downloads?.[mine];
+      if (forMe && (!here || !u.newer)) {
+        const b = el('button', 'link-btn small strong'); b.type = 'button';
+        b.textContent = 'Download for this ' + (PLATFORM_NAME[mine] || 'device') + (mb(forMe.size) ? ' · ' + mb(forMe.size) : '');
+        b.addEventListener('click', () => openExternal(forMe.url));
+        box.appendChild(b);
+      }
       const notes = el('button', 'link-btn small'); notes.type = 'button'; notes.textContent = 'What changed';
       notes.addEventListener('click', () => openExternal(u.url));
       box.appendChild(notes);
+      if (deviceApp) box.appendChild(el('span', 'muted warn-plain', 'This app is ' + deviceApp.version + ' on ' + (PLATFORM_NAME[deviceApp.platform] || deviceApp.platform) + (u.newer ? ' · ' + (v.host || 'that computer') + ' runs ' + (u.current || '?') : '')));
       return;
     }
     // Running a checkout is normally ahead of every release, and calling that
@@ -1170,17 +1240,36 @@
     let v; try { v = await api('/version'); } catch { return; }
     const bar = $('#update-banner');
     const u = v.update || {};
+    const deviceOld = deviceApp && newerThanMine(u.latest, deviceApp.version);
     // A published release wins over the two development ones: a release is the app
     // everybody has, the others only mean this checkout is ahead of what is running.
-    const key = u.newer ? 'rel:' + u.latest : (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
+    const key = u.newer || deviceOld ? 'rel:' + u.latest : (v.shellStale ? 'shell:' + v.shellChanged.join(',') : '') + (v.stale ? 'srv:' + v.changed.join(',') : '');
     if (!key || key === updateSnoozed) { bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     $('#ub-action').disabled = false; // the restart branch below disables it, and the banner outlives that reason
-    if (u.newer) {
+    if (u.newer || deviceOld) {
+      const mine = devicePlatform();
+      const forMe = mine && u.downloads?.[mine];
+      const here = onThisComputer();
       $('#ub-text').textContent = 'Claude Anywhere ' + u.latest + ' is available';
-      $('#ub-detail').textContent = ['you have ' + (u.current || 'an older build'), u.publishedAt && 'published ' + ago(u.publishedAt), u.download && mb(u.download.size)].filter(Boolean).join(' · ');
-      $('#ub-action').textContent = u.download ? 'Download' : 'Open the release';
-      $('#ub-action').onclick = () => openExternal(u.download?.url || u.url);
+      $('#ub-detail').textContent = [
+        deviceApp ? 'this app is ' + deviceApp.version : u.current && 'you have ' + u.current,
+        u.newer && !here && (v.host || 'that computer') + ' runs ' + (u.current || '?'),
+        u.publishedAt && 'published ' + ago(u.publishedAt),
+      ].filter(Boolean).join(' · ');
+      // The app in your hands comes first when it is the old one; otherwise the offer is
+      // to update the computer you are driving, which you cannot do by downloading here.
+      if (u.newer && v.platform === 'win32') {
+        const name = v.host || 'that computer';
+        $('#ub-action').textContent = 'Update ' + name;
+        $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); installThere(name, null); };
+      } else if (deviceOld && forMe) {
+        $('#ub-action').textContent = 'Download';
+        $('#ub-action').onclick = () => openExternal(forMe.url);
+      } else {
+        $('#ub-action').textContent = forMe ? 'Download' : 'Open the release';
+        $('#ub-action').onclick = () => openExternal(forMe?.url || u.url);
+      }
     } else if (v.shellStale) {
       $('#ub-text').textContent = 'The app shell changed'; $('#ub-detail').textContent = v.shellChanged.slice(0, 3).join(', ') + ' · needs a rebuild (1–3 min)';
       $('#ub-action').textContent = 'Rebuild app'; $('#ub-action').onclick = () => { bar.classList.add('hidden'); openConnectors(); paintVersion(); $('#app-rebuild').click(); };
@@ -2751,6 +2840,7 @@
     try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
+    deviceApp = await whatAmI();
     await Promise.all([loadSessions(), loadProjects(), loadAwake(), loadModels()]);
     route();
     // First time on this device: ask which account to use (local or token).
