@@ -539,6 +539,25 @@ fn active_computer(app: AppHandle) -> ActiveComputer {
     }
 }
 
+/// What the app in front of you is — which is not what the server says when the window
+/// is showing another computer. The page needs both to offer the right file: a Mac
+/// looking at a PC can install a Mac build here and a Windows one over there.
+#[derive(serde::Serialize)]
+struct ThisApp {
+    version: String,
+    commit: String,
+    platform: String,
+}
+
+#[tauri::command]
+fn app_version() -> ThisApp {
+    ThisApp {
+        version: env!("CARGO_PKG_VERSION").into(),
+        commit: env!("CA_COMMIT").chars().take(7).collect(),
+        platform: std::env::consts::OS.into(), // "windows" | "macos" | "linux"
+    }
+}
+
 /// The app password of this computer, so adding another one can reuse it instead of
 /// asking for a second password nobody wanted to invent.
 #[tauri::command]
@@ -587,6 +606,7 @@ fn main() {
             connection_test,
             computers,
             active_computer,
+            app_version,
             default_password,
             open_picker
         ])
