@@ -14,6 +14,9 @@
   // when something in here threw, and the word Error in front of it helps nobody.
   const say = (e) => String(e && e.message ? e.message : e);
   const note = (text, kind) => { const n = $('#note'); n.textContent = text || ''; n.className = 'note' + (kind ? ' ' + kind : ''); };
+  // The shell brings the window back here when a computer would not load, and says why.
+  // It arrives after this script has run, so it needs a door rather than a variable.
+  window.__caNote = (text) => note(text, 'bad');
 
   if (!invoke) {
     $('#list').innerHTML = '';

@@ -27,6 +27,19 @@ All notable changes to this project are documented here. The format follows
   dead window that looks exactly like a crash. The address is taken when a page has
   actually loaded now, and if it was never taken the platform's own origin is used
   rather than whatever was in the box.
+- **A Mac pointed at another computer showed a white window and nothing else.**
+  macOS blocks plain `http` in web content unless the app's bundle says otherwise,
+  and Tauri writes no such exception — so `http://100.x.y.z:7777` loaded nothing,
+  silently, with no error anywhere and no way back but the menu bar. The bundle now
+  carries `NSAllowsArbitraryLoadsInWebContent`: every address this app opens is a
+  computer of your own, named by IP, which cannot have a certificate.
+- **A computer that will not load never strands the window again.** Before it moves,
+  the shell asks that computer whether it is there — *"Switched off is not answering
+  — nothing answered at http://…"* appears in the list instead of a blank window.
+  And if the address answers but its page never arrives, the window comes back to
+  the list by itself after fifteen seconds and says so, with every computer still
+  one click away. That was the state the Mac was left in: stuck, then white, then
+  white again on every start.
 - **A computer that cannot run a server of its own now says which one it wants
   instead of quitting.** A Mac bought into this app purely as a window onto the PC
   has no Node, so starting a local server fails — and the app showed "Claude

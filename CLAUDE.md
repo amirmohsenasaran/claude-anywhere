@@ -65,6 +65,10 @@ await page.goto('http://127.0.0.1:7779/');
 - **`perTaskStopAffordance: true`** is what keeps a Stop from killing
   background agents. Absence fails closed.
 - **`background_tasks_changed` replaces the set**; do not merge it edge by edge.
+- **macOS blocks plain http in a web view.** A window pointed at
+  `http://<ip>:7777` shows white and reports nothing; the bundle needs
+  `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by
+  `bundle.macOS.infoPlist` — which takes a path, not an inline object).
 - **The chat page is a remote origin to Tauri**, even when the server is this
   computer's: app commands answer `not allowed. Plugin not found` until they are
   listed in `src-tauri/permissions/*.toml` and a capability with a matching

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the macOS bundle's Info.plist (bundle.macOS.infoPlist in tauri.conf.json).
+
+  App Transport Security blocks plain http in web content, and Tauri writes no exception
+  unless one is asked for — so a Mac pointed at `http://100.x.y.z:7777` loaded nothing
+  and showed a white window, with no error anywhere. Every address this app opens is a
+  computer of your own on your own network or tailnet, named by IP, which cannot have a
+  certificate; so http in the web view is allowed, and nothing else is relaxed.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoadsInWebContent</key>
+      <true/>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+    </dict>
+  </dict>
+</plist>

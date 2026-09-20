@@ -85,6 +85,80 @@ impl Default for Connections {
 // on others, and guessing which is how this breaks on someone else's machine.
 struct PickerUrl(Mutex<Option<tauri::Url>>);
 
+// The last page that actually finished loading. A webview that refuses a page — macOS
+// blocks plain http in web content unless the bundle says otherwise — shows a white
+// rectangle and reports nothing, so this is how the shell notices.
+struct LastLoaded(Mutex<Option<tauri::Url>>);
+
+const SAME: fn(&tauri::Url, &tauri::Url) -> bool =
+    |a, b| a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default();
+
+/// Does that computer answer at all? Asked before the window is pointed at it, because
+/// a page that never loads leaves nothing on screen to explain itself.
+fn answers(base: &str) -> Result<(), String> {
+    let base = base.trim_end_matches('/');
+    ureq::get(&format!("{base}/api/config"))
+        .timeout(Duration::from_secs(5))
+        .call()
+        .map(|_| ())
+        .map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("{base} answered {code}"),
+            _ => format!("nothing answered at {base}"),
+        })
+}
+
+/// Point the picker at a message. It is a page, so it has to be there to be told;
+/// connect.js leaves `window.__caNote` behind for exactly this.
+fn picker_says(app: &AppHandle, text: String) {
+    show_picker(app);
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(900));
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.eval(&format!(
+                "window.__caNote && window.__caNote({})",
+                serde_json::to_string(&text).unwrap_or_else(|_| "''".into())
+            ));
+        }
+    });
+}
+
+/// After pointing the window at a computer, make sure the page actually arrives. If it
+/// does not, go back to the list with the reason rather than leaving a white window
+/// whose only way out is the tray.
+fn watch_load(app: &AppHandle, target: tauri::Url, id: String, name: String) {
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(15));
+        let loaded = app
+            .try_state::<LastLoaded>()
+            .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()));
+        if loaded.map(|u| SAME(&u, &target)).unwrap_or(false) {
+            return; // it arrived
+        }
+        // Asking the window where it is proves nothing: a request that never answers
+        // never commits, so it still reports the page it is about to leave. What the
+        // window was *asked* for is the connection, so that is what is checked.
+        if load_connections(&app).active != id {
+            return; // somewhere else by now, on purpose
+        }
+        // The address only — the query carries the token that opens that computer, and
+        // this sentence ends up on screen and in screenshots.
+        let where_ = format!(
+            "{}://{}{}",
+            target.scheme(),
+            target.host_str().unwrap_or("that computer"),
+            target.port().map(|p| format!(":{p}")).unwrap_or_default()
+        );
+        picker_says(
+            &app,
+            format!(
+                "{name} did not load. The address answered, but its page never arrived ({where_}). If that computer is fine, this app may be too old to open a plain http address — update it."
+            ),
+        );
+    });
+}
+
 // Is this the page the app carries, rather than a server it is showing? The app's own
 // origin is `tauri://localhost` on macOS and Linux and `http://tauri.localhost` on
 // Windows, which is why it is recognised rather than assumed.
@@ -199,6 +273,9 @@ fn target_url(app: &AppHandle, id: &str) -> Result<tauri::Url, String> {
         .find(|x| x.id == id)
         .ok_or("That computer is not in the list any more.")?;
     let base = item.url.trim_end_matches('/');
+    // Asked before the window moves: a computer that is asleep, renumbered or behind a
+    // firewall used to become a blank window with no way back to this list.
+    answers(base).map_err(|e| format!("{} is not answering — {e}.", item.name))?;
     tauri::Url::parse(&format!("{base}/?auto={}", token_for(&item.password)))
         .map_err(|_| format!("{} is not an address this can open.", item.url))
 }
@@ -224,13 +301,22 @@ fn connections_save(app: AppHandle, items: Vec<Connection>) -> Connections {
 #[tauri::command]
 fn connection_use(app: AppHandle, id: String) -> Result<(), String> {
     let url = target_url(&app, &id)?;
+    let name = load_connections(&app)
+        .items
+        .iter()
+        .find(|x| x.id == id)
+        .map(|x| x.name.clone())
+        .unwrap_or_else(|| "That computer".into());
     let mut c = load_connections(&app);
-    c.active = id;
+    c.active = id.clone();
     save_connections(&app, &c);
     if let Some(w) = app.get_webview_window("main") {
-        w.navigate(url).map_err(|e| e.to_string())?;
+        w.navigate(url.clone()).map_err(|e| e.to_string())?;
         let _ = w.show();
         let _ = w.set_focus();
+        if id != "local" {
+            watch_load(&app, url, id, name);
+        }
     }
     refresh_tray(&app);
     Ok(())
@@ -465,6 +551,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             app.manage(PickerUrl(Mutex::new(None)));
+            app.manage(LastLoaded(Mutex::new(None)));
             let conns = load_connections(&handle);
             let hidden = std::env::args().any(|a| a == "--hidden");
 
@@ -476,6 +563,11 @@ fn main() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("connect.html".into()))
                     .on_page_load(|w, _| {
                         if let Ok(u) = w.url() {
+                            if let Some(s) = w.app_handle().try_state::<LastLoaded>() {
+                                if let Ok(mut g) = s.0.lock() {
+                                    *g = Some(u.clone());
+                                }
+                            }
                             remember_picker_url(w.app_handle(), u);
                         }
                     })
@@ -500,7 +592,14 @@ fn main() {
             if conns.active != "local" {
                 match target_url(&handle, &conns.active) {
                     Ok(url) => {
-                        let _ = win.navigate(url);
+                        let name = conns
+                            .items
+                            .iter()
+                            .find(|x| x.id == conns.active)
+                            .map(|x| x.name.clone())
+                            .unwrap_or_else(|| "That computer".into());
+                        let _ = win.navigate(url.clone());
+                        watch_load(&handle, url, conns.active.clone(), name);
                     }
                     Err(e) => {
                         let _ = win.eval(&format!(

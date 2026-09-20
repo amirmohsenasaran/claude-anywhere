@@ -212,6 +212,13 @@ it. Click an address to copy it — that is what you type on the phone or the Ma
 the server is listening on this machine only, it says so instead of offering
 addresses that cannot work; if there is no app password, it says that too.
 
+Pointing the window at a computer never leaves you with a blank one. The shell asks
+that machine whether it is there before it moves, and says so if it is not; if the
+address answers but the page never arrives, the window returns to this list after
+fifteen seconds with the reason. On macOS the bundle carries an App Transport
+Security exception for web content, because a computer of your own, named by IP,
+cannot have a certificate — without it the window simply showed white.
+
 The list belongs to the device you are sitting at, not to any server, so it lives
 in the app. A browser talks to exactly one computer, the one that served the page,
 and says so. The page may ask the shell which computers exist and to switch to one;
