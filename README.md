@@ -91,11 +91,16 @@ on a session, this one follows along and shows what it is doing.
   result, a status line, queued messages that reach Claude at the next tool
   boundary rather than at the end of the turn.
 - **The model menu is the CLI's own**: the models Claude Code offers this
-  account, with its descriptions and prices, and the effort levels each model
-  actually takes — Low, Medium, **High**, Extra, Max — rather than a list kept
-  here that drifts. Haiku has none, so it shows none.
+  account, with its descriptions and prices, rather than a list kept here that
+  drifts.
+- **Effort is a chip of its own** beside the model, and it opens the same slider
+  Claude has — Faster to Smarter, Low, Medium, **High**, Extra, Max, and
+  Ultracode where the model takes it. Haiku takes none, so the chip stays away.
 
-<div align="center"><img src="docs/images/model-menu.png" alt="The model menu: the CLI's own models, with Effort from Low to Max" width="420"></div>
+<div align="center">
+<img src="docs/images/model-menu.png" alt="The model menu: the CLI's own models, with their descriptions and prices" width="420">
+<img src="docs/images/effort.png" alt="Effort: a slider from Faster to Smarter, set to Ultracode" width="300">
+</div>
 
 - **Permission prompts from the phone** — Allow, Allow always, Deny. A question
   from Claude arrives as a question: its options, a box for an answer that is
@@ -115,6 +120,9 @@ on a session, this one follows along and shows what it is doing.
 - **Native app on all three**: the webview the machine already has, a few
   megabytes, tray icon, start with the machine, system notifications. Windows
   draws its own title bar; macOS and Linux keep theirs.
+- **Drop a file on the window** — a screenshot, a PDF, a log — and it attaches
+  to the message you are writing. The app reads it from the computer you dropped
+  it on, so it works when that computer is not the one running the session.
 - **It updates itself, both ways**: every merge to `main` is built and published
   by GitHub Actions, and the app notices within the hour. The banner offers the
   file for the device you are holding **and** an *Update DESKTOP-…* button that

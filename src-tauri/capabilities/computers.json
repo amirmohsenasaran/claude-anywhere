@@ -1,11 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "computers",
-  "description": "Which computer this window is showing, and switching to another one. The page may be served by any of your computers, not only this one, so the origins are not just localhost - and nothing here reveals a password.",
+  "description": "Which computer this window is showing, and switching to another one. The page may be served by any of your computers, not only this one, so the origins are not just localhost - and nothing here reveals a password. It may also hear the window's own events, which is how a file dropped on it reaches the page, and read that file.",
   "windows": ["main"],
   "remote": {
     "comment": "A port is required on purpose. `http://*` also matches http://tauri.localhost, which is the app's own page on Windows - and a capability with a remote block turns that page into a remote origin, which cost the picker every command it needs. A server always has a port; the picker's own URL never does.",
     "urls": ["http://*:*", "https://*:*"]
   },
-  "permissions": ["allow-computer-switching"]
+  "permissions": ["allow-computer-switching", "allow-dropped-files", "core:event:allow-listen", "core:event:allow-unlisten"]
 }
