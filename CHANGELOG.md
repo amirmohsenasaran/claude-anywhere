@@ -7,6 +7,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The app tells you what to type on your other device.** *Which computer?* now
+  shows the addresses this computer can be reached at — the Tailscale one first,
+  because it works from anywhere, then the network one, with a virtual adapter
+  (Hyper-V, WSL) dimmed since nothing else can reach it. Click one to copy it. If
+  the server is listening on this machine only, it says that instead of showing
+  addresses that cannot work, and if there is no app password it says that too:
+  anyone who can reach the address can use Claude here.
+
+### Fixed
+
+- **Opening the computer picker blanked the window.** Its URL was read off the
+  window straight after building it, which is before there is one — so
+  `about:blank` was saved, and *Add or edit computers…* navigated there: a white,
+  dead window that looks exactly like a crash. The address is taken when a page has
+  actually loaded now, and if it was never taken the platform's own origin is used
+  rather than whatever was in the box.
+- **A computer that cannot run a server of its own now says which one it wants
+  instead of quitting.** A Mac bought into this app purely as a window onto the PC
+  has no Node, so starting a local server fails — and the app showed "Claude
+  Anywhere could not start" and exited, with no way to reach the list of computers.
+  The reason appears on the picker page instead, above the box where you add the
+  machine that *can* run it.
+- **The example address in the picker was a real one.** It was the Tailscale
+  address of the computer this was written on, shipped to everyone who installed
+  the app.
+- **The picker could not read or save anything.** `http://*` in the new capability
+  also matches `http://tauri.localhost`, which is the app's own page on Windows —
+  and a page that matches a remote rule keeps only the commands that rule grants.
+  The picker therefore lost every command it exists to call and sat on "Loading…".
+  It is named explicitly now, and it is the only page allowed near the list, which
+  holds the app password of every computer on it.
+
 ## [0.6.0] — 2026-09-19
 
 ### Added

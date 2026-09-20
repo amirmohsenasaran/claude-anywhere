@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "picker",
+  "description": "The page the app carries for choosing a computer. It is the only page allowed to read and write the list, because the list holds the app password of every computer on it.",
+  "windows": ["main"],
+  "remote": {
+    "comment": "tauri://localhost on macOS and Linux, http://tauri.localhost on Windows. Named here because the wildcard in the computers capability already counts this page as remote, and a remote page gets only what it is given.",
+    "urls": [
+      "tauri://localhost",
+      "tauri://localhost/*",
+      "http://tauri.localhost",
+      "http://tauri.localhost/*"
+    ]
+  },
+  "permissions": ["allow-computer-editing", "allow-computer-switching"]
+}

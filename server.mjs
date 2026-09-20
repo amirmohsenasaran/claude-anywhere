@@ -670,7 +670,26 @@ app.post('/api/plugins/:id', (req, res) => {
   res.json({ id: req.params.id, enabled: !!req.body?.enabled });
 });
 
-app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken }));
+// Where another device can reach this computer — the answer to "what do I type on the
+// Mac?", which otherwise means hunting for an IP in Windows settings. Link-local
+// (169.254) addresses are dropped: nothing can route to them. A Tailscale address
+// (100.64.0.0/10) comes first, because it is the one that works from anywhere.
+function reachableAt() {
+  const out = [];
+  for (const [nic, list] of Object.entries(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family !== 'IPv4' || ni.internal || ni.address.startsWith('169.254.')) continue;
+      const tailscale = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ni.address);
+      // A Hyper-V or WSL switch has a perfectly ordinary private address that no other
+      // device can reach; the interface name is the only thing that gives it away.
+      const virtual = /vEthernet|Hyper-V|VirtualBox|VMware|Loopback|Bluetooth/i.test(nic);
+      out.push({ url: `http://${ni.address}:${PORT}`, nic, kind: tailscale ? 'tailscale' : virtual ? 'virtual' : 'lan' });
+    }
+  }
+  const rank = (k) => (k === 'tailscale' ? 0 : k === 'lan' ? 1 : 2);
+  return out.sort((a, b) => rank(a.kind) - rank(b.kind));
+}
+app.get('/api/me', (_req, res) => res.json({ userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
 
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
 app.get('/api/accounts', (_req, res) => {
