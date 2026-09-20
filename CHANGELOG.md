@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format follows
   dead window that looks exactly like a crash. The address is taken when a page has
   actually loaded now, and if it was never taken the platform's own origin is used
   rather than whatever was in the box.
+- **A computer that cannot run a server of its own now says which one it wants
+  instead of quitting.** A Mac bought into this app purely as a window onto the PC
+  has no Node, so starting a local server fails — and the app showed "Claude
+  Anywhere could not start" and exited, with no way to reach the list of computers.
+  The reason appears on the picker page instead, above the box where you add the
+  machine that *can* run it.
+- **The example address in the picker was a real one.** It was the Tailscale
+  address of the computer this was written on, shipped to everyone who installed
+  the app.
 - **The picker could not read or save anything.** `http://*` in the new capability
   also matches `http://tauri.localhost`, which is the app's own page on Windows —
   and a page that matches a remote rule keeps only the commands that rule grants.

@@ -517,23 +517,33 @@ fn main() {
                 return Ok(());
             }
 
-            let state = start_server(&handle).map_err(|e| {
-                // Keep the reason on disk too, for when the dialog is gone.
-                if let Ok(dir) = app.path().app_data_dir() {
-                    let _ = fs::write(
-                        dir.join("startup-error.txt"),
-                        format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()),
-                    );
+            let state = match start_server(&handle) {
+                Ok(s) => s,
+                // No server here — most often a Mac with no Node, bought into this app to
+                // be a window onto the PC. Quitting told it "could not start" and left it
+                // no way to say which computer it wanted; the picker is already on screen,
+                // so the reason goes there and the list stays reachable.
+                Err(e) => {
+                    if let Ok(dir) = app.path().app_data_dir() {
+                        let _ = fs::write(
+                            dir.join("startup-error.txt"),
+                            format!("{e}\nPATH={}\n", std::env::var("PATH").unwrap_or_default()),
+                        );
+                    }
+                    let _ = win.eval(&format!(
+                        "window.__caError={}",
+                        serde_json::to_string(&format!(
+                            "{e}\n\nThis computer cannot run Claude itself. Add the one that can, below."
+                        ))
+                        .unwrap_or_else(|_| "null".into())
+                    ));
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                    build_tray(&handle)?;
+                    spawn_notifier(handle.clone());
+                    return Ok(());
                 }
-                app.dialog()
-                    .message(format!("{e}"))
-                    .title("Claude Anywhere could not start")
-                    .kind(MessageDialogKind::Error)
-                    .blocking_show();
-                std::process::exit(1);
-                #[allow(unreachable_code)]
-                e
-            })?;
+            };
             let url = format!("http://127.0.0.1:{}/?auto={}", state.port, state.token);
             app.manage(state);
             let _ = win.navigate(url.parse()?);
