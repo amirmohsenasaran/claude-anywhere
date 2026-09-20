@@ -85,6 +85,100 @@ impl Default for Connections {
 // on others, and guessing which is how this breaks on someone else's machine.
 struct PickerUrl(Mutex<Option<tauri::Url>>);
 
+// The last page that actually finished loading. A webview that refuses a page — macOS
+// blocks plain http in web content unless the bundle says otherwise — shows a white
+// rectangle and reports nothing, so this is how the shell notices.
+struct LastLoaded(Mutex<Option<tauri::Url>>);
+
+const SAME: fn(&tauri::Url, &tauri::Url) -> bool =
+    |a, b| a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default();
+
+/// A machine that is off refuses the connection at once, but one that is unplugged,
+/// firewalled or gone from the network swallows the packet — and Windows then retries
+/// for twenty seconds before admitting it. Nobody waits twenty seconds to be told that
+/// a computer is not answering, so the connect gets its own, shorter limit.
+fn quick_agent(connect: u64, total: u64) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(connect))
+        .timeout(Duration::from_secs(total))
+        .build()
+}
+
+/// Does that computer answer at all? Asked before the window is pointed at it, because
+/// a page that never loads leaves nothing on screen to explain itself.
+fn answers(base: &str) -> Result<(), String> {
+    let base = base.trim_end_matches('/');
+    quick_agent(3, 5)
+        .get(&format!("{base}/api/config"))
+        .call()
+        .map(|_| ())
+        .map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("{base} answered {code}"),
+            _ => format!("nothing answered at {base}"),
+        })
+}
+
+/// Point the picker at a message. It is a page, so it has to be there to be told;
+/// connect.js leaves `window.__caNote` behind for exactly this.
+fn picker_says(app: &AppHandle, text: String) {
+    show_picker(app);
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(900));
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.eval(&format!(
+                "window.__caNote && window.__caNote({})",
+                serde_json::to_string(&text).unwrap_or_else(|_| "''".into())
+            ));
+        }
+    });
+}
+
+/// After pointing the window at a computer, make sure the page actually arrives. If it
+/// does not, go back to the list with the reason rather than leaving a white window
+/// whose only way out is the tray.
+fn watch_load(app: &AppHandle, target: tauri::Url, id: String, name: String) {
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(15));
+        let loaded = app
+            .try_state::<LastLoaded>()
+            .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()));
+        if loaded.map(|u| SAME(&u, &target)).unwrap_or(false) {
+            return; // it arrived
+        }
+        // Two signals, and either one saying "it arrived" is enough — a false bounce
+        // would take a working window away from someone. A page that loads sets both
+        // (on_page_load, and the window's own URL); a request that never answers sets
+        // neither, because a navigation that does not commit leaves the old URL behind.
+        let where_it_is = app
+            .get_webview_window("main")
+            .and_then(|w| w.url().ok())
+            .map(|u| SAME(&u, &target))
+            .unwrap_or(false);
+        if where_it_is {
+            return;
+        }
+        if load_connections(&app).active != id {
+            return; // somewhere else by now, on purpose
+        }
+        // The address only — the query carries the token that opens that computer, and
+        // this sentence ends up on screen and in screenshots.
+        let where_ = format!(
+            "{}://{}{}",
+            target.scheme(),
+            target.host_str().unwrap_or("that computer"),
+            target.port().map(|p| format!(":{p}")).unwrap_or_default()
+        );
+        picker_says(
+            &app,
+            format!(
+                "{name} did not load. The address answered, but its page never arrived ({where_}). If that computer is fine, this app may be too old to open a plain http address — update it."
+            ),
+        );
+    });
+}
+
 // Is this the page the app carries, rather than a server it is showing? The app's own
 // origin is `tauri://localhost` on macOS and Linux and `http://tauri.localhost` on
 // Windows, which is why it is recognised rather than assumed.
@@ -199,6 +293,9 @@ fn target_url(app: &AppHandle, id: &str) -> Result<tauri::Url, String> {
         .find(|x| x.id == id)
         .ok_or("That computer is not in the list any more.")?;
     let base = item.url.trim_end_matches('/');
+    // Asked before the window moves: a computer that is asleep, renumbered or behind a
+    // firewall used to become a blank window with no way back to this list.
+    answers(base).map_err(|e| format!("{} is not answering — {e}.", item.name))?;
     tauri::Url::parse(&format!("{base}/?auto={}", token_for(&item.password)))
         .map_err(|_| format!("{} is not an address this can open.", item.url))
 }
@@ -220,29 +317,54 @@ fn connections_save(app: AppHandle, items: Vec<Connection>) -> Connections {
     c
 }
 
-/// Point the window at a computer and remember it for next time.
-#[tauri::command]
-fn connection_use(app: AppHandle, id: String) -> Result<(), String> {
-    let url = target_url(&app, &id)?;
-    let mut c = load_connections(&app);
-    c.active = id;
-    save_connections(&app, &c);
+/// Point the window at a computer and remember it for next time. Blocking: it asks that
+/// computer whether it is there, and starting a local server waits for the port.
+fn switch_to(app: &AppHandle, id: &str) -> Result<(), String> {
+    let url = target_url(app, id)?;
+    let mut c = load_connections(app);
+    let name = c
+        .items
+        .iter()
+        .find(|x| x.id == id)
+        .map(|x| x.name.clone())
+        .unwrap_or_else(|| "That computer".into());
+    c.active = id.to_string();
+    save_connections(app, &c);
     if let Some(w) = app.get_webview_window("main") {
-        w.navigate(url).map_err(|e| e.to_string())?;
+        w.navigate(url.clone()).map_err(|e| e.to_string())?;
         let _ = w.show();
         let _ = w.set_focus();
+        if id != "local" {
+            watch_load(app, url, id.to_string(), name);
+        }
     }
-    refresh_tray(&app);
+    refresh_tray(app);
     Ok(())
+}
+
+/// Async on purpose: a command that is not async runs on the main thread, and waiting
+/// there for a computer to answer freezes the window — the button stuck on "Opening…",
+/// which is the very state this was meant to explain.
+#[tauri::command]
+async fn connection_use(app: AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || switch_to(&app, &id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Is anything answering there, and does the password fit? Told before it is saved,
 /// because a wrong password shows up as a login screen with no explanation.
 #[tauri::command]
-fn connection_test(url: String, password: String) -> Result<String, String> {
+async fn connection_test(url: String, password: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || connection_test_now(url, password))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn connection_test_now(url: String, password: String) -> Result<String, String> {
     let base = url.trim_end_matches('/');
-    let cfg = ureq::get(&format!("{base}/api/config"))
-        .timeout(Duration::from_secs(6))
+    let cfg = quick_agent(4, 6)
+        .get(&format!("{base}/api/config"))
         .call()
         .map_err(|e| format!("Nothing answered at {base}: {e}"))?
         .into_json::<serde_json::Value>()
@@ -251,9 +373,9 @@ fn connection_test(url: String, password: String) -> Result<String, String> {
     if needs && password.is_empty() {
         return Err("That computer has an app password. Put it in below.".into());
     }
-    let ok = ureq::get(&format!("{base}/api/me"))
+    let ok = quick_agent(4, 6)
+        .get(&format!("{base}/api/me"))
         .set("Authorization", &format!("Bearer {}", token_for(&password)))
-        .timeout(Duration::from_secs(6))
         .call()
         .map_err(|_| "The password does not match that computer.".to_string())?
         .into_json::<serde_json::Value>()
@@ -318,9 +440,9 @@ fn probe(
         token_for(&password)
     };
     let get = |path: &str| {
-        ureq::get(&format!("{}{path}", s.url))
+        quick_agent(3, 4)
+            .get(&format!("{}{path}", s.url))
             .set("Authorization", &format!("Bearer {token}"))
-            .timeout(Duration::from_secs(4))
             .call()
             .ok()
             .and_then(|r| r.into_json::<serde_json::Value>().ok())
@@ -349,7 +471,13 @@ fn probe(
 }
 
 #[tauri::command]
-fn computers(app: AppHandle) -> Vec<ComputerStatus> {
+async fn computers(app: AppHandle) -> Vec<ComputerStatus> {
+    tauri::async_runtime::spawn_blocking(move || computers_now(app))
+        .await
+        .unwrap_or_default()
+}
+
+fn computers_now(app: AppHandle) -> Vec<ComputerStatus> {
     let c = load_connections(&app);
     let local = app
         .try_state::<ServerState>()
@@ -465,6 +593,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             app.manage(PickerUrl(Mutex::new(None)));
+            app.manage(LastLoaded(Mutex::new(None)));
             let conns = load_connections(&handle);
             let hidden = std::env::args().any(|a| a == "--hidden");
 
@@ -476,6 +605,11 @@ fn main() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("connect.html".into()))
                     .on_page_load(|w, _| {
                         if let Ok(u) = w.url() {
+                            if let Some(s) = w.app_handle().try_state::<LastLoaded>() {
+                                if let Ok(mut g) = s.0.lock() {
+                                    *g = Some(u.clone());
+                                }
+                            }
                             remember_picker_url(w.app_handle(), u);
                         }
                     })
@@ -500,7 +634,14 @@ fn main() {
             if conns.active != "local" {
                 match target_url(&handle, &conns.active) {
                     Ok(url) => {
-                        let _ = win.navigate(url);
+                        let name = conns
+                            .items
+                            .iter()
+                            .find(|x| x.id == conns.active)
+                            .map(|x| x.name.clone())
+                            .unwrap_or_else(|| "That computer".into());
+                        let _ = win.navigate(url.clone());
+                        watch_load(&handle, url, conns.active.clone(), name);
                     }
                     Err(e) => {
                         let _ = win.eval(&format!(
@@ -1056,7 +1197,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = app.clone();
                 // Starting a server can take a moment; the menu should not sit open for it.
                 thread::spawn(move || {
-                    if let Err(e) = connection_use(app.clone(), which) {
+                    if let Err(e) = switch_to(&app.clone(), &which) {
                         app.dialog()
                             .message(e)
                             .title("Could not switch computer")

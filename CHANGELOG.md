@@ -7,6 +7,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Mac pointed at another computer showed a white window and nothing else.**
+  macOS blocks plain `http` in web content unless the app's bundle says otherwise,
+  and Tauri writes no such exception — so `http://100.x.y.z:7777` loaded nothing,
+  silently, with no error anywhere and no way back but the menu bar. The bundle now
+  carries `NSAllowsArbitraryLoadsInWebContent`: every address this app opens is a
+  computer of your own, named by IP, which cannot have a certificate.
+- **A computer that will not load never strands the window again.** Before it moves,
+  the shell asks that computer whether it is there — *"Switched off is not answering
+  — nothing answered at http://…"* appears in the list instead of a blank window.
+  And if the address answers but its page never arrives, the window comes back to
+  the list by itself after fifteen seconds and says so, with every computer still
+  one click away. That was the state the Mac was left in: stuck, then white, then
+  white again on every start.
+- **The window no longer freezes while it waits for another computer.** A Tauri
+  command that is not `async` runs on the main thread, so asking a machine whether
+  it is there held the whole window still, with the button stuck on *Opening…* — the
+  exact state that check was written to explain. Switching computers, listing them
+  and testing one all run off the main thread now, and a connection gets three
+  seconds rather than the twenty Windows spends retrying a packet nobody answers.
+
 ## [0.7.0] — 2026-09-20
 
 ### Added
