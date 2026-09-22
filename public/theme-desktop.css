@@ -860,3 +860,20 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
   .set-tab { width: auto; white-space: nowrap; }
   .set-body { padding: 14px; }
 }
+
+/* ---------- v44: a provider is a third account ---------- */
+/* Claude Code speaks the Anthropic Messages API and reads ANTHROPIC_BASE_URL, so another
+   provider is an address and a key rather than another program. The form asks for what
+   changes between them - including whether the key rides as Bearer or x-api-key, which
+   is the difference between a gateway that forwards and one that impersonates. */
+.provider-box { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.provider-box > summary { cursor: pointer; font-size: 13.5px; color: var(--ink-2); list-style: none; }
+.provider-box > summary::-webkit-details-marker { display: none; }
+.provider-box > summary::before { content: "▸ "; color: var(--ink-3); }
+.provider-box[open] > summary::before { content: "▾ "; }
+.provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 12px; }
+.provider-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); }
+.provider-grid label:nth-child(2), .provider-grid label:nth-child(3) { grid-column: 1 / -1; }
+.provider-grid input, .provider-grid select { font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); outline: none; }
+.provider-grid input:focus, .provider-grid select:focus { border-color: var(--ink-3); }
+@media (max-width: 860px) { .provider-grid { grid-template-columns: 1fr; } }

@@ -32,7 +32,7 @@ import * as pr from './lib/pr.mjs';
 import * as awake from './lib/awake.mjs';
 import * as update from './lib/update.mjs';
 import * as models from './lib/models.mjs';
-import { getAuth, activeAccount, setActive, setToken, clearToken, classifyToken, envFor, localSource, verifyEnv, candidateEnv } from './lib/auth.mjs';
+import { getAuth, activeAccount, setActive, setToken, clearToken, setProvider, clearProvider, classifyToken, envFor, localSource, verifyEnv, candidateEnv, candidateProviderEnv } from './lib/auth.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -167,6 +167,14 @@ const whoCache = new Map(); // which -> { at, value }
 function whoAmI(which = activeAccount()) {
   const hit = whoCache.get(which);
   if (hit && Date.now() - hit.at < 60000) return hit.value;
+  // A provider is an address, not a login: `claude auth status` has nobody to ask about
+  // it, and asking anyway would report whatever this computer happens to be signed into.
+  if (which === 'provider') {
+    const p = getAuth().provider;
+    return p
+      ? { which, email: '', name: p.name, org: '', plan: '', auth: 'provider', loggedIn: true, source: p.name + ' · ' + p.baseUrl, model: p.model || '', baseUrl: p.baseUrl, keyKind: p.keyKind }
+      : { which, email: '', plan: '', auth: 'provider', loggedIn: false, source: 'no provider added' };
+  }
   const cli = envOf('CLI') || 'claude';
   try {
     const raw = execFileSync(cli, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 15000, windowsHide: true, env: envFor(which) });
@@ -699,11 +707,13 @@ app.get('/api/me', (_req, res) => res.json({ version: appVersion, userName: USER
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
 app.get('/api/accounts', (_req, res) => {
   const a = getAuth();
-  res.json({ active: activeAccount(), local: whoAmI('local'), token: a.hasToken ? whoAmI('token') : null });
+  res.json({ active: activeAccount(), local: whoAmI('local'), token: a.hasToken ? whoAmI('token') : null, provider: a.provider ? whoAmI('provider') : null });
 });
 app.post('/api/accounts/active', (req, res) => {
-  const which = req.body?.which === 'token' ? 'token' : 'local';
+  const asked = String(req.body?.which || 'local');
+  const which = asked === 'token' || asked === 'provider' ? asked : 'local';
   if (which === 'token' && !getAuth().hasToken) return res.status(400).json({ error: 'No token has been added yet.' });
+  if (which === 'provider' && !getAuth().provider) return res.status(400).json({ error: 'No provider has been added yet.' });
   models.forget(); // the menu belongs to the account that was just left
   res.json({ active: setActive(which) });
 });
@@ -719,6 +729,26 @@ app.post('/api/accounts/token', async (req, res) => {
   res.json({ active: 'token', token: whoAmI('token') });
 });
 app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete('token'); models.forget(); res.json({ active: 'local' }); });
+
+// Another address for the same API. Proven before it is kept, exactly like a token: one
+// tiny turn, and whatever the endpoint says back is what the screen shows - an endpoint
+// that only speaks OpenAI's API answers with its own complaint, which is the honest
+// answer to "can I use this here?".
+app.post('/api/accounts/provider', async (req, res) => {
+  const b = req.body || {};
+  const baseUrl = String(b.baseUrl || '').trim();
+  const key = String(b.key || '').trim();
+  const name = String(b.name || '').trim() || (() => { try { return new URL(baseUrl).hostname; } catch { return 'Provider'; } })();
+  if (!/^https?:\/\//i.test(baseUrl)) return res.status(400).json({ error: 'The address has to start with http:// or https://' });
+  if (!key) return res.status(400).json({ error: 'Paste the key that provider gave you.' });
+  const p = { name, baseUrl, key, keyKind: b.keyKind === 'apikey' ? 'apikey' : 'bearer', model: String(b.model || '').trim() };
+  const check = await verifyEnv(candidateProviderEnv(p));
+  if (!check.ok) return res.status(400).json({ error: name + ' did not answer as the Anthropic API: ' + check.error });
+  setProvider(p);
+  whoCache.delete('provider'); models.forget();
+  res.json({ active: 'provider', provider: whoAmI('provider') });
+});
+app.delete('/api/accounts/provider', (_req, res) => { clearProvider(); whoCache.delete('provider'); models.forget(); res.json({ active: activeAccount() }); });
 
 // Sidebar order (projects, sessions within each project, pinned), shared by every device.
 // The list never re-sorts itself: new items slot in once, then only drag-and-drop moves them.

@@ -154,14 +154,22 @@
     for (const card of acctModal.querySelectorAll('.account-card')) {
       const w = card.dataset.which;
       card.classList.toggle('active', accounts.active === w);
-      card.classList.toggle('disabled', w === 'token' && !accounts.token);
+      card.classList.toggle('disabled', (w === 'token' && !accounts.token) || (w === 'provider' && !accounts.provider));
     }
     $('#acct-token-remove').classList.toggle('hidden', !accounts.token);
+    const prov = accounts.provider;
+    $('#acct-provider-title').textContent = prov?.name || 'Another provider';
+    $('#acct-provider-desc').textContent = prov ? [prov.baseUrl, prov.model, prov.keyKind === 'apikey' ? 'x-api-key' : 'Bearer'].filter(Boolean).join(' · ') : 'A gateway, a reseller, your own proxy — an address that answers the Anthropic API.';
+    $('#prov-remove').classList.toggle('hidden', !prov);
+    if (prov) { $('#prov-name').value = prov.name || ''; $('#prov-url').value = prov.baseUrl || ''; $('#prov-model').value = prov.model || ''; $('#prov-kind').value = prov.keyKind || 'bearer'; }
+    $('#acct-provider-box').open = !!prov || accounts.active === 'provider';
     $('#acct-token-input').placeholder = accounts.token ? 'Paste a different token to replace it' : 'Paste a token from claude setup-token, or a Console API key';
   }
   acctModal.querySelectorAll('.account-card').forEach((card) => card.addEventListener('click', async () => {
     const which = card.dataset.which;
     if (which === 'token' && !accounts?.token) { $('#acct-token-input').focus(); return; }
+    // Nothing to switch to until there is one: the card opens the form instead.
+    if (which === 'provider' && !accounts?.provider) { $('#acct-provider-box').open = true; $('#prov-url').focus(); return; }
     try { await api('/accounts/active', { method: 'POST', body: JSON.stringify({ which }) }); localStorage.setItem('cr.accountChosen', '1'); acctModal.classList.add('hidden'); await refreshMe(); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
   }));
@@ -315,6 +323,24 @@
   $('#login-computers').addEventListener('click', openComputers);
   $('#topbar-computer').addEventListener('click', openComputers);
   $('#acct-computers').addEventListener('click', () => openSettings('computers'));
+  // A provider is saved the way a token is: proven with one turn, then it becomes the
+  // account that answers. Everything else in the app carries on as before.
+  $('#prov-save').addEventListener('click', async () => {
+    const btn = $('#prov-save'); const was = btn.textContent;
+    const body = { name: $('#prov-name').value.trim(), baseUrl: $('#prov-url').value.trim(), key: $('#prov-key').value.trim(), keyKind: $('#prov-kind').value, model: $('#prov-model').value.trim() };
+    if (!body.baseUrl || !body.key) { $('#acct-error').hidden = false; $('#acct-error').textContent = 'An address and a key, at least.'; return; }
+    btn.disabled = true; btn.textContent = 'Testing…'; $('#acct-error').hidden = true;
+    try {
+      await api('/accounts/provider', { method: 'POST', body: JSON.stringify(body) });
+      $('#prov-key').value = ''; localStorage.setItem('cr.accountChosen', '1');
+      accounts = await api('/accounts'); renderAccounts(); await refreshMe(); await loadModels(true);
+    } catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = was; }
+  });
+  $('#prov-remove').addEventListener('click', async () => {
+    try { await api('/accounts/provider', { method: 'DELETE' }); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); await loadModels(true); }
+    catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
+  });
   $('#computers-refresh').addEventListener('click', openComputers);
   cmptModal.addEventListener('click', (e) => { if (e.target === cmptModal) cmptModal.classList.add('hidden'); });
   $('#computers-edit').addEventListener('click', () => { const invoke = bridge(); if (invoke) invoke('open_picker').catch(() => {}); });
@@ -1257,6 +1283,19 @@
     if (T?.opener?.openUrl) { T.opener.openUrl(url).catch(() => window.open(url, '_blank', 'noopener')); return; }
     window.open(url, '_blank', 'noopener');
   }
+  // Every link written in a message, every file chip, every "open in a tab": they are
+  // all anchors with target="_blank", which the native window quietly ignores. One
+  // listener sends them all through the shell instead, so a link is a link again.
+  document.addEventListener('click', (e) => {
+    if (!window.__TAURI__?.opener?.openUrl) return; // a browser needs no help
+    const a = e.target?.closest?.('a[href]');
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return; // our own routes, and the preview's paths
+    e.preventDefault();
+    openExternal(href);
+  });
+
   const mb = (bytes) => (bytes > 0 ? Math.round(bytes / 1048576) + ' MB' : '');
   // relTime says "now" for the last minute, and "now ago" is not a thing.
   const ago = (ms) => { const r = relTime(ms); return r === 'now' ? 'just now' : r + ' ago'; };

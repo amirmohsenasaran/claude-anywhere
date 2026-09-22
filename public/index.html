@@ -416,6 +416,13 @@
           <div class="account-desc" id="acct-token-desc">Not added yet</div>
           <div class="account-check">✓</div>
         </button>
+        <!-- Somebody else's address for the same API: a gateway, a reseller, a company
+             proxy. Claude Code reads ANTHROPIC_BASE_URL, so this is a URL and a key. -->
+        <button class="account-card" data-which="provider">
+          <div class="account-title"><span id="acct-provider-title">Another provider</span> <span class="tag">Endpoint</span></div>
+          <div class="account-desc" id="acct-provider-desc">Not added yet</div>
+          <div class="account-check">✓</div>
+        </button>
       </div>
       <div class="token-box">
         <div class="token-row">
@@ -429,6 +436,21 @@
         </div>
         <p id="acct-error" class="login-error" hidden></p>
       </div>
+      <details id="acct-provider-box" class="provider-box">
+        <summary>Use another provider…</summary>
+        <p class="modal-hint">An address that answers the Anthropic Messages API — a gateway, a reseller, your company's proxy. It is tested with one tiny turn before it is saved; one that only speaks OpenAI's API will say so.</p>
+        <div class="provider-grid">
+          <label>Name<input id="prov-name" type="text" placeholder="hy24" autocomplete="off" spellcheck="false" /></label>
+          <label>Address<input id="prov-url" type="url" placeholder="https://api.example.com" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+          <label>Key<input id="prov-key" type="password" placeholder="The key that provider gave you" autocomplete="off" spellcheck="false" /></label>
+          <label>Sends the key as<select id="prov-kind"><option value="bearer">Authorization: Bearer</option><option value="apikey">x-api-key</option></select></label>
+          <label>Model<input id="prov-model" type="text" placeholder="Optional — the model id that provider uses" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+        </div>
+        <div class="token-actions">
+          <button id="prov-save" class="btn btn-primary" type="button">Test and save</button>
+          <button id="prov-remove" class="link-btn small hidden" type="button">Remove provider</button>
+        </div>
+      </details>
         </section>
 
         <section class="set-pane" data-pane="computers">

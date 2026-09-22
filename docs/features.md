@@ -265,14 +265,30 @@ it may not read their passwords (`src-tauri/permissions/computers.toml`).
 
 ## Accounts
 
-Two accounts **on the computer that is answering**, switchable at any time from the
-bottom of the sidebar — the dialog names it, because from a Mac driving the PC
-"this computer" is the PC:
+Three accounts **on the computer that is answering**, switchable at any time from
+*Settings → Account* — the pane names the machine, because from a Mac driving the
+PC "this computer" is the PC:
 
 - **This computer's login** — whatever `claude login` signed into.
 - **A token** — from `claude setup-token`, or a Console API key, pasted into
   the app. It is proven with one small request and then kept in
-  `data/auth.json`. Remove it from the same dialog.
+  `data/auth.json`. Remove it from the same pane.
+- **Another provider** — an address and a key: a gateway, a reseller, your
+  company's own proxy. Claude Code speaks the Anthropic Messages API and reads
+  `ANTHROPIC_BASE_URL`, so a provider is a URL rather than a second kind of
+  program, and switching to it is the same click as switching to a token.
+
+  The form asks for the address, the key, whether that key rides as
+  `Authorization: Bearer` or `x-api-key` (a gateway that *forwards* to Anthropic
+  usually wants the first, one that *impersonates* the API wants the second), and
+  optionally the model id that provider uses — which becomes `ANTHROPIC_MODEL`,
+  because a provider names its models its own way.
+
+  It is proven the same way a token is: one tiny turn before it is saved, and
+  whatever the endpoint says back is what you see. An endpoint that speaks only
+  OpenAI's API answers with its own complaint, which is the honest answer to
+  "can I use this here?" — Claude Code sends `/v1/messages`, so it needs an
+  Anthropic-shaped endpoint, not merely a provider that hosts Claude models.
 
 Whatever you send is billed to the active account; the sessions stay on this
 computer either way. Plan usage (5-hour and weekly) is shown for an account

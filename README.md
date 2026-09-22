@@ -53,7 +53,7 @@ earlier message, and a dev-server preview that reaches your phone.
 
 | | Claude Desktop | Claude Anywhere |
 |---|---|---|
-| Accounts | one, signed in | two at once: this machine's login and a pasted token, switchable mid-session |
+| Accounts | one, signed in | three at once: this machine's login, a pasted token, and any Anthropic-API provider, switchable mid-session |
 | Reaching your machine | Remote Control, through `claude.ai/code` | direct, over Tailscale or your own LAN |
 | Turned off by an org policy | possible | nothing to turn off |
 | Where your code goes | stays on the machine | stays on the machine, and there is no server of ours |
@@ -72,8 +72,9 @@ on a session, this one follows along and shows what it is doing.
 
 ## Highlights
 
-- **Two accounts, one set of sessions**: this computer's `claude login` and a
-  token you paste, switched from the sidebar whenever you like. Plan usage is
+- **Three accounts, one set of sessions**: this computer's `claude login`, a
+  token you paste, and any other provider — an address that answers the Anthropic
+  API, with its key — switched from Settings whenever you like. Plan usage is
   shown for whichever one is answering.
 - **One app, either computer**: run Claude here, or point the same window at
   another machine running Claude Anywhere and drive that one — its sessions, its
