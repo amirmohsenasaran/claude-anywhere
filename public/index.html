@@ -48,12 +48,9 @@
         <button id="search-btn" class="icon-btn" aria-label="Search sessions" title="Search">
           <svg viewBox="0 0 20 20" width="18" height="18"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
-        <div class="composer-left">
-          <button id="filter-btn" class="icon-btn" aria-label="Group, sort and filter sessions" title="Group, sort, filter">
-            <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 5.5h14M6 10h8M8.5 14.5h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
-          </button>
-          <div id="filter-menu" class="menu menu-top hidden"></div>
-        </div>
+        <button id="filter-btn" class="icon-btn" aria-label="Group, sort and filter sessions" title="Group, sort, filter">
+          <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 5.5h14M6 10h8M8.5 14.5h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+        </button>
         <button id="nav-back" class="icon-btn" aria-label="Back" title="Back">
           <svg viewBox="0 0 20 20" width="18" height="18"><path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
@@ -61,6 +58,8 @@
           <svg viewBox="0 0 20 20" width="18" height="18"><path d="M8 4l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
+
+      <div id="filter-menu" class="menu hidden"></div>
 
       <a href="#/" class="new-chat">
         <span class="new-chat-icon">
@@ -87,13 +86,17 @@
       </div>
 
       <div class="sidebar-bottom">
-        <div class="avatar" id="sidebar-avatar">A</div>
-        <div class="sidebar-user" id="sidebar-user" title="">
-          <div id="sidebar-name" class="sidebar-user-name">…</div>
-          <div id="sidebar-account" class="sidebar-user-plan">…</div>
-          <button id="sidebar-host" class="sidebar-user-plan computer-line" type="button" title="Which computer this window is showing">…</button>
-        </div>
-        <button id="switch-account" class="link-btn small" title="Choose which Claude account runs this app">Switch</button>
+        <button id="account-btn" class="account-row" type="button" title="Account, computers and settings">
+          <span class="avatar" id="sidebar-avatar">A</span>
+          <span class="sidebar-user" id="sidebar-user">
+            <span id="sidebar-name" class="sidebar-user-name">…</span>
+            <span id="sidebar-account" class="sidebar-user-plan">…</span>
+          </span>
+          <svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <div id="account-menu" class="menu hidden"></div>
+        <!-- Which computer is showing, kept for the menu that now carries it. -->
+        <button id="sidebar-host" class="computer-line hidden" type="button" title="Which computer this window is showing">…</button>
       </div>
     </aside>
 
@@ -330,33 +333,6 @@
   </div>
 
   <!-- Connectors (MCP servers) and plugins -->
-  <div id="connectors-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head"><span>Connectors & plugins</span><button id="connectors-refresh" class="link-btn small" type="button">Refresh</button><button id="connectors-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
-      <p class="modal-hint">MCP servers from this computer's Claude Code config (user, project and <code>.mcp.json</code>). Switching one off applies to the next turn, or right away in a running one.</p>
-      <div class="ct-title">Connectors</div>
-      <div id="connectors-list" class="ct-list"><div class="muted small pad">Loading…</div></div>
-      <div class="ct-title">Plugins</div>
-      <div id="plugins-list" class="ct-list"></div>
-      <div class="ct-title">App</div>
-      <div class="ct-row app-row">
-        <div class="ct-info">
-          <div class="ct-name">Claude Anywhere <span id="app-version" class="tag">…</span></div>
-          <div id="app-version-desc" class="ct-desc"></div>
-          <div id="app-update" class="ct-desc app-update"></div>
-          <!-- Only when Rust changed here and the window is an installed release: there is
-               nothing to press, and the old banner pressed Rebuild anyway. -->
-          <div id="app-shell-note" class="ct-desc app-update muted"></div>
-        </div>
-        <div class="app-actions">
-          <button id="app-restart" class="btn btn-ghost" type="button" title="Picks up new server and page code from the repo; the window reloads">Restart server</button>
-          <button id="app-rebuild" class="btn btn-ghost" type="button" title="Rebuilds the Windows app (only needed when the Rust shell changed) and relaunches it">Rebuild app</button>
-        </div>
-      </div>
-      <pre id="app-log" class="app-log hidden"></pre>
-      <p id="connectors-error" class="login-error" hidden></p>
-    </div>
-  </div>
 
   <!-- Right-click menu on a session row -->
   <div id="ctx-menu" class="menu ctx hidden"></div>
@@ -393,10 +369,42 @@
   </div>
 
   <!-- Account chooser: this computer's login, or a token; switch any time -->
-  <div id="account-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head"><span class="spark">✱</span><span>Which Claude account?</span><button id="account-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
-      <p class="modal-hint" id="acct-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
+
+  <!-- Which computer this window is showing. Its sessions, files and account are the ones you see. -->
+
+
+  <!-- One window for everything that is not a session: the account that pays for the
+       turns, the computer answering this one, the connectors it may use, and what
+       version of the app this is. Claude Desktop keeps these in one place; they used to
+       be three separate modals here, which is three places to look. -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-card set-card">
+      <nav class="set-nav">
+        <div class="set-nav-title">Settings</div>
+        <button class="set-tab" type="button" data-pane="general">General</button>
+        <button class="set-tab" type="button" data-pane="account">Account</button>
+        <button class="set-tab" type="button" data-pane="computers">Computers</button>
+        <button class="set-tab" type="button" data-pane="connectors">Connectors</button>
+        <button class="set-tab" type="button" data-pane="about">About</button>
+      </nav>
+      <div class="set-body">
+        <button id="settings-close" class="icon-btn set-close" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+
+        <section class="set-pane" data-pane="general">
+          <h3 class="set-title">General</h3>
+          <div class="set-row">
+            <div class="set-info"><div class="set-name">Keep this computer awake</div><div class="set-desc">A turn that runs for an hour is no use if the machine sleeps at minute two.</div></div>
+            <div id="set-awake" class="set-seg"></div>
+          </div>
+          <div class="set-row">
+            <div class="set-info"><div class="set-name">Updates</div><div class="set-desc" id="set-update-desc">…</div></div>
+            <button id="set-update-check" class="btn btn-ghost" type="button">Check now</button>
+          </div>
+        </section>
+
+        <section class="set-pane" data-pane="account">
+          <h3 class="set-title">Which Claude account?</h3>
+          <p class="modal-hint" id="acct-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
       <div class="account-list">
         <button class="account-card" data-which="local">
           <div class="account-title"><span id="acct-local-title">This computer's login</span> <span class="tag">Local</span></div>
@@ -406,6 +414,13 @@
         <button class="account-card" data-which="token">
           <div class="account-title">Token <span class="tag">Token</span></div>
           <div class="account-desc" id="acct-token-desc">Not added yet</div>
+          <div class="account-check">✓</div>
+        </button>
+        <!-- Somebody else's address for the same API: a gateway, a reseller, a company
+             proxy. Claude Code reads ANTHROPIC_BASE_URL, so this is a URL and a key. -->
+        <button class="account-card" data-which="provider">
+          <div class="account-title"><span id="acct-provider-title">Another provider</span> <span class="tag">Endpoint</span></div>
+          <div class="account-desc" id="acct-provider-desc">Not added yet</div>
           <div class="account-check">✓</div>
         </button>
       </div>
@@ -421,17 +436,62 @@
         </div>
         <p id="acct-error" class="login-error" hidden></p>
       </div>
-    </div>
-  </div>
+      <details id="acct-provider-box" class="provider-box">
+        <summary>Use another provider…</summary>
+        <p class="modal-hint">An address that answers the Anthropic Messages API — a gateway, a reseller, your company's proxy. It is tested with one tiny turn before it is saved; one that only speaks OpenAI's API will say so.</p>
+        <div class="provider-grid">
+          <label>Name<input id="prov-name" type="text" placeholder="hy24" autocomplete="off" spellcheck="false" /></label>
+          <label>Address<input id="prov-url" type="url" placeholder="https://api.example.com" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+          <label>Key<input id="prov-key" type="password" placeholder="The key that provider gave you" autocomplete="off" spellcheck="false" /></label>
+          <label>Sends the key as<select id="prov-kind"><option value="bearer">Authorization: Bearer</option><option value="apikey">x-api-key</option></select></label>
+          <label>Model<input id="prov-model" type="text" placeholder="Optional — the model id that provider uses" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+        </div>
+        <div class="token-actions">
+          <button id="prov-save" class="btn btn-primary" type="button">Test and save</button>
+          <button id="prov-remove" class="link-btn small hidden" type="button">Remove provider</button>
+        </div>
+      </details>
+        </section>
 
-  <!-- Which computer this window is showing. Its sessions, files and account are the ones you see. -->
-  <div id="computers-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head"><span class="spark">✱</span><span>Which computer?</span><button id="computers-refresh" class="link-btn small" type="button">Refresh</button><button id="computers-close" class="icon-btn" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
-      <p class="modal-hint">One computer answers this window at a time — its sessions, its files, its Claude account. Everything stays on the machine it belongs to.</p>
+        <section class="set-pane" data-pane="computers">
+          <h3 class="set-title">Which computer? <button id="computers-refresh" class="link-btn small" type="button">Refresh</button></h3>
+          <p class="modal-hint">One computer answers this window at a time — its sessions, its files, its Claude account. Everything stays on the machine it belongs to.</p>
       <div id="computers-list" class="ct-list"><div class="muted small pad">Looking…</div></div>
       <div class="token-actions"><button id="computers-edit" class="link-btn small">Add or edit computers…</button></div>
       <p id="computers-error" class="login-error" hidden></p>
+        </section>
+
+        <section class="set-pane" data-pane="connectors">
+          <h3 class="set-title">Connectors &amp; plugins <button id="connectors-refresh" class="link-btn small" type="button">Refresh</button></h3>
+          <p class="modal-hint">MCP servers from this computer's Claude Code config (user, project and <code>.mcp.json</code>). Switching one off applies to the next turn, or right away in a running one.</p>
+      <div class="ct-title">Connectors</div>
+      <div id="connectors-list" class="ct-list"><div class="muted small pad">Loading…</div></div>
+      <div class="ct-title">Plugins</div>
+      <div id="plugins-list" class="ct-list"></div>
+      <div class="ct-title">App</div>
+      <div class="ct-row app-row">
+        <div class="ct-info">
+          <div class="ct-name">Claude Anywhere <span id="app-version" class="tag">…</span></div>
+          <div id="app-version-desc" class="ct-desc"></div>
+          <div id="app-update" class="ct-desc app-update"></div>
+          <!-- Only when Rust changed here and the window is an installed release: there is
+               nothing to press, and the old banner pressed Rebuild anyway. -->
+          <div id="app-shell-note" class="ct-desc app-update muted"></div>
+        </div>
+        <div class="app-actions">
+          <button id="app-restart" class="btn btn-ghost" type="button" title="Picks up new server and page code from the repo; the window reloads">Restart server</button>
+          <button id="app-rebuild" class="btn btn-ghost" type="button" title="Rebuilds the Windows app (only needed when the Rust shell changed) and relaunches it">Rebuild app</button>
+        </div>
+      </div>
+      <pre id="app-log" class="app-log hidden"></pre>
+      <p id="connectors-error" class="login-error" hidden></p>
+        </section>
+
+        <section class="set-pane" data-pane="about">
+          <h3 class="set-title">About</h3>
+          <div id="set-about" class="set-about"><div class="muted small pad">Looking…</div></div>
+        </section>
+      </div>
     </div>
   </div>
 

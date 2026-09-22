@@ -77,6 +77,12 @@ await page.goto('http://127.0.0.1:7779/');
   short. The version that decides is the one in
   `node_modules/@anthropic-ai/claude-agent-sdk/manifest.json`, which `lib/models.mjs`
   keeps beside the cached list and treats as its expiry.
+- **A link in the page opens nothing by itself.** `target="_blank"` and `window.open`
+  are ignored by the webview, so a link in a message looked broken and the address had
+  to be copied. The page has to hand it to the shell — `opener.openUrl` — and that needs
+  `opener:allow-open-url` in the capability, scoped to http and https. A missing
+  permission and a URL outside the scope fail differently: "not allowed. Plugin not
+  found" is the ACL, "Not allowed to open url …" is the scope.
 - **macOS blocks plain http in a web view.** A window pointed at
   `http://<ip>:7777` shows white and reports nothing; the bundle needs
   `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by

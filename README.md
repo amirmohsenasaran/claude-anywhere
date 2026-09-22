@@ -5,9 +5,9 @@
 **One set of sessions. Any of your Claude accounts. Your machine, not a relay.**
 
 A self-hosted desktop app and web client for the Claude Code sessions already on
-your computer. Switch which account answers — this machine's login, or a token
-you paste from another — without leaving the session, and reach all of it from
-your phone over your own network.
+your computer. Switch which account answers — this machine's login, a token you
+paste from another, or any provider that answers the Anthropic API — without
+leaving the session, and reach all of it from your phone over your own network.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 [![Windows, macOS, Linux](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-black.svg)](#install)
@@ -31,9 +31,10 @@ Claude Desktop is good, and it can already reach your machine from elsewhere
 through Remote Control. Three things sent me here anyway.
 
 **One session, whichever account you like.** Desktop is signed in as one
-account. Here there are two, side by side: this computer's `claude login`, and a
+account. Here there are three, side by side: this computer's `claude login`, a
 token you paste — `claude setup-token` output from any other account, or a
-Console key. You switch between them from the sidebar at any moment, and the
+Console key — and any other provider that answers the Anthropic API, which is an
+address and a key. You switch between them from Settings at any moment, and the
 sessions do not care: the same conversation, the same files, answered by
 whichever account you picked, billed to that account's plan. If you have a
 personal subscription and a work one, or someone hands you a token for an
@@ -53,7 +54,7 @@ earlier message, and a dev-server preview that reaches your phone.
 
 | | Claude Desktop | Claude Anywhere |
 |---|---|---|
-| Accounts | one, signed in | two at once: this machine's login and a pasted token, switchable mid-session |
+| Accounts | one, signed in | three at once: this machine's login, a pasted token, and any Anthropic-API provider, switchable mid-session |
 | Reaching your machine | Remote Control, through `claude.ai/code` | direct, over Tailscale or your own LAN |
 | Turned off by an org policy | possible | nothing to turn off |
 | Where your code goes | stays on the machine | stays on the machine, and there is no server of ours |
@@ -72,8 +73,9 @@ on a session, this one follows along and shows what it is doing.
 
 ## Highlights
 
-- **Two accounts, one set of sessions**: this computer's `claude login` and a
-  token you paste, switched from the sidebar whenever you like. Plan usage is
+- **Three accounts, one set of sessions**: this computer's `claude login`, a
+  token you paste, and any other provider — an address that answers the Anthropic
+  API, with its key — switched from Settings whenever you like. Plan usage is
   shown for whichever one is answering.
 - **One app, either computer**: run Claude here, or point the same window at
   another machine running Claude Anywhere and drive that one — its sessions, its
@@ -148,7 +150,7 @@ The macOS build is not signed yet, so the first launch needs right-click → Ope
 Every release is built and published by GitHub Actions when a change lands on
 `main`, so what is on that page is what the code is. The app checks it once an
 hour and offers the new one in a banner — the version and the commit it was built
-from are in *Connectors & plugins → App*.
+from are in *Settings → Connectors → App*.
 
 Two apps can be out of date at once, and they are different files: the one in
 your hands and the one on the computer you are driving. The banner knows the
@@ -240,12 +242,19 @@ Near term, in the order they are likely to happen:
 
 Bigger, and deliberately further out:
 
-- [ ] **Other providers.** Keep one conversation and change who answers it:
-      add an OpenAI or Google account alongside your Claude one and continue
-      the same session on GPT or Gemini, with the same files and the same
-      tools. The transcript format and the tool protocol are Claude Code's, so
-      this needs a translation layer rather than a switch — it is an intention,
-      not a promise, and it will land behind a flag first.
+- [x] **Another provider.** Any address that answers the Anthropic Messages API
+      — a gateway, a reseller, your company's proxy — added and switched to like
+      a token, because Claude Code reads `ANTHROPIC_BASE_URL`. Shipped.
+- [ ] **A model that is not Claude.** GPT or Gemini answering the same session
+      would need a translating bridge inside the server: Claude Code calls
+      `/v1/messages`, `count_tokens` and `/v1/models`, and reads Anthropic's own
+      SSE down to `input_json_delta` for tool arguments, so every request and
+      every stream has to be rewritten both ways. It is buildable — about 700
+      lines — and deliberately not built: Claude Code's prompts lean hard on
+      tool calls, a model that is weak at those loops instead of working, and a
+      translator that half-works is worse than an honest refusal. Until then,
+      point the provider card at a proxy that already does it (LiteLLM,
+      claude-code-router) and it is the same one click.
 
 Ideas and arguments about the order belong in
 [Discussions](https://github.com/aryasadeghy/claude-anywhere/discussions).

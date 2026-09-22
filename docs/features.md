@@ -41,6 +41,26 @@ in the tray, and the choice is remembered for next time.
 Sessions live on the machine running the server, so this is not a merged list:
 connect to the PC and you see the PC's sessions. That is the point of it.
 
+## The account row, and Settings
+
+The foot of the sidebar is one line — avatar, your name, the account answering, a
+chevron — and it opens a menu, the way Claude Desktop's does: **Settings…**,
+*Which computer…*, *Connectors & plugins…*, *Switch Claude account…*, *Keep this
+computer awake*, *Check for updates*, *About*.
+
+Behind it is one **Settings** window with its sections down the left: *General*
+(keep-awake, and what version this is with a Check now), *Account*, *Computers*,
+*Connectors*, *About* (version, commit, platform, which computer, where its
+sessions live, and the addresses it answers on). Those middle three used to be
+three separate dialogs opened from three different places — the same things, in
+one place you can find twice.
+
+Searching the list and choosing how it is grouped moved out of the strip at the
+top of the sidebar and onto the project rows, where Claude Desktop keeps them:
+hover a project and it offers **+** (a session in that folder), search, and the
+group/sort/filter menu, which opens under that row. On a phone, where there is
+nothing to hover, the strip at the top still carries both.
+
 ## Files in a message
 
 A file path written as inline code is a link: `out/clip.mp4` can be clicked, while
@@ -217,7 +237,7 @@ session title whenever that machine is not this one. A project called
 `claude-remote` exists on both of your computers; the name above the list is what
 tells them apart.
 
-Clicking either opens **Which computer?**: every computer you have added, with its
+Clicking either opens **Settings → Computers**: every computer you have added, with its
 host name, the Claude account it is signed in with, how many turns are running on
 it, and **Open** to point the window there. One that is switched off says *Not
 answering* instead of vanishing. *Add or edit computers…* is the picker that holds
@@ -245,14 +265,30 @@ it may not read their passwords (`src-tauri/permissions/computers.toml`).
 
 ## Accounts
 
-Two accounts **on the computer that is answering**, switchable at any time from the
-bottom of the sidebar — the dialog names it, because from a Mac driving the PC
-"this computer" is the PC:
+Three accounts **on the computer that is answering**, switchable at any time from
+*Settings → Account* — the pane names the machine, because from a Mac driving the
+PC "this computer" is the PC:
 
 - **This computer's login** — whatever `claude login` signed into.
 - **A token** — from `claude setup-token`, or a Console API key, pasted into
   the app. It is proven with one small request and then kept in
-  `data/auth.json`. Remove it from the same dialog.
+  `data/auth.json`. Remove it from the same pane.
+- **Another provider** — an address and a key: a gateway, a reseller, your
+  company's own proxy. Claude Code speaks the Anthropic Messages API and reads
+  `ANTHROPIC_BASE_URL`, so a provider is a URL rather than a second kind of
+  program, and switching to it is the same click as switching to a token.
+
+  The form asks for the address, the key, whether that key rides as
+  `Authorization: Bearer` or `x-api-key` (a gateway that *forwards* to Anthropic
+  usually wants the first, one that *impersonates* the API wants the second), and
+  optionally the model id that provider uses — which becomes `ANTHROPIC_MODEL`,
+  because a provider names its models its own way.
+
+  It is proven the same way a token is: one tiny turn before it is saved, and
+  whatever the endpoint says back is what you see. An endpoint that speaks only
+  OpenAI's API answers with its own complaint, which is the honest answer to
+  "can I use this here?" — Claude Code sends `/v1/messages`, so it needs an
+  Anthropic-shaped endpoint, not merely a provider that hosts Claude models.
 
 Whatever you send is billed to the active account; the sessions stay on this
 computer either way. Plan usage (5-hour and weekly) is shown for an account
@@ -261,7 +297,7 @@ token is not allowed to.
 
 ## Connectors and plugins
 
-The **+** menu in the composer opens *Connectors & plugins*: the MCP servers
+The **+** menu in the composer opens *Settings → Connectors*: the MCP servers
 from this computer's Claude Code config (user, project and `.mcp.json`) with a
 switch each — off applies to the next turn, or immediately in a running one —
 and the plugins from `~/.claude/settings.json`.
@@ -293,7 +329,7 @@ which is what makes the next section work.
 
 ## Updating without going to the PC
 
-From *Connectors & plugins* → **App**:
+From *Settings → Connectors* → **App**:
 
 - **Restart server** reloads `server.mjs`, `lib/` and `public/` from the
   checkout and reloads the window. Mid-turn it waits: the restart is queued and
@@ -438,7 +474,11 @@ worth doing:
 - Signed macOS and Linux builds. They are built and they run; until someone
   pays Apple, the first launch needs right-click → Open.
 
-And one that is further out than the rest: **other providers** — adding an
-OpenAI or Google account next to your Claude one and continuing the same
-session on GPT or Gemini. The transcript and the tool protocol are Claude
-Code's, so it needs a translation layer; see the roadmap in the README.
+And one that is deliberately not built: **a model that is not Claude**. Another
+*provider* works today — anything that answers the Anthropic Messages API, see
+Accounts above — but GPT or Gemini answering the same session would need a
+translating bridge in the server, rewriting every request and every stream
+between the two APIs. Claude Code's prompts lean hard on tool calls, a model
+that is weak at those loops instead of working, and a half-working translator
+is worse than an honest refusal. A proxy that already does the translating
+(LiteLLM, claude-code-router) can be added as a provider like any other.

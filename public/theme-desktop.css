@@ -20,6 +20,10 @@
   --chip-bg: rgba(11, 11, 11, .06); --code-chip-bg: rgba(142, 38, 38, .10); --code-chip-ink: #8e2626;
   --danger: #8e2626; --success: #2f7d4f;
   --sidebar-w: 300px;
+  /* The sidebar's own greys. They were measured in the dark, so they are named here
+     rather than written into the rules: on a light background #c3c2b7 is a title you
+     cannot read and #353535 is a black bar. */
+  --sb-title: var(--ink-2); --sb-hover: #f0efec; --sb-open: #e6e4dc; --sb-new: #eceae3; --sb-new-hover: #e4e2da; --sb-ring: #b6b4aa;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -30,6 +34,7 @@
     --chip-bg: #2d2d2d; --code-chip-bg: #3f2f2f; --code-chip-ink: #ec7e7e;
     --danger: #ec7e7e; --success: #7ec48f;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .35);
+    --sb-title: #c3c2b7; --sb-hover: #1b1b1b; --sb-open: #232323; --sb-new: #353535; --sb-new-hover: #3f3f3f; --sb-ring: #4d4c49;
   }
 }
 :root[data-theme="dark"] {
@@ -40,6 +45,7 @@
   --chip-bg: #2d2d2d; --code-chip-bg: #3f2f2f; --code-chip-ink: #ec7e7e;
   --danger: #ec7e7e; --success: #7ec48f;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .35);
+  --sb-title: #c3c2b7; --sb-hover: #1b1b1b; --sb-open: #232323; --sb-new: #353535; --sb-new-hover: #3f3f3f; --sb-ring: #4d4c49;
 }
 body { font-size: 14px; }
 
@@ -731,3 +737,149 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .menu-foot span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-foot .link-btn { color: #3b82f6; font-size: 11.5px; padding: 0; flex: none; }
 .menu-foot .link-btn[disabled] { color: var(--ink-3); cursor: default; }
+
+/* ---------- v42: the sidebar at the size Claude Desktop draws it ---------- */
+/* Measured off a screenshot of Claude Desktop's own sidebar. The scale came from the
+   traffic lights in it: 12pt buttons came out 26px, so the shot is 2.17x and not the 2x
+   it looks like — read as 2x every number would have been 8% too big. At true size every
+   row there is 24px tall with a 12.5px label; ours were 36px and 15px, which is most of
+   why the two looked like different applications side by side.
+
+   The colours were already right — #111111 behind, #232323 under the open session,
+   #898781 for a project name — with one exception: the title itself, which Claude keeps
+   at #c3c2b7 and turns white only when the session has something new in it.
+
+   Desktop only. 24px is a mouse target; a finger needs the roomier rows the phone keeps. */
+/* The ⋮ is in every row on every screen, so it is dressed here rather than inside the
+   desktop block below — unstyled, it renders as a grey system button on a phone. */
+.session-item .row-more { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--ink-3); opacity: 0; cursor: pointer; }
+.session-item:hover .row-more, .session-item.active .row-more { opacity: 1; }
+.session-item .row-more:hover { background: var(--bg-3); color: var(--ink); }
+@media (hover: none) { .session-item .row-more { opacity: .55; } }
+
+@media (min-width: 861px) {
+  .sidebar { padding: 6px 7px 8px; }
+  .sidebar-top { gap: 0; padding: 2px 0 4px; }
+  .sidebar-top .icon-btn { width: 26px; height: 26px; }
+  .sidebar-top .icon-btn svg { width: 16px; height: 16px; }
+  /* Search and filter moved to the project rows; the strip is the toggle and the arrows. */
+  .sidebar-top #search-btn, .sidebar-top #filter-btn { display: none; }
+  /* New is a filled row the width of the list, not a circle with a word beside it. */
+  .new-chat { height: 24px; padding: 0 7px; gap: 6px; font-size: 12.5px; border-radius: 8px; background: var(--sb-new); color: var(--ink); }
+  .new-chat:hover { background: var(--sb-new-hover); }
+  .new-chat-icon { width: 16px; height: 16px; border-radius: 0; background: none; color: var(--ink); }
+  .new-chat-icon svg { width: 14px; height: 14px; }
+  .project-group { margin-top: 10px; }
+  /* The name first and its chevron after it, the way Claude reads: "clip-shorts ⌄". */
+  .project-group > summary { height: 24px; padding: 0 6px; font-size: 12.5px; gap: 5px; }
+  .project-group > summary .chev { display: inline-block; order: 2; width: 11px; height: 11px; opacity: .8; }
+  .project-group > summary .proj-add { width: 20px; height: 20px; order: 3; }
+  .session-item { height: 24px; padding: 0 6px 0 28px; margin-bottom: 1px; font-size: 12.5px; border-radius: 8px; color: var(--sb-title); }
+  .session-item::before { box-sizing: border-box; inset-inline-start: 11px; width: 6px; height: 6px; border-width: 1px; border-color: var(--sb-ring); } /* Claude draws a 6px ring with a 1px stroke, not a 9px one */
+  .session-item:hover { background: var(--sb-hover); }
+  .session-item.active { background: var(--sb-open); color: var(--ink); }
+  /* Something happened in it while you were elsewhere: the title goes white. The dot
+     says which kind, the colour says there is one at all — one glance, two answers. */
+  .session-item.unread, .session-item.needs-input, .session-item.failed { color: var(--ink); }
+  .session-item.working::before { display: block; border-color: var(--accent); animation: sess-working 1.4s ease-in-out infinite; }
+  .session-item.working .dot { display: none; }
+  @keyframes sess-working { 0%, 100% { opacity: .35; transform: translateY(-50%) scale(.8); } 50% { opacity: 1; transform: translateY(-50%) scale(1.15); } }
+  .session-item .pin { display: none; }
+  .session-item .row-more { width: 20px; height: 20px; }
+  .sidebar-bottom { padding: 8px 6px 2px; gap: 8px; }
+  .sidebar-bottom .avatar { width: 24px; height: 24px; font-size: 11px; }
+  .sidebar-user-name { font-size: 13px; } .sidebar-user-plan { font-size: 11px; }
+}
+
+/* ---------- v43: settings in one window, opened from the account row ---------- */
+/* Claude Desktop keeps the account at the foot of the sidebar as one line, opens a menu
+   from it, and puts everything else behind one Settings window with its sections down
+   the left. Account, computers and connectors used to be three modals reached from three
+   different places here; they are panes now, and each kept its ids so what filled them
+   still does. */
+.sidebar-bottom { position: relative; display: block; padding: 6px 0 0; } /* the menu opens upward from this row, so it is the box it measures against */
+.account-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
+.account-row:hover { background: var(--sb-hover); }
+.account-row .sidebar-user { display: flex; align-items: baseline; gap: 5px; min-width: 0; flex: 1; }
+.account-row .sidebar-user-name { font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.account-row .sidebar-user-plan { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-row .chev { flex: none; color: var(--ink-3); }
+#account-menu { inset-inline-start: 6px; inset-inline-end: 6px; min-width: 0; }
+
+/* The two the top strip used to carry. On the row they only show when that row is under
+   the pointer, which is how Claude Desktop hides them until they are wanted. */
+.project-group > summary .proj-act { flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--ink-3); opacity: 0; cursor: pointer; }
+.project-group > summary:hover .proj-act, .project-group > summary:focus-within .proj-act { opacity: 1; }
+.project-group > summary .proj-act:hover { background: var(--bg-3); color: var(--ink); }
+@media (hover: none) { .project-group > summary .proj-act { opacity: .55; } }
+
+/* One node for the whole list, placed under whichever row opened it. */
+#filter-menu { position: absolute; z-index: 60; }
+#sidebar { position: relative; }
+
+/* A row with an icon is a two-column grid: the icon, then the label with whatever it
+   says underneath — which keeps the second line lined up with the first. */
+.menu-item.with-icon { display: grid; grid-template-columns: 16px 1fr; column-gap: 10px; align-items: center; }
+.menu-item.with-icon .menu-icon { grid-column: 1; grid-row: 1; }
+.menu-item.with-icon .menu-label, .menu-item.with-icon .desc { grid-column: 2; }
+.menu-icon { display: grid; place-items: center; width: 16px; color: var(--ink-3); }
+.menu-item:hover .menu-icon { color: var(--ink-2); }
+
+.set-card { width: min(980px, 94vw); max-width: none; height: min(660px, 88vh); padding: 0; display: flex; overflow: hidden; }
+.set-nav { flex: none; width: 210px; padding: 14px 10px; border-inline-end: 1px solid var(--line); background: var(--bg-2); overflow-y: auto; }
+.set-nav-title { font-size: 11.5px; color: var(--ink-3); padding: 2px 8px 8px; }
+.set-tab { display: block; width: 100%; text-align: start; padding: 7px 10px; margin-bottom: 2px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); font: inherit; font-size: 13.5px; cursor: pointer; }
+.set-tab:hover { background: var(--bg-3); color: var(--ink); }
+.set-tab.sel { background: var(--bg-3); color: var(--ink); }
+.set-body { position: relative; flex: 1; min-width: 0; padding: 18px 22px 22px; overflow-y: auto; }
+.set-close { position: absolute; top: 12px; inset-inline-end: 12px; }
+.set-pane { display: none; }
+.set-pane.on { display: block; }
+.set-title { margin: 0 0 14px; font-size: 17px; font-weight: 500; color: var(--ink); display: flex; align-items: center; gap: 10px; }
+.set-title .link-btn { font-size: 12.5px; }
+.set-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.set-info { flex: 1; min-width: 0; }
+.set-name { font-size: 13.5px; color: var(--ink); }
+.set-desc { font-size: 12px; color: var(--ink-3); line-height: 1.45; margin-top: 2px; }
+.set-seg { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--bg-2); flex: none; }
+.set-opt { padding: 5px 10px; border: 0; border-radius: 7px; background: none; color: var(--ink-3); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.set-opt:hover { color: var(--ink); }
+.set-opt.on { background: var(--bg-3); color: var(--ink); }
+.set-about-row { display: flex; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.set-about-k { width: 130px; flex: none; color: var(--ink-3); }
+.set-about-v { color: var(--ink-2); word-break: break-all; }
+.set-about .addresses { margin-top: 12px; }
+@media (max-width: 860px) {
+  /* A phone has no room for a label beside a three-way switch: the label wrapped one
+     word per line. Everything in a row stacks instead. */
+  .set-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .set-row .btn { align-self: flex-start; }
+  .set-seg { overflow-x: auto; }
+  .set-about-row { flex-direction: column; gap: 2px; }
+  .set-about-k { width: auto; }
+  /* The strip at the top of the sidebar still carries search and filter here, so the
+     rows do not need a second copy nobody can hover anyway. */
+  .project-group > summary .proj-act { display: none; }
+  .set-card { flex-direction: column; height: 92vh; width: 96vw; }
+  .set-nav { width: auto; display: flex; gap: 4px; overflow-x: auto; padding: 8px; border-inline-end: 0; border-bottom: 1px solid var(--line); }
+  .set-nav-title { display: none; }
+  .set-tab { width: auto; white-space: nowrap; }
+  .set-body { padding: 14px; }
+}
+
+/* ---------- v44: a provider is a third account ---------- */
+/* Claude Code speaks the Anthropic Messages API and reads ANTHROPIC_BASE_URL, so another
+   provider is an address and a key rather than another program. The form asks for what
+   changes between them - including whether the key rides as Bearer or x-api-key, which
+   is the difference between a gateway that forwards and one that impersonates. */
+.provider-box { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.provider-box > summary { cursor: pointer; font-size: 13.5px; color: var(--ink-2); list-style: none; }
+.provider-box > summary::-webkit-details-marker { display: none; }
+.provider-box > summary::before { content: "▸ "; color: var(--ink-3); }
+.provider-box[open] > summary::before { content: "▾ "; }
+.provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 12px; }
+.provider-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); }
+.provider-grid label:nth-child(2), .provider-grid label:nth-child(3) { grid-column: 1 / -1; }
+.provider-grid input, .provider-grid select { font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); outline: none; }
+.provider-grid input:focus, .provider-grid select:focus { border-color: var(--ink-3); }
+@media (max-width: 860px) { .provider-grid { grid-template-columns: 1fr; } }
