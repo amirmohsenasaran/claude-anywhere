@@ -20,6 +20,10 @@
   --chip-bg: rgba(11, 11, 11, .06); --code-chip-bg: rgba(142, 38, 38, .10); --code-chip-ink: #8e2626;
   --danger: #8e2626; --success: #2f7d4f;
   --sidebar-w: 300px;
+  /* The sidebar's own greys. They were measured in the dark, so they are named here
+     rather than written into the rules: on a light background #c3c2b7 is a title you
+     cannot read and #353535 is a black bar. */
+  --sb-title: var(--ink-2); --sb-hover: #f0efec; --sb-open: #e6e4dc; --sb-new: #eceae3; --sb-new-hover: #e4e2da; --sb-ring: #b6b4aa;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -30,6 +34,7 @@
     --chip-bg: #2d2d2d; --code-chip-bg: #3f2f2f; --code-chip-ink: #ec7e7e;
     --danger: #ec7e7e; --success: #7ec48f;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .35);
+    --sb-title: #c3c2b7; --sb-hover: #1b1b1b; --sb-open: #232323; --sb-new: #353535; --sb-new-hover: #3f3f3f; --sb-ring: #4d4c49;
   }
 }
 :root[data-theme="dark"] {
@@ -40,6 +45,7 @@
   --chip-bg: #2d2d2d; --code-chip-bg: #3f2f2f; --code-chip-ink: #ec7e7e;
   --danger: #ec7e7e; --success: #7ec48f;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .35);
+  --sb-title: #c3c2b7; --sb-hover: #1b1b1b; --sb-open: #232323; --sb-new: #353535; --sb-new-hover: #3f3f3f; --sb-ring: #4d4c49;
 }
 body { font-size: 14px; }
 
@@ -759,8 +765,8 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
   /* Search and filter moved to the project rows; the strip is the toggle and the arrows. */
   .sidebar-top #search-btn, .sidebar-top #filter-btn { display: none; }
   /* New is a filled row the width of the list, not a circle with a word beside it. */
-  .new-chat { height: 24px; padding: 0 7px; gap: 6px; font-size: 12.5px; border-radius: 8px; background: #353535; color: var(--ink); }
-  .new-chat:hover { background: #3f3f3f; }
+  .new-chat { height: 24px; padding: 0 7px; gap: 6px; font-size: 12.5px; border-radius: 8px; background: var(--sb-new); color: var(--ink); }
+  .new-chat:hover { background: var(--sb-new-hover); }
   .new-chat-icon { width: 16px; height: 16px; border-radius: 0; background: none; color: var(--ink); }
   .new-chat-icon svg { width: 14px; height: 14px; }
   .project-group { margin-top: 10px; }
@@ -768,10 +774,10 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
   .project-group > summary { height: 24px; padding: 0 6px; font-size: 12.5px; gap: 5px; }
   .project-group > summary .chev { display: inline-block; order: 2; width: 11px; height: 11px; opacity: .8; }
   .project-group > summary .proj-add { width: 20px; height: 20px; order: 3; }
-  .session-item { height: 24px; padding: 0 6px 0 28px; margin-bottom: 1px; font-size: 12.5px; border-radius: 8px; color: #c3c2b7; }
-  .session-item::before { box-sizing: border-box; inset-inline-start: 11px; width: 6px; height: 6px; border-width: 1px; border-color: #4d4c49; } /* Claude draws a 6px ring with a 1px stroke, not a 9px one */
-  .session-item:hover { background: #1b1b1b; }
-  .session-item.active { background: #232323; color: var(--ink); }
+  .session-item { height: 24px; padding: 0 6px 0 28px; margin-bottom: 1px; font-size: 12.5px; border-radius: 8px; color: var(--sb-title); }
+  .session-item::before { box-sizing: border-box; inset-inline-start: 11px; width: 6px; height: 6px; border-width: 1px; border-color: var(--sb-ring); } /* Claude draws a 6px ring with a 1px stroke, not a 9px one */
+  .session-item:hover { background: var(--sb-hover); }
+  .session-item.active { background: var(--sb-open); color: var(--ink); }
   /* Something happened in it while you were elsewhere: the title goes white. The dot
      says which kind, the colour says there is one at all — one glance, two answers. */
   .session-item.unread, .session-item.needs-input, .session-item.failed { color: var(--ink); }
@@ -793,7 +799,7 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
    still does. */
 .sidebar-bottom { position: relative; display: block; padding: 6px 0 0; } /* the menu opens upward from this row, so it is the box it measures against */
 .account-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
-.account-row:hover { background: #1b1b1b; }
+.account-row:hover { background: var(--sb-hover); }
 .account-row .sidebar-user { display: flex; align-items: baseline; gap: 5px; min-width: 0; flex: 1; }
 .account-row .sidebar-user-name { font-size: 12.5px; font-weight: 500; white-space: nowrap; }
 .account-row .sidebar-user-plan { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

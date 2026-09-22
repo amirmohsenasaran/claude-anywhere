@@ -5,9 +5,9 @@
 **One set of sessions. Any of your Claude accounts. Your machine, not a relay.**
 
 A self-hosted desktop app and web client for the Claude Code sessions already on
-your computer. Switch which account answers — this machine's login, or a token
-you paste from another — without leaving the session, and reach all of it from
-your phone over your own network.
+your computer. Switch which account answers — this machine's login, a token you
+paste from another, or any provider that answers the Anthropic API — without
+leaving the session, and reach all of it from your phone over your own network.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
 [![Windows, macOS, Linux](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-black.svg)](#install)
@@ -31,9 +31,10 @@ Claude Desktop is good, and it can already reach your machine from elsewhere
 through Remote Control. Three things sent me here anyway.
 
 **One session, whichever account you like.** Desktop is signed in as one
-account. Here there are two, side by side: this computer's `claude login`, and a
+account. Here there are three, side by side: this computer's `claude login`, a
 token you paste — `claude setup-token` output from any other account, or a
-Console key. You switch between them from the sidebar at any moment, and the
+Console key — and any other provider that answers the Anthropic API, which is an
+address and a key. You switch between them from Settings at any moment, and the
 sessions do not care: the same conversation, the same files, answered by
 whichever account you picked, billed to that account's plan. If you have a
 personal subscription and a work one, or someone hands you a token for an
