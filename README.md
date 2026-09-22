@@ -148,7 +148,7 @@ The macOS build is not signed yet, so the first launch needs right-click → Ope
 Every release is built and published by GitHub Actions when a change lands on
 `main`, so what is on that page is what the code is. The app checks it once an
 hour and offers the new one in a banner — the version and the commit it was built
-from are in *Connectors & plugins → App*.
+from are in *Settings → Connectors → App*.
 
 Two apps can be out of date at once, and they are different files: the one in
 your hands and the one on the computer you are driving. The banner knows the

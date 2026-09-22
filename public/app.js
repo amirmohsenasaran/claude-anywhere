@@ -111,12 +111,33 @@
     finally { btn.classList.remove('busy'); btn.textContent = 'Continue'; }
   });
 
+  // ---------- one Settings window ----------
+  // Account, computers and connectors were three modals opened from three different
+  // places. They are the same kind of thing — what this app is pointed at rather than
+  // what it is doing — so they are panes of one window now, as they are in Claude
+  // Desktop. Each pane keeps the ids it had, so everything that filled them still does.
+  const settingsModal = $('#settings-modal');
+  let lastVersion = null; // the last /version answer, shared by the General and About panes
+  function openSettings(pane = 'general') {
+    settingsModal.classList.remove('hidden');
+    settingsModal.querySelectorAll('.set-pane').forEach((p) => p.classList.toggle('on', p.dataset.pane === pane));
+    settingsModal.querySelectorAll('.set-tab').forEach((t) => t.classList.toggle('sel', t.dataset.pane === pane));
+    if (pane === 'general') paintGeneral();
+    if (pane === 'about') paintAbout();
+    if (pane === 'account') loadAccountPane();
+    if (pane === 'computers') openComputers();
+    if (pane === 'connectors') { openConnectors(); paintVersion(); }
+  }
+  settingsModal.querySelectorAll('.set-tab').forEach((t) => t.addEventListener('click', () => openSettings(t.dataset.pane)));
+  $('#settings-close').addEventListener('click', () => { settingsModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); });
+  settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) $('#settings-close').click(); });
+
   // ---------- accounts: this computer's login or a token, switchable any time ----------
-  const acctModal = $('#account-modal');
+  const acctModal = settingsModal;
   let accounts = null;
   const describe = (a) => a ? [a.email || (a.auth === 'oauth_token' ? 'Signed in with a token' : a.loggedIn === false ? 'Not signed in' : 'Signed in'), a.plan, a.org && a.org !== a.email + "'s Organization" ? a.org : ''].filter(Boolean).join(' · ') : '';
-  async function openAccounts() {
-    acctModal.classList.remove('hidden');
+  function openAccounts() { openSettings('account'); }
+  async function loadAccountPane() {
     $('#acct-error').hidden = true;
     try { accounts = await api('/accounts'); } catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; return; }
     renderAccounts();
@@ -155,12 +176,55 @@
     try { await api('/accounts/token', { method: 'DELETE' }); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
   });
+  menuFor('#account-btn', '#account-menu', (m) => {
+    m.innerHTML = '';
+    m.appendChild(el('div', 'menu-title', $('#sidebar-account').textContent || 'Account'));
+    m.appendChild(item('Settings…', '', false, () => { m.classList.add('hidden'); openSettings('general'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"><circle cx=\"10\" cy=\"10\" r=\"2.7\"/><path d=\"M10 1.9l1.1 2a6 6 0 0 1 1.7.7l2.2-.5 1.4 2.4-1.5 1.7a6 6 0 0 1 0 1.6l1.5 1.7-1.4 2.4-2.2-.5a6 6 0 0 1-1.7.7l-1.1 2h-2.8l-1.1-2a6 6 0 0 1-1.7-.7l-2.2.5-1.4-2.4 1.5-1.7a6 6 0 0 1 0-1.6L3.4 6.5l1.4-2.4 2.2.5a6 6 0 0 1 1.7-.7l1.1-2z\" stroke-linejoin=\"round\"/></svg>" }));
+    m.appendChild(item('Which computer…', ($('#sidebar-host').textContent || '').split(' · ').slice(0, 2).join(' · '), false, () => { m.classList.add('hidden'); openSettings('computers'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"4\" y=\"4\" width=\"12\" height=\"8\" rx=\"1.4\"/><path d=\"M2.5 15h15\" stroke-linecap=\"round\"/></svg>" }));
+    m.appendChild(item('Connectors & plugins…', '', false, () => { m.classList.add('hidden'); openSettings('connectors'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M7.5 3v4M12.5 3v4M5 7.5h10v2a5 5 0 0 1-5 5 5 5 0 0 1-5-5z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M10 14.5V18\" stroke-linecap=\"round\"/></svg>" }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('Switch Claude account…', '', false, () => { m.classList.add('hidden'); openSettings('account'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"7\" r=\"3\"/><path d=\"M3.8 16.5a6.4 6.4 0 0 1 12.4 0\" stroke-linecap=\"round\"/></svg>" }));
+    m.appendChild(item('Keep this computer awake', (AWAKE.find((x) => x[0] === awakeMode) || AWAKE[0])[1], false, () => { m.classList.add('hidden'); setAwake(AWAKE[(AWAKE.findIndex((x) => x[0] === awakeMode) + 1) % AWAKE.length][0]); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2.4 10S5.2 5.6 10 5.6 17.6 10 17.6 10 14.8 14.4 10 14.4 2.4 10 2.4 10z\" stroke-linejoin=\"round\"/><circle cx=\"10\" cy=\"10\" r=\"2.1\"/></svg>" }));
+    m.appendChild(item('Check for updates', '', false, async () => { m.classList.add('hidden'); openSettings('general'); await checkUpdateNow(); paintGeneral(); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M10 3.5v9M6.5 9.5L10 13l3.5-3.5M4 16.5h12\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>" }));
+    m.appendChild(el('div', 'menu-sep'));
+    m.appendChild(item('About Claude Anywhere', ($('#sidebar-host').textContent || '').split(' · ').pop(), false, () => { m.classList.add('hidden'); openSettings('about'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"10\" r=\"7\"/><path d=\"M10 9v4.5\" stroke-linecap=\"round\"/><circle cx=\"10\" cy=\"6.6\" r=\".9\" fill=\"currentColor\" stroke=\"none\"/></svg>" }));
+  });
+
+  // ---------- what the General and About panes say ----------
+  async function paintGeneral() {
+    if (!lastVersion) { try { lastVersion = await api('/version'); } catch {} }
+    const seg = $('#set-awake'); seg.innerHTML = '';
+    for (const [id, name] of AWAKE) {
+      const b = el('button', 'set-opt' + (awakeMode === id ? ' on' : ''), name); b.type = 'button';
+      b.addEventListener('click', async () => { await setAwake(id); paintGeneral(); });
+      seg.appendChild(b);
+    }
+    const v = lastVersion;
+    $('#set-update-desc').textContent = v
+      ? 'You have ' + v.version + (v.commit ? ' · ' + v.commit : '') + (v.update?.newer ? ' — ' + v.update.latest + ' is out' : ' — up to date')
+      : 'Claude Anywhere updates itself from GitHub.';
+  }
+  async function paintAbout() {
+    const box = $('#set-about'); box.innerHTML = '';
+    let me = null, v = lastVersion;
+    try { me = await api('/me'); } catch {}
+    try { if (!v) v = lastVersion = await api('/version'); } catch {}
+    const line = (k, val) => { const r = el('div', 'set-about-row'); r.appendChild(el('span', 'set-about-k', k)); r.appendChild(el('span', 'set-about-v', val)); box.appendChild(r); };
+    line('Version', v ? v.version + (v.devBuild ? ' (checkout build)' : '') : '—');
+    line('Commit', v?.commit || '—');
+    line('Platform', v?.platform || '—');
+    line('This computer', me?.host || state.host || '—');
+    line('Sessions', me?.account?.projectsDir || '~/.claude/projects');
+    if (me) box.appendChild(addressBlock(me));
+  }
+  $('#set-update-check').addEventListener('click', async () => { await checkUpdateNow(); paintGeneral(); });
+
   // ---------- which computer this window is showing ----------
   // The list of your computers belongs to this device, not to any server, so it comes
   // from the shell. A browser is by definition looking at exactly one: the one that
   // served it.
   const bridge = () => window.__TAURI__?.core?.invoke;
-  const cmptModal = $('#computers-modal');
+  const cmptModal = settingsModal;
   let activeComputer = null; // { id, name, remote } once the shell has been asked
 
   // Two fields and no network: this runs on every repaint. The list of computers is
@@ -216,7 +280,7 @@
   }
 
   async function openComputers() {
-    cmptModal.classList.remove('hidden');
+    if (settingsModal.classList.contains('hidden') || !$('.set-pane[data-pane="computers"]').classList.contains('on')) return openSettings('computers');
     $('#computers-error').hidden = true;
     const list = $('#computers-list');
     const invoke = bridge();
@@ -250,16 +314,12 @@
   $('#sidebar-host').addEventListener('click', (e) => { e.stopPropagation(); openComputers(); });
   $('#login-computers').addEventListener('click', openComputers);
   $('#topbar-computer').addEventListener('click', openComputers);
-  $('#acct-computers').addEventListener('click', () => { acctModal.classList.add('hidden'); openComputers(); });
+  $('#acct-computers').addEventListener('click', () => openSettings('computers'));
   $('#computers-refresh').addEventListener('click', openComputers);
-  $('#computers-close').addEventListener('click', () => cmptModal.classList.add('hidden'));
   cmptModal.addEventListener('click', (e) => { if (e.target === cmptModal) cmptModal.classList.add('hidden'); });
   $('#computers-edit').addEventListener('click', () => { const invoke = bridge(); if (invoke) invoke('open_picker').catch(() => {}); });
 
-  $('#account-close').addEventListener('click', () => { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); });
   acctModal.addEventListener('click', (e) => { if (e.target === acctModal) { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); } });
-  $('#switch-account').addEventListener('click', openAccounts);
-  $('#sidebar-user').addEventListener('click', openAccounts);
 
   async function refreshMe() {
     const me = await api('/me');
@@ -324,7 +384,16 @@
     $('#filter-btn').classList.toggle('on', state.view.group !== 'project' || state.view.sort !== 'manual' || state.view.archived);
     if (reload) loadSessions().catch(() => {}); else renderSessions();
   }
+  // The menu belongs to whichever button opened it: the one in the top bar on a phone,
+  // or the row's own on a desktop, where the top bar does not carry it any more.
+  let filterAnchor = null;
   menuFor('#filter-btn', '#filter-menu', (m) => {
+    const anchor = filterAnchor || $('#filter-btn');
+    const r = anchor.getBoundingClientRect(), s = $('#sidebar').getBoundingClientRect();
+    m.style.top = Math.round(r.bottom - s.top + 4) + 'px';
+    m.style.insetInlineEnd = Math.max(6, Math.round(s.right - r.right)) + 'px';
+    m.style.insetInlineStart = 'auto';
+    filterAnchor = null;
     m.innerHTML = '';
     m.appendChild(el('div', 'menu-title', 'Group by'));
     for (const [id, name, desc] of GROUPS) m.appendChild(item(name, desc, state.view.group === id, () => { m.classList.add('hidden'); setView({ group: id }); }));
@@ -662,6 +731,19 @@
         sm.appendChild(add);
         sm.title = items[0].cwd + (manual ? '\nDrag to reorder projects' : '');
       }
+      // Searching the list and deciding how it is grouped belong to the list, so they sit
+      // on its rows rather than in the strip at the top — which is where Claude Desktop
+      // puts them. There is one menu for the whole sidebar, so it is told which row
+      // opened it and shows up under that one.
+      {
+        const act = (title, svg, onClick) => {
+          const b = el('button', 'proj-act'); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg;
+          b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onClick(b); });
+          return b;
+        };
+        sm.appendChild(act('Search sessions', "<svg viewBox=\"0 0 20 20\" width=\"13\" height=\"13\"><circle cx=\"9\" cy=\"9\" r=\"5.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/><path d=\"M13.5 13.5L17 17\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>", () => $('#search-btn').click()));
+        sm.appendChild(act('Group, sort, filter', "<svg viewBox=\"0 0 20 20\" width=\"13\" height=\"13\"><path d=\"M3 5.5h14M6 10h8M8.5 14.5h3\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" fill=\"none\"/></svg>", (b) => { filterAnchor = b; $('#filter-btn').click(); }));
+      }
       g.appendChild(sm);
       if (manual) {
         makeDraggable(sm, 'project', k, '__projects');
@@ -888,8 +970,9 @@
     btn.addEventListener('click', (e) => { e.stopPropagation(); const open = m.classList.contains('hidden'); document.querySelectorAll('.menu').forEach((x) => x.classList.add('hidden')); if (open) { render(m); m.classList.remove('hidden'); } });
     document.addEventListener('click', (e) => { if (!m.contains(e.target)) m.classList.add('hidden'); });
   }
-  function item(label, desc, selected, onPick, { hint = '', tag = '' } = {}) {
-    const b = el('button', 'menu-item' + (selected ? ' sel' : '')); b.type = 'button';
+  function item(label, desc, selected, onPick, { hint = '', tag = '', icon = '' } = {}) {
+    const b = el('button', 'menu-item' + (selected ? ' sel' : '') + (icon ? ' with-icon' : '')); b.type = 'button';
+    if (icon) { const i = el('span', 'menu-icon'); i.innerHTML = icon; b.appendChild(i); }
     const t = el('span', 'menu-label'); t.appendChild(document.createTextNode(label)); if (tag) t.appendChild(el('span', 'tag', tag)); b.appendChild(t);
     if (desc) b.appendChild(el('span', 'desc', desc));
     if (hint) b.appendChild(el('span', 'hint', hint));
@@ -1116,7 +1199,7 @@
   });
 
   // ---------- connectors & plugins (Desktop's panel) ----------
-  const ctModal = $('#connectors-modal');
+  const ctModal = settingsModal;
   const STATUS_WORD = { connected: 'Connected', failed: 'Failed', 'needs-auth': 'Needs sign-in', pending: 'Connecting…', disabled: 'Off' };
   function toggleEl(on, onChange) {
     const t = el('button', 'toggle' + (on ? ' on' : '')); t.type = 'button'; t.setAttribute('role', 'switch'); t.setAttribute('aria-checked', String(on));
@@ -1125,7 +1208,8 @@
     return t;
   }
   async function openConnectors() {
-    ctModal.classList.remove('hidden'); $('#connectors-error').hidden = true;
+    if (settingsModal.classList.contains('hidden') || !$('.set-pane[data-pane="connectors"]').classList.contains('on')) return openSettings('connectors');
+    $('#connectors-error').hidden = true;
     $('#connectors-list').innerHTML = '<div class="muted small pad">Loading…</div>'; $('#plugins-list').innerHTML = '';
     let data;
     try { data = await api('/connectors?cwd=' + encodeURIComponent(state.cwd || '') + '&sessionId=' + encodeURIComponent(state.current || '')); }
@@ -1276,6 +1360,7 @@
   }
   async function checkUpdateNow() {
     let v; try { v = await api('/version'); } catch { return; }
+    lastVersion = v;
     paintUpdate(v, true);
     try { v.update = await api('/update/check', { method: 'POST', body: JSON.stringify({}) }); } catch (e) { v.update = { error: e.message }; }
     paintUpdate(v);
@@ -1285,7 +1370,7 @@
   // App section: what is running, restart the server with new code, rebuild the shell.
   async function paintVersion() {
     try {
-      const v = await api('/version');
+      const v = lastVersion = await api('/version');
       $('#app-version').textContent = v.version || v.commit || 'unknown';
       const subject = v.subject && v.subject.length > 46 ? v.subject.slice(0, 45) + '…' : v.subject;
       $('#app-version-desc').textContent = [v.commit && 'commit ' + v.commit + (v.dirty ? ' +' + v.dirty + ' uncommitted' : ''), subject, v.appBuiltAt && 'built ' + ago(v.appBuiltAt), 'server up ' + relTime(v.serverStartedAt), v.liveRuns ? v.liveRuns + ' turn running' : ''].filter(Boolean).join(' · ');
@@ -1419,7 +1504,6 @@
     m.appendChild(item('Connectors & plugins', 'MCP servers this computer can use, and the app itself.', false, () => { m.classList.add('hidden'); openConnectors(); paintVersion(); }));
   });
   $('#connectors-refresh').addEventListener('click', () => { openConnectors(); paintVersion(); });
-  $('#connectors-close').addEventListener('click', () => ctModal.classList.add('hidden'));
   ctModal.addEventListener('click', (e) => { if (e.target === ctModal) ctModal.classList.add('hidden'); });
 
   const fmtK = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
