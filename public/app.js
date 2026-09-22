@@ -347,6 +347,7 @@
   let collapsed = new Set();
   try { collapsed = new Set(JSON.parse(localStorage.getItem('cr.collapsed') || '[]')); } catch {}
   const PIN_SVG = '<svg viewBox="0 0 20 20" width="14" height="14"><path d="M12.5 2.5l5 5-2.2.7-3.1 3.1.4 3.6-1.4 1.4L8 13.1l-4.6 4.6-.7-.7L7.3 12.4 4.1 9.2l1.4-1.4 3.6.4 3.1-3.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  const KEBAB_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><circle cx="10" cy="4.5" r="1.4"/><circle cx="10" cy="10" r="1.4"/><circle cx="10" cy="15.5" r="1.4"/></svg>';
   const CHEV_SVG = '<svg class="chev" viewBox="0 0 20 20" width="12" height="12"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
   // Right-click on a session row: the Desktop context menu.
@@ -465,6 +466,11 @@
     const pin = el('button', 'pin'); pin.type = 'button'; pin.title = s.pinned ? 'Unpin' : 'Pin'; pin.innerHTML = PIN_SVG;
     pin.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); togglePin(s.id, !s.pinned); });
     a.appendChild(pin);
+    // Claude Desktop puts one ⋮ on the row rather than a pin of its own, and everything
+    // that button offers is already in the menu a right-click opens — including Pin.
+    const more = el('button', 'row-more'); more.type = 'button'; more.title = 'More'; more.innerHTML = KEBAB_SVG;
+    more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); const r = more.getBoundingClientRect(); showCtxMenu(s, r.right, r.bottom + 4, kind, group); });
+    a.appendChild(more);
     return a;
   }
   // One request per picked row, all at once; what failed is said once (a session
