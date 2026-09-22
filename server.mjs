@@ -643,7 +643,12 @@ function listPlugins() {
 // menu is right on the first paint and a refresh happens behind it.
 models.useCache(DATA_DIR);
 models.warm().catch(() => {});
-app.get('/api/models', (req, res) => res.json(models.list({ force: req.query.refresh === '1' })));
+// Refresh waits: a background refresh would answer with the very list it was asked to
+// replace, and the menu would need a second press to show what changed.
+app.get('/api/models', async (req, res) => {
+  if (req.query.refresh === '1') await models.refreshNow().catch(() => {});
+  res.json(models.list());
+});
 
 app.get('/api/connectors', async (req, res) => {
   const cwd = String(req.query.cwd || ''); const sessionId = String(req.query.sessionId || '');
@@ -699,6 +704,7 @@ app.get('/api/accounts', (_req, res) => {
 app.post('/api/accounts/active', (req, res) => {
   const which = req.body?.which === 'token' ? 'token' : 'local';
   if (which === 'token' && !getAuth().hasToken) return res.status(400).json({ error: 'No token has been added yet.' });
+  models.forget(); // the menu belongs to the account that was just left
   res.json({ active: setActive(which) });
 });
 // Add or replace the token; it is proven with one tiny request before it is kept.
@@ -709,10 +715,10 @@ app.post('/api/accounts/token', async (req, res) => {
   const check = await verifyEnv(candidateEnv(token, kind));
   if (!check.ok) return res.status(400).json({ error: 'Claude rejected that token: ' + check.error });
   setToken(token, kind);
-  whoCache.delete('token');
+  whoCache.delete('token'); models.forget();
   res.json({ active: 'token', token: whoAmI('token') });
 });
-app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete('token'); res.json({ active: 'local' }); });
+app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete('token'); models.forget(); res.json({ active: 'local' }); });
 
 // Sidebar order (projects, sessions within each project, pinned), shared by every device.
 // The list never re-sorts itself: new items slot in once, then only drag-and-drop moves them.

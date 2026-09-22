@@ -71,6 +71,12 @@ await page.goto('http://127.0.0.1:7779/');
   (`core:event:allow-listen` in the capability, or the listener is refused). The
   file then has to be read by the shell, not the server: the window and the
   server are on different computers whenever the app is showing another one.
+- **A new model needs a newer CLI, not a refresh.** Claude's catalog gives each model a
+  `min_claude_code_version` (`~/.claude/cache/model-catalog/*-cc.json`), and a CLI below
+  it hides the model — so `supportedModels()` answers correctly and still comes back
+  short. The version that decides is the one in
+  `node_modules/@anthropic-ai/claude-agent-sdk/manifest.json`, which `lib/models.mjs`
+  keeps beside the cached list and treats as its expiry.
 - **macOS blocks plain http in a web view.** A window pointed at
   `http://<ip>:7777` shows white and reports nothing; the bundle needs
   `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by

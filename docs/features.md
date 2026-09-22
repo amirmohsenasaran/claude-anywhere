@@ -121,6 +121,15 @@ options up invites a second answer that nothing is listening for.
   it cannot drift from Claude. The effort levels above come from the same answer, so
   switching to a model that does not take the level you had picked puts it back to the
   default rather than sending one that model has never heard of.
+- **A new model arrives on its own.** The list is asked again when it is an hour old,
+  when you open the menu, and whenever the Claude Code the app carries changes — that
+  last one is what actually matters. A model's entry in Claude's catalog names a
+  `min_claude_code_version`, and a CLI below it hides the model however often the list
+  is refreshed: Opus 5.5 wanted 2.1.280, so an app carrying 2.1.274 had a menu that was
+  correct, current, and a model short. The foot of the menu says when Claude Code last
+  answered and has a **Refresh** that asks again while you watch, and a daily job opens
+  a pull request whenever the package that carries the CLI moves — so the app catches
+  up without anyone having to notice it was behind.
 - Permission prompts appear as a card with **Allow**, **Allow always** and
   **Deny**, answerable from the phone.
 - The composer's stop button ends the turn. Background work is not killed by

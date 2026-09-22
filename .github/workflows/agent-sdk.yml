@@ -1,0 +1,79 @@
+name: Agent SDK
+
+# A new Claude model is not only a new name in a list: the catalog entry carries
+# `min_claude_code_version`, and a Claude Code older than that hides the model rather
+# than offering something it cannot run. Opus 5.5 wanted 2.1.280 while the app carried
+# 2.1.274, so the model menu was correct, refreshed, and still a model short — the only
+# fix is a newer @anthropic-ai/claude-agent-sdk, which is what ships the CLI.
+#
+# So this looks every morning and opens a pull request when that package has moved.
+# Merging it is the whole update: CI runs on main, Release cuts a version, and every
+# installed app offers the new model within minutes of updating itself.
+
+on:
+  schedule:
+    - cron: '25 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: agent-sdk
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Is there a newer CLI?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - id: bump
+        name: Take the latest SDK
+        run: |
+          before=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          npm install @anthropic-ai/claude-agent-sdk@latest --no-audit --no-fund
+          after=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          # The CLI the package carries — the number a model's floor is compared against.
+          cli=$(node -p "require('./node_modules/@anthropic-ai/claude-agent-sdk/manifest.json').version")
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+          echo "after=$after" >> "$GITHUB_OUTPUT"
+          echo "cli=$cli" >> "$GITHUB_OUTPUT"
+          if [ "$before" = "$after" ]; then echo "moved=no" >> "$GITHUB_OUTPUT"; else echo "moved=yes" >> "$GITHUB_OUTPUT"; fi
+          echo "$before → $after (Claude Code $cli)"
+
+      - name: Does the app still start?
+        if: steps.bump.outputs.moved == 'yes'
+        run: |
+          node --check server.mjs
+          for f in lib/*.mjs; do node --check "$f"; done
+
+      - name: Open a pull request
+        if: steps.bump.outputs.moved == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: agent-sdk-${{ steps.bump.outputs.after }}
+        run: |
+          branch="${BRANCH//^/}"
+          # One branch per version: a second run on the same day must not reopen it.
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "$branch is already up there"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add package.json package-lock.json
+          git commit -m "the agent sdk carries claude code ${{ steps.bump.outputs.cli }}"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "the agent sdk carries claude code ${{ steps.bump.outputs.cli }}" \
+            --body "\`@anthropic-ai/claude-agent-sdk\` ${{ steps.bump.outputs.before }} → ${{ steps.bump.outputs.after }}, which carries Claude Code **${{ steps.bump.outputs.cli }}**.
+
+          The CLI is what decides which models exist: a model whose \`min_claude_code_version\` is above it is hidden, however often the app refreshes its list. Merging this ships the new one.
+
+          Opened by .github/workflows/agent-sdk.yml."
