@@ -474,7 +474,11 @@ worth doing:
 - Signed macOS and Linux builds. They are built and they run; until someone
   pays Apple, the first launch needs right-click → Open.
 
-And one that is further out than the rest: **other providers** — adding an
-OpenAI or Google account next to your Claude one and continuing the same
-session on GPT or Gemini. The transcript and the tool protocol are Claude
-Code's, so it needs a translation layer; see the roadmap in the README.
+And one that is deliberately not built: **a model that is not Claude**. Another
+*provider* works today — anything that answers the Anthropic Messages API, see
+Accounts above — but GPT or Gemini answering the same session would need a
+translating bridge in the server, rewriting every request and every stream
+between the two APIs. Claude Code's prompts lean hard on tool calls, a model
+that is weak at those loops instead of working, and a half-working translator
+is worse than an honest refusal. A proxy that already does the translating
+(LiteLLM, claude-code-router) can be added as a provider like any other.

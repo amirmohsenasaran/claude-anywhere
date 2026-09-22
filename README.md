@@ -241,12 +241,19 @@ Near term, in the order they are likely to happen:
 
 Bigger, and deliberately further out:
 
-- [ ] **Other providers.** Keep one conversation and change who answers it:
-      add an OpenAI or Google account alongside your Claude one and continue
-      the same session on GPT or Gemini, with the same files and the same
-      tools. The transcript format and the tool protocol are Claude Code's, so
-      this needs a translation layer rather than a switch — it is an intention,
-      not a promise, and it will land behind a flag first.
+- [x] **Another provider.** Any address that answers the Anthropic Messages API
+      — a gateway, a reseller, your company's proxy — added and switched to like
+      a token, because Claude Code reads `ANTHROPIC_BASE_URL`. Shipped.
+- [ ] **A model that is not Claude.** GPT or Gemini answering the same session
+      would need a translating bridge inside the server: Claude Code calls
+      `/v1/messages`, `count_tokens` and `/v1/models`, and reads Anthropic's own
+      SSE down to `input_json_delta` for tool arguments, so every request and
+      every stream has to be rewritten both ways. It is buildable — about 700
+      lines — and deliberately not built: Claude Code's prompts lean hard on
+      tool calls, a model that is weak at those loops instead of working, and a
+      translator that half-works is worse than an honest refusal. Until then,
+      point the provider card at a proxy that already does it (LiteLLM,
+      claude-code-router) and it is the same one click.
 
 Ideas and arguments about the order belong in
 [Discussions](https://github.com/aryasadeghy/claude-anywhere/discussions).
