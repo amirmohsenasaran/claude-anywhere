@@ -832,6 +832,7 @@
   // The models come from the CLI (GET /api/models) — the same list Claude Code and
   // Claude Desktop show, with the same names and the same effort levels per model.
   // This is only what to draw before that answer arrives.
+  let MODELS_AT = 0; // when the CLI last answered, shown at the foot of the menu
   let MODELS = [{ value: 'default', displayName: 'Default (recommended)', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }];
   let DEFAULT_EFFORT = 'high';
   // Claude's own words for the levels, and the warning it puts on the last one.
@@ -863,14 +864,17 @@
   // A saved `claude-sonnet-5` is the wire id of the CLI's `sonnet` row; the CLI wants
   // its own value back, so the answer is also a migration of what this device saved.
   async function loadModels(force) {
-    let r; try { r = await api('/models' + (force ? '?refresh=1' : '')); } catch { return; }
-    if (!r.models?.length) return;
+    let r; try { r = await api('/models' + (force ? '?refresh=1' : '')); } catch { return false; }
+    if (!r.models?.length) return false;
+    const changed = JSON.stringify(r.models) !== JSON.stringify(MODELS);
+    MODELS_AT = r.at || 0;
     MODELS = r.models;
     DEFAULT_EFFORT = r.defaultEffort || 'high';
     const row = modelRow(state.model);
     if (row && row.value !== state.model) { state.model = row.value; if (localStorage.getItem('cr.model')) localStorage.setItem('cr.model', row.value); }
     if (state.effort && !effortsFor(state.model).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); }
     renderModelChip(); renderEffortChip();
+    return changed;
   }
 
   function menuFor(btnId, menuId, render) {
@@ -932,6 +936,17 @@
       if (state.ultracode && !effortStops(x.value).includes('ultracode')) { state.ultracode = false; localStorage.removeItem('cr.ultracode'); patch.ultracode = false; }
       renderModelChip(); renderEffortChip(); m.classList.add('hidden'); pushControls(patch);
     }, { hint: x.value === state.model ? '' : String(i + 1) })));
+    // Where the list came from, and how to ask again. A model can arrive between two
+    // page loads — Claude publishes it, and the CLI offers it as soon as it is new
+    // enough — so opening the menu is itself a reason to re-ask.
+    m.appendChild(el('div', 'menu-sep'));
+    const foot = el('div', 'menu-foot');
+    foot.appendChild(el('span', '', MODELS_AT ? 'From Claude Code · ' + ago(MODELS_AT) : 'Asking Claude Code…'));
+    const again = el('button', 'link-btn', 'Refresh'); again.type = 'button';
+    again.addEventListener('click', async (e) => { e.stopPropagation(); again.disabled = true; again.textContent = 'Asking…'; await loadModels(true); render(m); });
+    foot.appendChild(again);
+    m.appendChild(foot);
+    if (!MODELS_AT || Date.now() - MODELS_AT > 60 * 60 * 1000) loadModels().then((changed) => { if (changed && !m.classList.contains('hidden')) render(m); });
   });
 
   // ---------- effort: a chip beside the model, and a slider from Faster to Smarter ----
