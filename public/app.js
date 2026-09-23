@@ -1308,7 +1308,16 @@
   const PLATFORM_NAME = { win32: 'Windows', darwin: 'Mac', linux: 'Linux' };
   async function whatAmI() {
     const invoke = bridge();
-    if (invoke) { try { const a = await invoke('app_version'); return { ...a, platform: PLATFORM_OF[a.platform] || a.platform }; } catch {} }
+    if (invoke) {
+      try {
+        const a = await invoke('app_version');
+        // The phone app is built from the repository, not downloaded from a release, so
+        // a newer release is nothing this device can fetch — only the computer it shows
+        // can. Counting it as "this app is out of date" nagged with no button to press.
+        if (a.platform === 'android' || a.platform === 'ios') return null;
+        return { ...a, platform: PLATFORM_OF[a.platform] || a.platform };
+      } catch {}
+    }
     return null;
   }
   // In a browser there is no app to update, but there is still a machine that could
