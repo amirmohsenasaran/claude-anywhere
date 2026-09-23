@@ -416,9 +416,15 @@
   menuFor('#filter-btn', '#filter-menu', (m) => {
     const anchor = filterAnchor || $('#filter-btn');
     const r = anchor.getBoundingClientRect(), s = $('#sidebar').getBoundingClientRect();
+    // Across the sidebar under the row, rather than hung off the button: on a phone the
+    // button sits near the left edge, and a menu right-aligned to it opened 150px off
+    // screen. The base .menu also opens upward with a bottom offset, which a top alone
+    // does not cancel - both together squeezed it to 14px tall.
     m.style.top = Math.round(r.bottom - s.top + 4) + 'px';
-    m.style.insetInlineEnd = Math.max(6, Math.round(s.right - r.right)) + 'px';
-    m.style.insetInlineStart = 'auto';
+    m.style.bottom = 'auto';
+    m.style.insetInlineStart = '6px';
+    m.style.insetInlineEnd = '6px';
+    m.style.minWidth = '0';
     filterAnchor = null;
     m.innerHTML = '';
     m.appendChild(el('div', 'menu-title', 'Group by'));

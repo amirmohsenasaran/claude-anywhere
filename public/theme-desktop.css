@@ -751,7 +751,10 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 
    Desktop only. 24px is a mouse target; a finger needs the roomier rows the phone keeps. */
 /* The ⋮ is in every row on every screen, so it is dressed here rather than inside the
-   desktop block below — unstyled, it renders as a grey system button on a phone. */
+   desktop block below — unstyled, it renders as a grey system button on a phone. It also
+   replaces the pin everywhere: the menu behind it has Pin, and on a phone the two side by
+   side took a third of the row from the title. */
+.session-item .pin { display: none; }
 .session-item .row-more { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--ink-3); opacity: 0; cursor: pointer; }
 .session-item:hover .row-more, .session-item.active .row-more { opacity: 1; }
 .session-item .row-more:hover { background: var(--bg-3); color: var(--ink); }
@@ -784,7 +787,6 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
   .session-item.working::before { display: block; border-color: var(--accent); animation: sess-working 1.4s ease-in-out infinite; }
   .session-item.working .dot { display: none; }
   @keyframes sess-working { 0%, 100% { opacity: .35; transform: translateY(-50%) scale(.8); } 50% { opacity: 1; transform: translateY(-50%) scale(1.15); } }
-  .session-item .pin { display: none; }
   .session-item .row-more { width: 20px; height: 20px; }
   .sidebar-bottom { padding: 8px 6px 2px; gap: 8px; }
   .sidebar-bottom .avatar { width: 24px; height: 24px; font-size: 11px; }
@@ -813,9 +815,11 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .project-group > summary .proj-act:hover { background: var(--bg-3); color: var(--ink); }
 @media (hover: none) { .project-group > summary .proj-act { opacity: .55; } }
 
-/* One node for the whole list, placed under whichever row opened it. */
+/* One node for the whole list, placed under whichever row opened it. It measures from
+   the sidebar, which is already positioned both ways - relative on a desktop (v19) and
+   fixed as the phone's drawer - so it must not be given a position of its own here: an
+   id beats the drawer's class, and the drawer became a 300px column on a phone. */
 #filter-menu { position: absolute; z-index: 60; }
-#sidebar { position: relative; }
 
 /* A row with an icon is a two-column grid: the icon, then the label with whatever it
    says underneath — which keeps the second line lined up with the first. */
