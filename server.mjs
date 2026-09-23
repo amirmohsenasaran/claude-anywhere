@@ -793,7 +793,10 @@ app.get('/api/projects', async (_req, res, next) => {
 
 // The model and mode a session is on, like Desktop: what the user last picked for it,
 // else what its transcript shows (assistant lines carry the model, user lines the mode).
-const settingsCache = new Map(); // id -> { size, model, mode }
+// Transcripts run to hundreds of MB and a working one grows every second, and reading the
+// whole file on each open held the server up for most of a second every time. So it is read
+// from the end, and after that only what was written since is looked at.
+const settingsCache = new Map(); // id -> { size, upTo, model, mode }
 function sessionSettings(id) {
   const prefs = readPrefs();
   const saved = (prefs.sessionPrefs || {})[id] || {};
@@ -804,19 +807,44 @@ function sessionSettings(id) {
       const size = fs.statSync(f).size; const hit = settingsCache.get(id);
       if (hit && hit.size === size) ({ model, mode } = hit);
       else {
-        // Prompt lines are rare in a long transcript (tool results dominate), so scan the whole file.
-        for (const line of fs.readFileSync(f, 'utf8').split('\n').reverse()) {
-          if (model && mode) break;
-          if (!line.includes('"permissionMode"') && !line.includes('"model"')) continue;
-          let j; try { j = JSON.parse(line); } catch { continue; }
-          if (!model && j.type === 'assistant' && j.message?.model) model = j.message.model;
-          if (!mode && j.type === 'user' && j.permissionMode) mode = j.permissionMode; // ('mode' lines are something else: "normal")
-        }
-        settingsCache.set(id, { size, model, mode });
+        const from = hit && hit.upTo <= size ? hit.upTo : 0;
+        const found = lastSettings(f, from, size);
+        model = found.model || (from ? hit.model : ''); mode = found.mode || (from ? hit.mode : '');
+        settingsCache.set(id, { size, upTo: found.upTo, model, mode });
       }
     }
   } catch {}
   return { model: saved.model || model || '', permissionMode: saved.permissionMode || mode || '', effort: saved.effort ?? '' };
+}
+// The newest model and mode in bytes [from, to) of a transcript, a few MB at a time from the
+// end, stopping once both are found - prompt lines (the mode) are rare in a long transcript,
+// where tool results dominate, so that can still be far back. `upTo` is where the last whole
+// line ends: a line still being written is read again next time, complete.
+function lastSettings(f, from, to) {
+  let model = '', mode = '', upTo = from, end = to, carry = Buffer.alloc(0);
+  const fd = fs.openSync(f, 'r');
+  try {
+    while (end > from && !(model && mode)) {
+      const start = Math.max(from, end - (4 << 20));
+      const buf = Buffer.alloc(end - start); fs.readSync(fd, buf, 0, buf.length, start);
+      if (end === to) { const nl = buf.lastIndexOf(10); if (nl >= 0) upTo = start + nl + 1; }
+      // This slice may begin halfway through a line; that part is finished by the slice before
+      // it. A line longer than a slice (a pasted picture) keeps growing until it is whole.
+      const all = Buffer.concat([buf, carry]);
+      end = start;
+      const cut = start > from ? all.indexOf(10) : -1;
+      if (start > from && cut < 0) { carry = all; continue; }
+      carry = cut >= 0 ? all.subarray(0, cut) : Buffer.alloc(0);
+      for (const line of all.subarray(cut + 1).toString('utf8').split('\n').reverse()) {
+        if (model && mode) break;
+        if (!line.includes('"permissionMode"') && !line.includes('"model"')) continue;
+        let j; try { j = JSON.parse(line); } catch { continue; }
+        if (!model && j.type === 'assistant' && j.message?.model) model = j.message.model;
+        if (!mode && j.type === 'user' && j.permissionMode) mode = j.permissionMode; // ('mode' lines are something else: "normal")
+      }
+    }
+  } finally { fs.closeSync(fd); }
+  return { model, mode, upTo };
 }
 // A turn that never finished (the app or the machine was restarted mid-work) leaves the
 // transcript ending on a tool call with no result, or on a tool result with no answer.
@@ -973,7 +1001,16 @@ app.get('/api/sessions/:id/events', (req, res) => {
   const ping = setInterval(() => res.write(': ping\n\n'), 20000);
   if (run && !run.done) {
     const since = Number(req.get('last-event-id') ?? req.query.since ?? -1);
-    for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
+    // A page that knows `batch` gets what it missed condensed, in a few messages it draws in
+    // one pass each; a page loaded before this server still gets the events one by one. About
+    // a megabyte a message, each with its own id - screenshots make a long turn tens of MB, and
+    // a phone that drops the connection halfway resumes from the last piece, not the start.
+    if (req.query.batch) {
+      let part = [], size = 0, last = -1;
+      const flush = () => { if (part.length) res.write(`id: ${last}\ndata: {"t":"batch","events":[${part.join(',')}]}\n\n`); part = []; size = 0; };
+      for (const ev of run.backlog(since)) { const s = JSON.stringify(ev); part.push(s); size += s.length; last = ev.i; if (size > 1 << 20) flush(); }
+      flush();
+    } else for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
     run.listeners.add(res);
     req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
     return;
