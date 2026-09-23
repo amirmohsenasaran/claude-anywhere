@@ -83,6 +83,20 @@ await page.goto('http://127.0.0.1:7779/');
   `opener:allow-open-url` in the capability, scoped to http and https. A missing
   permission and a URL outside the scope fail differently: "not allowed. Plugin not
   found" is the ACL, "Not allowed to open url …" is the scope.
+- **The shell is a library, and a phone builds it too.** `src-tauri/src/lib.rs` is the
+  app; `main.rs` is one line. Anything desktop-only — the tray and menu modules,
+  autostart, single-instance, `unminimize`, the builder's `.decorations()`/`.shadow()` —
+  has to sit behind `#[cfg(desktop)]` or the iOS and Android builds stop compiling, and
+  nothing on a Windows machine will notice: the *Mobile* workflow is the only check.
+- **Android release builds refuse plain http.** The generated Gradle file sets
+  `usesCleartextTraffic` true for debug only, and the phone reaches the PC at
+  `http://…:7777`, so a release APK opens white. `scripts/mobile.mjs` flips it after
+  every `init`; `src-tauri/gen/` is not committed, so do it there, not by hand.
+- **The mobile projects call the CLI back the way it was started.** Gradle's Rust step
+  and Xcode's build phase run whatever `init` recorded: `npm run -- tauri` when npm
+  started it, `cargo tauri` when cargo did. The first Android CI build died on
+  `Missing script: "tauri"`. Keep going through `npm run tauri` (package.json fetches
+  the CLI with npx — it is not a dependency, which would ship in the desktop bundle).
 - **macOS blocks plain http in a web view.** A window pointed at
   `http://<ip>:7777` shows white and reports nothing; the bundle needs
   `NSAllowsArbitraryLoadsInWebContent` (`src-tauri/Info.plist`, referenced by

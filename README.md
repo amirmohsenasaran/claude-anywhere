@@ -64,6 +64,7 @@ earlier message, and a dev-server preview that reaches your phone.
 | Per-session git worktrees | yes | yes |
 | Panes: terminal, split view | yes | not yet |
 | macOS and Linux app | yes | yes, unsigned so far |
+| iPhone and Android app | yes | yes, built from this repository ([docs/mobile.md](docs/mobile.md)) |
 | Support | Anthropic | an issue tracker and me |
 
 **They are not rivals.** This reads and writes the same transcripts as
@@ -194,6 +195,14 @@ tailscale serve --bg 7777
 
 Then open the machine's Tailscale URL on the phone and add it to the home
 screen — it is a PWA, so it gets its own icon and window.
+
+Or install **the phone app** — the desktop app's own code built for iPhone and
+Android. It keeps its own list of your computers, opens straight into the one you
+used last, and opens links in the browser rather than inside itself. There is no
+Claude on the phone: it is a window onto the computer that runs it. Building it
+takes a Mac for the iPhone and Android Studio for Android, or grab a ready APK from
+the *Mobile* workflow's latest run — [docs/mobile.md](docs/mobile.md) walks through
+both.
 
 > [!WARNING]
 > This app runs Claude Code as you, on your machine. Anything that can reach it

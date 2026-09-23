@@ -1,0 +1,82 @@
+name: Mobile
+
+# The phone app is the desktop shell's own Rust, built for iOS and Android. Nobody builds
+# it by accident — the desktop is what gets built every day — so this is where a change
+# that breaks the phone is found.
+#
+# Android is built all the way to a debug APK, signed with the debug key, which a phone
+# will install from the run's artifacts. iOS is compiled for a device rather than built:
+# an app that runs on an iPhone has to be signed by the person's own Apple team, which
+# no CI runner has (docs/mobile.md is the way through that on a Mac).
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'public/connect.*'
+      - 'scripts/mobile.mjs'
+      - 'package.json'
+      - '.github/workflows/mobile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - 'public/connect.*'
+      - 'scripts/mobile.mjs'
+      - 'package.json'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Phones are arm64; the other three are what the Android template asks the
+      # toolchain to have, even when only one of them is built.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The runner ships the SDK and an NDK; tauri-cli finds the NDK through NDK_HOME,
+      # which the image names differently. The phone build bundles no Node server
+      # (tauri.android.conf.json drops it), so there is no npm install here.
+      - name: Generate the project and build the APK
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          npm run mobile -- init android
+          npm run mobile -- build android --debug --target aarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-anywhere-android
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS compiles
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check for an iPhone
+        working-directory: src-tauri
+        run: cargo check --locked --lib --target aarch64-apple-ios

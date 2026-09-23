@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged by tauri-cli into the iPhone app's Info.plist, on top of Info.plist beside it -
+  whose NSAppTransportSecurity exception already lets the web view load a computer over
+  plain http. What iOS adds is a question: reaching a machine on the same Wi-Fi counts as
+  the local network, and since iOS 14 that needs a sentence the person is shown when the
+  app first asks. Without it the prompt never appears and the PC is simply unreachable.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Claude Anywhere connects to the computer on your network that runs Claude.</string>
+</dict>
+</plist>

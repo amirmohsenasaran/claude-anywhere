@@ -9,6 +9,9 @@
   let state = { active: 'local', items: [] };
   let defaultPassword = '';
   let editing = null; // id being edited, or null when adding
+  // On a phone there is no Claude here to pick: the phone app is only ever a window onto
+  // a computer that runs it, so the list starts empty and asks for that computer.
+  let phone = false;
 
   // A command that fails rejects with the shell's own sentence; an Error only shows up
   // when something in here threw, and the word Error in front of it helps nobody.
@@ -27,6 +30,7 @@
 
   async function load() {
     state = await invoke('connections_get');
+    try { phone = ['android', 'ios'].includes((await invoke('app_version')).platform); } catch {}
     // Older shells do not have this command; an empty box is the old behaviour.
     try { defaultPassword = (await invoke('default_password')) || ''; } catch {}
     if (!editing && !$('#f-pass').value) $('#f-pass').value = defaultPassword;
@@ -36,10 +40,12 @@
   function paint() {
     const list = $('#list');
     list.innerHTML = '';
-    list.appendChild(row({ id: 'local', name: 'This computer', url: 'Runs Claude here' }, true));
+    if (!phone) list.appendChild(row({ id: 'local', name: 'This computer', url: 'Runs Claude here' }, true));
     for (const c of state.items) list.appendChild(row(c, false));
     if (!state.items.length) {
-      const n = el('div', 'nowt', 'No other computers yet. Add one below.');
+      const n = el('div', 'nowt', phone
+        ? 'Add the computer that runs Claude: the address it shows under Settings → About, and its app password.'
+        : 'No other computers yet. Add one below.');
       list.appendChild(n);
     }
   }
