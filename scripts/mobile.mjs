@@ -25,14 +25,17 @@ if (!['init', 'dev', 'build', 'open'].includes(cmd) || !PLATFORMS.includes(platf
 }
 if (platform === 'ios' && process.platform !== 'darwin') die('iOS builds need a Mac with Xcode.');
 
-// `cargo tauri` when it is installed (it is, for anyone who builds the desktop app);
-// otherwise the npm build of the same CLI, fetched for this run and not added to the
-// project's dependencies.
+// Always through `npm run tauri`, never `cargo tauri` or a bare npx. The CLI writes
+// down how it was started, and the generated projects call it back that way in the
+// middle of every build — Gradle's Rust step on Android, Xcode's build phase on iOS.
+// Started by npm it records `npm run -- tauri`, which works on any machine with Node;
+// started as `cargo tauri` it records that, which breaks wherever cargo-tauri is not
+// installed; started by a bare npx it records `npx tauri`, which fetches an unrelated
+// package called "tauri". The `tauri` script in package.json fetches the real CLI on
+// demand, so it is not a dependency — it would ship inside the desktop installer.
 function tauri(args) {
-  const hasCargoTauri = spawnSync('cargo', ['tauri', '--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
-  const [bin, pre] = hasCargoTauri ? ['cargo', ['tauri']] : ['npx', ['-y', '@tauri-apps/cli@^2']];
-  say([bin, ...pre, ...args].join(' '));
-  const r = spawnSync(bin, [...pre, ...args], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  say(['npm run tauri --', ...args].join(' '));
+  const r = spawnSync('npm', ['run', 'tauri', '--', ...args], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) process.exit(r.status || 1);
 }
 
