@@ -1597,7 +1597,10 @@
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
   let stickToBottom = true;
   scroll.addEventListener('scroll', () => { stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
-  const autoscroll = () => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; };
+  // Held while a backlog is drawn in one pass: scrolling after every piece of it made the
+  // browser lay the whole thread out again each time. It scrolls once, at the end.
+  let holdScroll = false;
+  const autoscroll = () => { if (stickToBottom && !holdScroll) scroll.scrollTop = scroll.scrollHeight; };
   // A transcript keeps growing after it is drawn: pictures arrive, fonts settle, long
   // code blocks reflow. Scrolling to the end once therefore lands somewhere in the
   // middle, which is what opening a session used to look like. Stay pinned while it
@@ -1823,7 +1826,8 @@
     else if (status.tool) text = (status.tool === 'Bash' || status.tool === 'PowerShell' ? 'Running ' : status.tool === 'Read' || status.tool === 'Grep' || status.tool === 'Glob' ? 'Reading with ' : status.tool === 'Agent' ? 'Running agent ' : 'Using ') + status.tool + '…';
     status.el.querySelector('.shimmer').textContent = text;
     const tok = status.tokens >= 1000 ? (status.tokens / 1000).toFixed(1) + 'k' : String(status.tokens);
-    status.el.querySelector('.status-meta').textContent = `${secs}s` + (status.tokens ? ` · ↓ ${tok} tokens` : '') + (status.tool && status.toolSince ? ` · ${Math.round((Date.now() - status.toolSince) / 1000)}s in tool` : '');
+    // A page that comes back to a long turn counts from the turn's real start: "2h 14m", not 8040s.
+    status.el.querySelector('.status-meta').textContent = fmtDur(secs * 1000) + (status.tokens ? ` · ↓ ${tok} tokens` : '') + (status.tool && status.toolSince ? ` · ${Math.round((Date.now() - status.toolSince) / 1000)}s in tool` : '');
     if (!status.el.isConnected) thread.appendChild(status.el); else if (thread.lastElementChild !== status.el) thread.appendChild(status.el);
   }
   function statusStop() {
@@ -2479,16 +2483,26 @@
   function subscribe(sessionId, { since = -1 } = {}) {
     if (state.current !== sessionId) return; // the chat moved on while this was being set up
     if (state.es) { state.es.close(); state.es = null; }
-    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}`);
+    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}&batch=1`);
     state.es = es;
     // partial blocks under construction, by index
     const partial = new Map();
-    let msgNo = 0, mode = 'run';
+    let msgNo = 0, mode = 'run', replaying = false;
     const key = (index) => msgNo + ':' + index;
     es.onmessage = (e) => {
       // Whatever else happens, a stream never writes into another session's thread.
       if (state.current !== sessionId) { es.close(); if (state.es === es) state.es = null; return; }
       const ev = JSON.parse(e.data);
+      if (ev.t !== 'batch') return handle(ev);
+      // What was missed - the whole turn so far, when a session is opened while Claude works -
+      // arrives in a few large messages, each drawn in one go, so the page shows where the turn
+      // is instead of playing it back from the start.
+      holdScroll = true; replaying = true;
+      try { for (const x of ev.events) { if (state.current !== sessionId) break; try { handle(x); } catch (err) { console.error(err); } } }
+      finally { holdScroll = false; replaying = false; }
+      if (state.current === sessionId && stickToBottom) pinToBottom();
+    };
+    const handle = (ev) => {
       if (ev.i != null) state.lastEventId = ev.i;
       switch (ev.t) {
         case 'idle': setRunning(false); es.close(); break;
@@ -2512,7 +2526,9 @@
           const q = ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`);
           if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); }
           else thread.appendChild(userMsg(ev.text, { id: ev.id, images: ev.images || [] }));
-          if (state.running) { status.startedAt = Date.now(); statusStart(); }
+          // A turn's clock starts at its prompt, which for a page catching up was a while ago.
+          if (replaying && ev.at) status.startedAt = ev.at; else if (state.running) status.startedAt = Date.now();
+          if (state.running) statusStart();
           autoscroll(); break;
         }
         case 'init':
@@ -2540,7 +2556,7 @@
           break;
         case 'block_start':
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
-          partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '', since: Date.now() });
+          partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '', since: ev.at || Date.now() });
           if (ev.block.type === 'tool_use') { renderBlock(state.live, key(ev.index), { type: 'tool_use', name: ev.block.name, id: ev.block.id, input: {} }); status.tool = ev.block.name; status.toolSince = 0; }
           if (ev.block.type === 'thinking') { renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: '', live: true }); status.verb = 'Thinking'; }
           if (ev.block.type === 'text') { status.tool = null; status.verb = 'Writing'; }
@@ -2556,7 +2572,7 @@
         case 'block_stop': {
           const n = state.live?.blocks.get(key(ev.index)); n?.classList.remove('cursor');
           const p = partial.get(ev.index);
-          if (n && p?.type === 'thinking') { n.open = false; n.classList.remove('live'); n.querySelector('.name').textContent = 'Thought for ' + Math.max(1, Math.round((Date.now() - p.since) / 1000)) + 's'; if (!p.thinking) n.classList.add('hidden'); }
+          if (n && p?.type === 'thinking') { n.open = false; n.classList.remove('live'); n.querySelector('.name').textContent = 'Thought for ' + Math.max(1, Math.round(((ev.at || Date.now()) - p.since) / 1000)) + 's'; if (!p.thinking) n.classList.add('hidden'); }
           break;
         }
         case 'assistant':
@@ -2612,9 +2628,12 @@
     }
     thread.appendChild(n); autoscroll();
   }
+  // The live row's own map first: searching every tool in a long thread for each result made
+  // catching up on a busy turn slower with every tool it had run.
   function findTool(id) {
+    const live = state.live?.tools.get(id); if (live) return live;
     for (const d of thread.querySelectorAll('details.step.tool')) if (d._toolId === id) return d;
-    return state.live?.tools.get(id) || null;
+    return null;
   }
   function prettyModel(m) {
     if (!m) return 'Claude';
