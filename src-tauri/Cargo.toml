@@ -4,21 +4,32 @@ version = "0.9.3"
 description = "Claude Code on this PC, from any device: a Claude-styled window over the Agent SDK"
 edition = "2021"
 
+# A library as well as a binary: iOS and Android build the app from a library with a
+# mobile entry point, and the desktop binary in src/main.rs is a one-line call into it.
+[lib]
+name = "claude_anywhere_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-notification = "2"
-tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 ureq = { version = "2", features = ["json"] }
+
+# A tray, start-at-login and one-window-per-machine are desktop things, and these
+# crates do not build for a phone at all.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 codegen-units = 1
