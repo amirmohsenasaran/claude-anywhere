@@ -887,3 +887,14 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .provider-grid input, .provider-grid select { font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); outline: none; }
 .provider-grid input:focus, .provider-grid select:focus { border-color: var(--ink-3); }
 @media (max-width: 860px) { .provider-grid { grid-template-columns: 1fr; } }
+
+/* ---------- v45: the page stays put behind the phone drawer ---------- */
+/* A swipe that starts on the dim strip, the drawer's header or its account row - or runs
+   past either end of the list - goes to the page underneath, and iOS moves that page even
+   when it has nothing to scroll: it bounces it. So the chat slid about behind the drawer.
+   While the drawer is open the page gives nothing, and the list keeps its bounce to itself. */
+@media (max-width: 860px) {
+  html:has(.app.sidebar-open) { overflow: hidden; overscroll-behavior: none; }
+  .scrim { touch-action: none; }
+  .sidebar .session-list, .sidebar .menu { overscroll-behavior: contain; }
+}
