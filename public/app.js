@@ -394,8 +394,31 @@
       };
     });
   }
+  // Share Claude Code's sessions, or keep this app's own. Asked once, after the key, and
+  // only when there is a Claude Code to share with - the server settles it otherwise.
+  function houshyarChoice() {
+    return new Promise((resolve) => {
+      $('#app').classList.add('hidden'); $('#h24-gate').classList.remove('hidden');
+      $('#h24-form').classList.add('hidden'); $('#h24-choice').classList.remove('hidden');
+      for (const b of document.querySelectorAll('#h24-choice .h24-option')) b.onclick = async () => {
+        try { await api('/edition/sessions', { method: 'POST', body: JSON.stringify({ mode: b.dataset.mode }) }); }
+        catch (e) { $('#h24-choice-error').hidden = false; $('#h24-choice-error').textContent = e.message; return; }
+        $('#h24-choice').classList.add('hidden'); $('#h24-form').classList.remove('hidden');
+        $('#h24-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
+        resolve();
+      };
+    });
+  }
+  const homeWords = (e) => (e?.claudeHome === 'separate' ? 'Kept apart from Claude Code, in ' + e.separateDir : 'Shared with Claude Code, in ~/.claude');
+  $('#h24-home-switch').addEventListener('click', async () => {
+    const to = EDITION?.claudeHome === 'separate' ? 'shared' : 'separate';
+    try { await api('/edition/sessions', { method: 'POST', body: JSON.stringify({ mode: to }) }); await refreshMe(); paintHoushyar(); loadSessions().catch(() => {}); loadProjects().catch(() => {}); }
+    catch (e) { $('#h24-pane-error').hidden = false; $('#h24-pane-error').textContent = e.message; }
+  });
   async function paintHoushyar() {
     $('#h24-pane-error').hidden = true;
+    $('#h24-home-desc').textContent = homeWords(EDITION);
+    $('#h24-home-switch').textContent = EDITION?.claudeHome === 'separate' ? 'Share with Claude Code' : 'Keep apart';
     try { const t = await api('/tools'); $('#h24-key-desc').textContent = t.values.key ? t.values.key + ' · ' + t.values.anthropic : 'No key'; } catch (e) { $('#h24-key-desc').textContent = e.message; }
   }
   $('#h24-replace').addEventListener('click', async () => {
@@ -420,7 +443,7 @@
     list.innerHTML = '';
     const mcp = el('div', 'ct-row');
     const mi = el('div', 'ct-info'); const mn = el('div', 'ct-name'); mn.appendChild(document.createTextNode('Houshyar24 MCP')); mn.appendChild(el('span', 'tag', 'Claude Code'));
-    mi.appendChild(mn); mi.appendChild(el('div', 'ct-desc wrap', t.mcp.added ? 'Added. Sign in once: run claude in a terminal, type /mcp, pick ' + t.mcp.name + ' → Authenticate.' : 'Houshyar24\'s own tools inside Claude, from ' + t.mcp.url));
+    mi.appendChild(mn); mi.appendChild(el('div', 'ct-desc wrap', t.mcp.added ? 'Added. Sign in once in a terminal: ' + t.mcp.signIn : 'Houshyar24\'s own tools inside Claude, from ' + t.mcp.url));
     mcp.appendChild(mi);
     if (!t.mcp.added) { const b = el('button', 'btn btn-ghost small', 'Connect'); b.type = 'button'; b.onclick = () => connectMcp(b).then(openTools); mcp.appendChild(b); } else mcp.appendChild(el('span', 'ct-status connected', 'Added'));
     list.appendChild(mcp);
@@ -476,7 +499,7 @@
     $('#mb-action').onclick = async () => {
       if (!(await connectMcp($('#mb-action')))) return;
       $('#mb-text').textContent = 'Houshyar24 MCP added';
-      $('#mb-detail').textContent = 'sign in once: claude → /mcp → ' + t.mcp.name + ' → Authenticate';
+      $('#mb-detail').textContent = 'sign in once: ' + t.mcp.signIn;
       $('#mb-action').textContent = 'Done'; $('#mb-action').onclick = () => bar.classList.add('hidden');
     };
     $('#mb-close').onclick = () => { bar.classList.add('hidden'); try { localStorage.setItem('cr.h24.mcpDismissed', '1'); } catch {} };
@@ -3298,6 +3321,7 @@
     try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
     if (me.edition && !me.edition.signedIn) { await houshyarGate(); me = await refreshMe(); }
+    if (me.edition && !me.edition.claudeHome) { await houshyarChoice(); me = await refreshMe(); }
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
     deviceApp = await whatAmI();
     // Opening the app is exactly when "is there a new one?" should be answered afresh:

@@ -45,6 +45,20 @@
       <p id="h24-error" class="login-error" dir="auto" hidden></p>
       <p class="login-hint small">کلید ندارید؟ از <a href="https://houshyar24.ir/developer/keys" target="_blank" rel="noopener" dir="ltr">houshyar24.ir/developer/keys</a> بسازید.</p>
     </form>
+    <!-- Second step, only when Claude Code is already on this computer: share its sessions or not. -->
+    <div id="h24-choice" class="login-card hidden">
+      <div class="wordmark">هوشیار۲۴</div>
+      <p class="login-hint">Claude Code روی این کامپیوتر نصب است. جلسه‌ها و تنظیماتش با این اپ مشترک باشد؟</p>
+      <button type="button" class="h24-option" data-mode="shared">
+        <span class="h24-option-title">بله، یکی باشد</span>
+        <span class="h24-option-desc">همان جلسه‌های Claude Code (<bdi class="h24-path" dir="ltr">~/.claude</bdi>) در هر دو اپ دیده می‌شود.</span>
+      </button>
+      <button type="button" class="h24-option" data-mode="separate">
+        <span class="h24-option-title">نه، جدا باشد</span>
+        <span class="h24-option-desc">جلسه‌ها و تنظیمات این اپ در <bdi class="h24-path" dir="ltr">~/.houshyar24</bdi> نگه داشته می‌شود.</span>
+      </button>
+      <p id="h24-choice-error" class="login-error" hidden></p>
+    </div>
   </section>
 
   <!-- App -->
@@ -526,6 +540,10 @@
             </div>
             <p class="modal-hint small">Keys are made at <a href="https://houshyar24.ir/developer/keys" target="_blank" rel="noopener">houshyar24.ir/developer/keys</a>.</p>
             <p id="h24-pane-error" class="login-error" hidden></p>
+          </div>
+          <div class="set-row">
+            <div class="set-info"><div class="set-name">Sessions</div><div class="set-desc" id="h24-home-desc">…</div></div>
+            <button id="h24-home-switch" class="btn btn-ghost" type="button">Switch</button>
           </div>
         </section>
 

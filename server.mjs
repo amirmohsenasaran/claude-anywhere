@@ -33,7 +33,7 @@ import * as awake from './lib/awake.mjs';
 import * as update from './lib/update.mjs';
 import * as models from './lib/models.mjs';
 import { getAuth, activeAccount, setActive, setToken, clearToken, setProvider, clearProvider, classifyToken, envFor, localSource, verifyEnv, candidateEnv, candidateProviderEnv, providerKey } from './lib/auth.mjs';
-import { EDITION, providerFor, isOurs } from './lib/edition.mjs';
+import { EDITION, providerFor, isOurs, claudeInstalled, applyClaudeHome, claudeJsonPath, SEPARATE_DIR } from './lib/edition.mjs';
 import * as tools from './lib/tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -173,6 +173,14 @@ function writePrefs(p) {
   fs.writeFileSync(PREFS_PATH, JSON.stringify(p, null, 2));
 }
 
+// Before anything reads a session: where this app's Claude Code lives. A computer
+// without Claude Code has nothing to share, so it goes straight to its own dir.
+{
+  const p = readPrefs();
+  if (!p.claudeHome && !claudeInstalled()) { p.claudeHome = 'separate'; writePrefs(p); }
+  if (p.claudeHome) applyClaudeHome(p.claudeHome);
+}
+
 // Who a given account ('local' = this computer's `claude login`, 'token' = the pasted
 // token) is, as reported by the CLI itself. Nothing secret leaves this function.
 const whoCache = new Map(); // which -> { at, value }
@@ -208,7 +216,7 @@ function whoAmIFromFiles() {
   const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const out = { which: 'local', email: '', name: '', org: '', plan: '', source: localSource(), tokenKind: '' };
   try {
-    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    const j = JSON.parse(fs.readFileSync(claudeJsonPath(), 'utf8'));
     const a = j.oauthAccount || {};
     out.email = a.emailAddress || ''; out.name = a.displayName || a.fullName || ''; out.org = a.organizationName || '';
     out.plan = a.organizationType ? a.organizationType.replace(/^claude_/, '') : '';
@@ -638,7 +646,7 @@ const normPath = (p) => path.normalize(String(p || '')).replace(/[\\/]+$/, '').t
 function listConnectors(cwd) {
   const out = []; const disabled = new Set(readPrefs().disabledMcp || []);
   const add = (name, cfg, scope) => { if (!cfg || out.some((x) => x.name === name)) return; out.push({ name, scope, type: cfg.type || (cfg.command ? 'stdio' : cfg.url ? 'http' : 'unknown'), target: cfg.url || [cfg.command, ...(cfg.args || [])].filter(Boolean).join(' '), enabled: !disabled.has(name) }); };
-  const cj = readJson(path.join(os.homedir(), '.claude.json')) || {};
+  const cj = readJson(claudeJsonPath()) || {};
   for (const [n, c] of Object.entries(cj.mcpServers || {})) add(n, c, 'user');
   if (cwd) {
     for (const [k, v] of Object.entries(cj.projects || {})) if (normPath(k) === normPath(cwd)) for (const [n, c] of Object.entries(v.mcpServers || {})) add(n, c, 'project');
@@ -650,7 +658,7 @@ function listConnectors(cwd) {
 function listPlugins() {
   const settings = readJson(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json')) || {};
   const enabled = settings.enabledPlugins || {};
-  const known = readJson(path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json')) || {};
+  const known = readJson(path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'plugins', 'known_marketplaces.json')) || {};
   const out = [];
   for (const [mkt, info] of Object.entries(known)) {
     const mj = readJson(path.join(info.installLocation || '', '.claude-plugin', 'marketplace.json'));
@@ -714,7 +722,7 @@ function reachableAt() {
   const rank = (k) => (k === 'tailscale' ? 0 : k === 'lan' ? 1 : 2);
   return out.sort((a, b) => rank(a.kind) - rank(b.kind));
 }
-app.get('/api/me', (_req, res) => res.json({ edition: { id: EDITION.id, name: EDITION.name, brand: EDITION.brand, keysUrl: EDITION.keysUrl, keyPrefix: EDITION.keyPrefix, signedIn: signedIn() }, version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
+app.get('/api/me', (_req, res) => res.json({ edition: { id: EDITION.id, name: EDITION.name, brand: EDITION.brand, keysUrl: EDITION.keysUrl, keyPrefix: EDITION.keyPrefix, signedIn: signedIn(), claudeHome: readPrefs().claudeHome || null, claudeInstalled: claudeInstalled(), separateDir: SEPARATE_DIR.replace(os.homedir(), '~') }, version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
 
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
 app.get('/api/accounts', (_req, res) => {
@@ -778,6 +786,15 @@ app.post('/api/edition/key', async (req, res) => {
   const error = await addProvider(providerFor(key));
   if (error) return res.status(400).json({ error });
   res.json({ signedIn: signedIn() });
+});
+// Share Claude Code's sessions and settings, or keep this app's in ~/.houshyar24. Asked
+// once, on the first screen; switchable later from the Houshyar24 pane. Only new turns
+// move - one already running keeps the dir it started with.
+app.post('/api/edition/sessions', (req, res) => {
+  const mode = req.body?.mode === 'separate' ? 'separate' : 'shared';
+  const p = readPrefs(); p.claudeHome = mode; writePrefs(p);
+  applyClaudeHome(mode);
+  res.json({ claudeHome: mode });
 });
 app.delete('/api/edition/key', (_req, res) => { clearProvider(); whoCache.delete('provider'); models.forget(); res.json({ signedIn: false }); });
 // What each tool on this computer is, where its config lives, and whether it already
