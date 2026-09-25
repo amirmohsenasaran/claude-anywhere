@@ -504,7 +504,8 @@
       say('working', 'Adding it to Claude Code…');
       const st = await api('/tools/mcp', { method: 'POST', body: '{}' });
       say('working', 'Opening Houshyar24 sign-in…');
-      const r = await api('/tools/mcp/signin', { method: 'POST', body: '{}' });
+      // Back to this server, which hands the code to Claude Code and the browser back here.
+      const r = await api('/tools/mcp/signin', { method: 'POST', body: JSON.stringify({ redirect: location.origin + '/mcp-callback' }) });
       if (r.state === 'connected') { tab?.close(); say('connected', 'Connected'); return 'connected'; }
       if (tab) tab.location.href = r.authUrl; else openExternal(r.authUrl);
       say('waiting', 'Approve it in the browser that just opened', r.authUrl, st);
@@ -512,7 +513,12 @@
         await new Promise((ok) => setTimeout(ok, 2000));
         const now = await api('/tools/mcp/signin');
         if (now.state === 'waiting') continue;
-        if (now.state === 'connected') { say('connected', 'Connected — Houshyar24\'s tools are in every new session'); return 'connected'; }
+        if (now.state === 'connected') {
+          // The browser was in front; the app comes back to it on its own.
+          try { await window.__TAURI__?.window?.getCurrentWindow?.().setFocus(); } catch {}
+          window.focus();
+          say('connected', 'Connected — Houshyar24\'s tools are in every new session'); return 'connected';
+        }
         say('failed', now.state === 'expired' ? 'The sign-in timed out; press it again.' : 'Sign-in failed: ' + (now.error || now.state));
         return now.state;
       }

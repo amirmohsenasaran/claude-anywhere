@@ -127,6 +127,20 @@ app.use('/vendor/purify.js', express.static(path.join(here, 'node_modules/dompur
 // `no-cache` still allows 304s - it only forces a revalidation.
 app.use(express.static(path.join(here, 'public'), { extensions: ['html'], setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 
+// Where Houshyar24 sends the browser after an MCP sign-in. Not under /api: the browser
+// arriving here carries no app token, and needs none - it only brings the code and state
+// Claude Code asked for, which Claude Code checks. The page then goes back to the app:
+// it closes itself when the app opened it, and otherwise says so and links back.
+app.get('/mcp-callback', async (req, res) => {
+  const q = req.originalUrl.slice(req.originalUrl.indexOf('?') >= 0 ? req.originalUrl.indexOf('?') : req.originalUrl.length);
+  const state = await tools.finishMcpSignIn(q);
+  const ok = state === 'connected' || state === 'waiting';
+  res.set('Cache-Control', 'no-store').type('html').send(`<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Houshyar24 Code</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif;background:#1a1a1a;color:#eee}main{max-width:380px;padding:24px;text-align:center}h1{font-size:22px;margin:0 0 8px}p{margin:0 0 16px;color:#bbb}a{display:inline-block;padding:9px 18px;border-radius:10px;background:#7c3aed;color:#fff;text-decoration:none}</style></head>
+<body><main><h1>${ok ? 'MCP هوشیار۲۴ وصل شد' : 'ورود کامل نشد'}</h1><p>${ok ? 'به Houshyar24 Code برگردید؛ ابزارهای هوشیار در جلسه‌های تازه در دسترس است.' : 'به اپ برگردید و دوباره روی Sign in بزنید.'}</p><a href="/">بازگشت به اپ</a></main>
+<script>try { if (window.opener) { window.close(); } } catch (e) {} setTimeout(function () { if (!window.closed && !window.opener) location.replace('/'); }, ${ok ? 1500 : 6000});</script></body></html>`);
+});
+
 app.get('/api/config', (_req, res) => res.json({ passwordRequired: PASSWORD_REQUIRED, userName: USER_NAME }));
 
 // Sign in. With no app password configured this simply hands out the session token.
@@ -808,7 +822,7 @@ app.get('/api/tools/key', (_req, res) => res.json({ key: signedIn() ? providerKe
 // Sign in to it where it was added: the URL comes back to be opened, and the window
 // asks after the state until Claude Code reports it connected.
 app.get('/api/tools/mcp/connection', async (_req, res) => res.json({ status: await tools.mcpConnection() }));
-app.post('/api/tools/mcp/signin', async (_req, res) => { try { res.json(await tools.startMcpSignIn()); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
+app.post('/api/tools/mcp/signin', async (req, res) => { try { res.json(await tools.startMcpSignIn(/^https?:\/\/[^/]+\/mcp-callback$/.test(req.body?.redirect || '') ? req.body.redirect : '')); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
 app.get('/api/tools/mcp/signin', (_req, res) => res.json(tools.mcpSignInStatus()));
 app.post('/api/tools/mcp/callback', async (req, res) => { try { await tools.submitMcpCallback(String(req.body?.url || '')); res.json(tools.mcpSignInStatus()); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
 app.post('/api/tools/mcp', async (_req, res) => { try { res.json(await tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
