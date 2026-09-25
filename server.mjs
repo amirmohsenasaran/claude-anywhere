@@ -742,8 +742,12 @@ app.post('/api/accounts/provider', async (req, res) => {
   if (!/^https?:\/\//i.test(baseUrl)) return res.status(400).json({ error: 'The address has to start with http:// or https://' });
   if (!key) return res.status(400).json({ error: 'Paste the key that provider gave you.' });
   const p = { name, baseUrl, key, keyKind: b.keyKind === 'apikey' ? 'apikey' : 'bearer', model: String(b.model || '').trim() };
-  const check = await verifyEnv(candidateProviderEnv(p));
-  if (!check.ok) return res.status(400).json({ error: name + ' did not answer as the Anthropic API: ' + check.error });
+  // Its own list first: the menu will offer nothing else, and the test turn has to ask
+  // for a model the provider actually serves - Claude's haiku is not one of hy24's.
+  let offered;
+  try { offered = await models.fromProvider(p); } catch (e) { if (e.refused || !p.model) return res.status(400).json({ error: String(e.message || e) + (e.refused ? '.' : '. Name a model below to use this provider anyway.') }); }
+  const check = await verifyEnv(candidateProviderEnv(p), p.model || offered[0].value);
+  if (!check.ok) return res.status(400).json({ error: name + ' did not answer as the Anthropic API with ' + (p.model || offered[0].value) + ': ' + check.error + (p.model ? '' : ' — name the model to test with below.') });
   setProvider(p);
   whoCache.delete('provider'); models.forget();
   res.json({ active: 'provider', provider: whoAmI('provider') });

@@ -898,3 +898,19 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
   .scrim { touch-action: none; }
   .sidebar .session-list, .sidebar .menu { overscroll-behavior: contain; }
 }
+
+/* ---------- v46: adding an account is its own section, one step at a time ---------- */
+.acct-add { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.acct-add-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.acct-add-start { margin-top: 2px; }
+.acct-add-step { display: none; }
+.acct-add[data-step="choose"] .acct-add-step[data-step="choose"], .acct-add[data-step="token"] .acct-add-step[data-step="token"], .acct-add[data-step="hy24"] .acct-add-step[data-step="hy24"], .acct-add[data-step="provider"] .acct-add-step[data-step="provider"] { display: block; }
+.acct-add:not([data-step="closed"]) .acct-add-start, .acct-add[data-step="closed"] #acct-add-back { display: none; }
+.acct-add .add-choice { padding-right: 14px; }
+.acct-add .modal-hint { margin: 0 0 10px; }
+.acct-add .login-error { margin-top: 8px; }
+.acct-add .modal-hint a { color: #3b82f6; text-decoration: none; }
+.acct-add .modal-hint a:hover { text-decoration: underline; }
+
+/* ---------- v47: a discounted model says so in the menu ---------- */
+.menu-item .tag.discount { background: rgba(239, 68, 68, .14); color: #ef4444; font-weight: 600; cursor: help; }

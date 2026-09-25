@@ -138,6 +138,8 @@
   const describe = (a) => a ? [a.email || (a.auth === 'oauth_token' ? 'Signed in with a token' : a.loggedIn === false ? 'Not signed in' : 'Signed in'), a.plan, a.org && a.org !== a.email + "'s Organization" ? a.org : ''].filter(Boolean).join(' · ') : '';
   function openAccounts() { openSettings('account'); }
   async function loadAccountPane() {
+    // Opening the pane again starts adding from the top, not halfway through a step.
+    $('#acct-add').dataset.step = 'closed'; $('#hy24-key').value = '';
     $('#acct-error').hidden = true;
     try { accounts = await api('/accounts'); } catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; return; }
     renderAccounts();
@@ -151,32 +153,46 @@
     $('#acct-hint').textContent = 'Everything this app sends to Claude is billed to the account you pick here. These are the accounts of ' + (state.host || 'the computer this window is showing') + '; its sessions and code stay there.';
     $('#acct-local-desc').textContent = describe(accounts.local) || 'No Claude Code login found on ' + (state.host || 'that computer');
     $('#acct-token-desc').textContent = accounts.token ? describe(accounts.token) + ' · paste a new token below to replace it' : 'Not added yet';
-    for (const card of acctModal.querySelectorAll('.account-card')) {
+    // Only what is actually connected is listed; adding one is the section below.
+    const connected = { local: !!accounts.local && accounts.local.loggedIn !== false, token: !!accounts.token, provider: !!accounts.provider };
+    for (const card of acctModal.querySelectorAll('.account-card[data-which]')) {
       const w = card.dataset.which;
       card.classList.toggle('active', accounts.active === w);
-      card.classList.toggle('disabled', (w === 'token' && !accounts.token) || (w === 'provider' && !accounts.provider));
+      card.classList.toggle('hidden', !connected[w]);
     }
+    $('#acct-empty').classList.toggle('hidden', Object.values(connected).some(Boolean));
     $('#acct-token-remove').classList.toggle('hidden', !accounts.token);
     const prov = accounts.provider;
     $('#acct-provider-title').textContent = prov?.name || 'Another provider';
     $('#acct-provider-desc').textContent = prov ? [prov.baseUrl, prov.model, prov.keyKind === 'apikey' ? 'x-api-key' : 'Bearer'].filter(Boolean).join(' · ') : 'A gateway, a reseller, your own proxy — an address that answers the Anthropic API.';
     $('#prov-remove').classList.toggle('hidden', !prov);
-    if (prov) { $('#prov-name').value = prov.name || ''; $('#prov-url').value = prov.baseUrl || ''; $('#prov-model').value = prov.model || ''; $('#prov-kind').value = prov.keyKind || 'bearer'; }
-    $('#acct-provider-box').open = !!prov || accounts.active === 'provider';
+    if (prov && !isHy24(prov)) { $('#prov-name').value = prov.name || ''; $('#prov-url').value = prov.baseUrl || ''; $('#prov-model').value = prov.model || ''; $('#prov-kind').value = prov.keyKind || 'bearer'; }
     $('#acct-token-input').placeholder = accounts.token ? 'Paste a different token to replace it' : 'Paste a token from claude setup-token, or a Console API key';
   }
-  acctModal.querySelectorAll('.account-card').forEach((card) => card.addEventListener('click', async () => {
+  // One provider slot holds either hy24 or any other address; a saved hy24 is known by
+  // its address, so the generic form is not filled with it.
+  const HY24 = { name: 'هوشیار۲۴', baseUrl: 'https://houshyar24.ir/api/anthropic', keyKind: 'bearer' };
+  const isHy24 = (p) => /houshyar24\.ir/i.test(p?.baseUrl || '');
+  const ADD_FOCUS = { token: '#acct-token-input', hy24: '#hy24-key', provider: '#prov-url' };
+  function addStep(step) {
+    $('#acct-add').dataset.step = step; $('#acct-error').hidden = true;
+    if (ADD_FOCUS[step]) $(ADD_FOCUS[step]).focus();
+  }
+  $('#acct-add-start').addEventListener('click', () => addStep('choose'));
+  $('#acct-add-back').addEventListener('click', () => addStep($('#acct-add').dataset.step === 'choose' ? 'closed' : 'choose'));
+  acctModal.querySelectorAll('.add-choice').forEach((b) => b.addEventListener('click', () => addStep(b.dataset.add)));
+  acctModal.querySelectorAll('.account-card[data-which]').forEach((card) => card.addEventListener('click', async () => {
     const which = card.dataset.which;
-    if (which === 'token' && !accounts?.token) { $('#acct-token-input').focus(); return; }
-    // Nothing to switch to until there is one: the card opens the form instead.
-    if (which === 'provider' && !accounts?.provider) { $('#acct-provider-box').open = true; $('#prov-url').focus(); return; }
-    try { await api('/accounts/active', { method: 'POST', body: JSON.stringify({ which }) }); localStorage.setItem('cr.accountChosen', '1'); acctModal.classList.add('hidden'); await refreshMe(); }
+    // Nothing to switch to until there is one: the card starts adding one instead.
+    if (which === 'token' && !accounts?.token) { addStep('token'); return; }
+    if (which === 'provider' && !accounts?.provider) { addStep('choose'); return; }
+    try { await api('/accounts/active', { method: 'POST', body: JSON.stringify({ which }) }); localStorage.setItem('cr.accountChosen', '1'); acctModal.classList.add('hidden'); await refreshMe(); await loadModels(true); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
   }));
   $('#acct-token-add').addEventListener('click', async () => {
     const token = $('#acct-token-input').value.trim(); if (!token) return $('#acct-token-input').focus();
     const btn = $('#acct-token-add'); btn.classList.add('busy'); btn.textContent = 'Checking…'; $('#acct-error').hidden = true;
-    try { await api('/accounts/token', { method: 'POST', body: JSON.stringify({ token }) }); $('#acct-token-input').value = ''; localStorage.setItem('cr.accountChosen', '1'); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); }
+    try { await api('/accounts/token', { method: 'POST', body: JSON.stringify({ token }) }); $('#acct-token-input').value = ''; localStorage.setItem('cr.accountChosen', '1'); addStep('closed'); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); await loadModels(true); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
     finally { btn.classList.remove('busy'); btn.textContent = 'Add'; }
   });
@@ -325,18 +341,26 @@
   $('#acct-computers').addEventListener('click', () => openSettings('computers'));
   // A provider is saved the way a token is: proven with one turn, then it becomes the
   // account that answers. Everything else in the app carries on as before.
-  $('#prov-save').addEventListener('click', async () => {
-    const btn = $('#prov-save'); const was = btn.textContent;
-    const body = { name: $('#prov-name').value.trim(), baseUrl: $('#prov-url').value.trim(), key: $('#prov-key').value.trim(), keyKind: $('#prov-kind').value, model: $('#prov-model').value.trim() };
-    if (!body.baseUrl || !body.key) { $('#acct-error').hidden = false; $('#acct-error').textContent = 'An address and a key, at least.'; return; }
+  async function saveProvider(btn, keyInput, body) {
+    const was = btn.textContent;
     btn.disabled = true; btn.textContent = 'Testing…'; $('#acct-error').hidden = true;
     try {
       await api('/accounts/provider', { method: 'POST', body: JSON.stringify(body) });
-      $('#prov-key').value = ''; localStorage.setItem('cr.accountChosen', '1');
+      keyInput.value = ''; localStorage.setItem('cr.accountChosen', '1'); addStep('closed');
       accounts = await api('/accounts'); renderAccounts(); await refreshMe(); await loadModels(true);
     } catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
     finally { btn.disabled = false; btn.textContent = was; }
+  }
+  $('#prov-save').addEventListener('click', () => {
+    const body = { name: $('#prov-name').value.trim(), baseUrl: $('#prov-url').value.trim(), key: $('#prov-key').value.trim(), keyKind: $('#prov-kind').value, model: $('#prov-model').value.trim() };
+    if (!body.baseUrl || !body.key) { $('#acct-error').hidden = false; $('#acct-error').textContent = 'An address and a key, at least.'; return; }
+    saveProvider($('#prov-save'), $('#prov-key'), body);
   });
+  $('#hy24-add').addEventListener('click', () => {
+    const key = $('#hy24-key').value.trim(); if (!key) return $('#hy24-key').focus();
+    saveProvider($('#hy24-add'), $('#hy24-key'), { ...HY24, key });
+  });
+  $('#hy24-key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#hy24-add').click(); });
   $('#prov-remove').addEventListener('click', async () => {
     try { await api('/accounts/provider', { method: 'DELETE' }); accounts = await api('/accounts'); renderAccounts(); await refreshMe(); await loadModels(true); }
     catch (e) { $('#acct-error').hidden = false; $('#acct-error').textContent = e.message; }
@@ -953,6 +977,7 @@
   // Claude Desktop show, with the same names and the same effort levels per model.
   // This is only what to draw before that answer arrives.
   let MODELS_AT = 0; // when the CLI last answered, shown at the foot of the menu
+  let MODELS_FROM = ''; // 'provider' when the list is the provider's own, not the CLI's
   let MODELS = [{ value: 'default', displayName: 'Default (recommended)', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] }];
   let DEFAULT_EFFORT = 'high';
   // Claude's own words for the levels, and the warning it puts on the last one.
@@ -988,6 +1013,7 @@
     if (!r.models?.length) return false;
     const changed = JSON.stringify(r.models) !== JSON.stringify(MODELS);
     MODELS_AT = r.at || 0;
+    MODELS_FROM = r.from || '';
     MODELS = r.models;
     DEFAULT_EFFORT = r.defaultEffort || 'high';
     const row = modelRow(state.model);
@@ -1046,9 +1072,16 @@
     state.mode = localStorage.getItem('cr.mode') || 'default';
     renderModelChip(); renderModeChip(); renderEffortChip();
   }
+  // A provider's discount (lib/models.mjs) is a chip on the name; what it is off, on hover.
+  function discounted(x, b) {
+    const tag = x.discount && b.querySelector('.tag');
+    if (tag) { tag.classList.add('discount'); tag.title = x.discountNote || ''; b.title = x.discountNote || ''; }
+    return b;
+  }
   menuFor('#model-btn', '#model-menu', function render(m) {
     m.innerHTML = '';
-    MODELS.forEach((x, i) => m.appendChild(item(x.displayName, x.description || '', x.value === state.model, () => {
+    // A provider's rows come grouped by family (lib/models.mjs); the CLI's have no group.
+    MODELS.forEach((x, i) => (x.group && x.group !== MODELS[i - 1]?.group && (i && m.appendChild(el('div', 'menu-sep')), m.appendChild(el('div', 'menu-title', x.group))), m.appendChild(discounted(x, item(x.displayName, x.description || '', x.value === state.model, () => {
       state.model = x.value; localStorage.setItem('cr.model', x.value);
       // Haiku has no effort levels, and Opus 4.6 has no Extra: a level the new model
       // does not take goes back to its default rather than travelling along unused.
@@ -1056,13 +1089,13 @@
       if (state.effort && !effortsFor(x.value).includes(state.effort)) { state.effort = ''; localStorage.removeItem('cr.effort'); patch.effort = ''; }
       if (state.ultracode && !effortStops(x.value).includes('ultracode')) { state.ultracode = false; localStorage.removeItem('cr.ultracode'); patch.ultracode = false; }
       renderModelChip(); renderEffortChip(); m.classList.add('hidden'); pushControls(patch);
-    }, { hint: x.value === state.model ? '' : String(i + 1) })));
+    }, { hint: x.value === state.model ? '' : String(i + 1), tag: x.discount ? '−' + x.discount + '%' : '' })))));
     // Where the list came from, and how to ask again. A model can arrive between two
     // page loads — Claude publishes it, and the CLI offers it as soon as it is new
     // enough — so opening the menu is itself a reason to re-ask.
     m.appendChild(el('div', 'menu-sep'));
     const foot = el('div', 'menu-foot');
-    foot.appendChild(el('span', '', MODELS_AT ? 'From Claude Code · ' + ago(MODELS_AT) : 'Asking Claude Code…'));
+    foot.appendChild(el('span', '', MODELS_AT ? 'From ' + (MODELS_FROM === 'provider' ? accounts?.provider?.name || 'the provider' : 'Claude Code') + ' · ' + ago(MODELS_AT) : 'Asking Claude Code…'));
     const again = el('button', 'link-btn', 'Refresh'); again.type = 'button';
     again.addEventListener('click', async (e) => { e.stopPropagation(); again.disabled = true; again.textContent = 'Asking…'; await loadModels(true); render(m); });
     foot.appendChild(again);
