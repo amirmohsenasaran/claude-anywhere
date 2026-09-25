@@ -442,10 +442,22 @@
     let t; try { t = await api('/tools'); } catch (e) { list.innerHTML = ''; $('#tools-error').hidden = false; $('#tools-error').textContent = e.message; return; }
     list.innerHTML = '';
     const mcp = el('div', 'ct-row');
+    const conn = t.mcp.added ? (await api('/tools/mcp/connection').catch(() => ({}))).status : 'none';
     const mi = el('div', 'ct-info'); const mn = el('div', 'ct-name'); mn.appendChild(document.createTextNode('Houshyar24 MCP')); mn.appendChild(el('span', 'tag', 'Claude Code'));
-    mi.appendChild(mn); mi.appendChild(el('div', 'ct-desc wrap', t.mcp.added ? 'Added. Sign in once in a terminal: ' + t.mcp.signIn : 'Houshyar24\'s own tools inside Claude, from ' + t.mcp.url));
+    const mdesc = el('div', 'ct-desc wrap', conn === 'connected' ? 'Connected: Houshyar24\'s tools are in every new session.' : t.mcp.added ? 'Added, not signed in yet.' : 'Houshyar24\'s own tools inside Claude, from ' + t.mcp.url);
+    mi.appendChild(mn); mi.appendChild(mdesc);
     mcp.appendChild(mi);
-    if (!t.mcp.added) { const b = el('button', 'btn btn-ghost small', 'Connect'); b.type = 'button'; b.onclick = () => connectMcp(b).then(openTools); mcp.appendChild(b); } else mcp.appendChild(el('span', 'ct-status connected', 'Added'));
+    if (conn === 'connected') mcp.appendChild(el('span', 'ct-status connected', 'Connected'));
+    else {
+      const b = el('button', 'btn btn-primary small', t.mcp.added ? 'Sign in' : 'Connect'); b.type = 'button';
+      b.onclick = () => connectMcp((state, text) => {
+        mdesc.textContent = text; b.disabled = state === 'working';
+        if (state === 'waiting') { b.textContent = 'Paste address…'; b.onclick = pasteMcpCallback; }
+        if (state === 'connected') { b.replaceWith(el('span', 'ct-status connected', 'Connected')); $('#mcp-banner').classList.add('hidden'); }
+        if (state === 'failed') { b.disabled = false; b.textContent = 'Try again'; b.onclick = openTools; }
+      });
+      mcp.appendChild(b);
+    }
     list.appendChild(mcp);
     for (const tool of t.tools) {
       const r = el('div', 'ct-row' + (tool.manual ? ' tool-manual' : ''));
@@ -481,11 +493,37 @@
   }
   $('#tools-refresh').addEventListener('click', openTools);
 
-  async function connectMcp(btn) {
-    const was = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
-    try { await api('/tools/mcp', { method: 'POST', body: '{}' }); return true; }
-    catch (e) { alert(e.message); return false; }
-    finally { if (btn) { btn.disabled = false; btn.textContent = was; } }
+  // Add it if it is not there, then sign in: Claude Code hands back Houshyar24's
+  // authorisation page and listens for the redirect itself; this opens the page and
+  // waits until it reports the server connected. say(state, text) narrates.
+  async function connectMcp(say) {
+    // A browser opens a window only straight from the click, so it is opened now, empty,
+    // and pointed at the sign-in page once the server has one. The app hands URLs to the shell.
+    const tab = window.__TAURI__ ? null : window.open('about:blank', '_blank');
+    try {
+      say('working', 'Adding it to Claude Code…');
+      const st = await api('/tools/mcp', { method: 'POST', body: '{}' });
+      say('working', 'Opening Houshyar24 sign-in…');
+      const r = await api('/tools/mcp/signin', { method: 'POST', body: '{}' });
+      if (r.state === 'connected') { tab?.close(); say('connected', 'Connected'); return 'connected'; }
+      if (tab) tab.location.href = r.authUrl; else openExternal(r.authUrl);
+      say('waiting', 'Approve it in the browser that just opened', r.authUrl, st);
+      for (;;) {
+        await new Promise((ok) => setTimeout(ok, 2000));
+        const now = await api('/tools/mcp/signin');
+        if (now.state === 'waiting') continue;
+        if (now.state === 'connected') { say('connected', 'Connected — Houshyar24\'s tools are in every new session'); return 'connected'; }
+        say('failed', now.state === 'expired' ? 'The sign-in timed out; press it again.' : 'Sign-in failed: ' + (now.error || now.state));
+        return now.state;
+      }
+    } catch (e) { tab?.close(); say('failed', e.message); return 'failed'; }
+  }
+  // The redirect goes to localhost on the computer the browser is on. From a phone that is
+  // not the server's, so the page fails to load - and its address finishes the sign-in.
+  async function pasteMcpCallback() {
+    const url = prompt('If the browser ended on a page that did not load, paste that page\'s address here:');
+    if (!url) return;
+    try { await api('/tools/mcp/callback', { method: 'POST', body: JSON.stringify({ url: url.trim() }) }); } catch (e) { alert(e.message); }
   }
   // Offered once a key is in, until it is connected or turned down on this device.
   async function suggestMcp() {
@@ -494,16 +532,21 @@
     if (dismissed) return;
     let t; try { t = await api('/tools'); } catch { return; }
     const bar = $('#mcp-banner');
-    if (t.mcp.added) { bar.classList.add('hidden'); return; }
+    if (t.mcp.added && (await api('/tools/mcp/connection').catch(() => ({}))).status === 'connected') { bar.classList.add('hidden'); return; }
+    $('#mb-text').textContent = t.mcp.added ? 'Sign in to Houshyar24\'s MCP' : 'Connect Houshyar24\'s MCP to Claude';
+    $('#mb-detail').textContent = t.mcp.added ? 'added, but not signed in yet' : 'its tools in every session';
+    $('#mb-action').textContent = t.mcp.added ? 'Sign in' : 'Connect';
     bar.classList.remove('hidden');
-    $('#mb-action').onclick = async () => {
-      if (!(await connectMcp($('#mb-action')))) return;
-      $('#mb-text').textContent = 'Houshyar24 MCP added';
-      $('#mb-detail').textContent = 'sign in once: ' + t.mcp.signIn;
-      $('#mb-action').textContent = 'Done'; $('#mb-action').onclick = () => bar.classList.add('hidden');
-    };
+    $('#mb-action').onclick = () => connectMcp((state, text) => {
+      $('#mb-detail').textContent = text;
+      $('#mb-action').disabled = state === 'working';
+      if (state === 'waiting') { $('#mb-action').textContent = 'Paste address…'; $('#mb-action').onclick = pasteMcpCallback; }
+      if (state === 'connected') { $('#mb-text').textContent = 'Houshyar24 MCP connected'; $('#mb-action').textContent = 'Done'; $('#mb-action').onclick = () => bar.classList.add('hidden'); setTimeout(() => bar.classList.add('hidden'), 6000); }
+      if (state === 'failed') { $('#mb-action').disabled = false; $('#mb-action').textContent = 'Try again'; $('#mb-action').onclick = () => { suggestMcp(); $('#mb-action').click(); }; }
+    });
     $('#mb-close').onclick = () => { bar.classList.add('hidden'); try { localStorage.setItem('cr.h24.mcpDismissed', '1'); } catch {} };
   }
+
 
   async function refreshMe() {
     const me = await api('/me');

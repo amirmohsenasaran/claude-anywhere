@@ -805,6 +805,12 @@ app.get('/api/tools', async (_req, res) => {
   res.json({ tools: tools.list(), mcp: await tools.mcpStatus(), values: { openai: EDITION.openai, anthropic: EDITION.anthropic, key: key ? key.slice(0, 10) + '…' + key.slice(-4) : '' } });
 });
 app.get('/api/tools/key', (_req, res) => res.json({ key: signedIn() ? providerKey() : '' }));
+// Sign in to it where it was added: the URL comes back to be opened, and the window
+// asks after the state until Claude Code reports it connected.
+app.get('/api/tools/mcp/connection', async (_req, res) => res.json({ status: await tools.mcpConnection() }));
+app.post('/api/tools/mcp/signin', async (_req, res) => { try { res.json(await tools.startMcpSignIn()); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
+app.get('/api/tools/mcp/signin', (_req, res) => res.json(tools.mcpSignInStatus()));
+app.post('/api/tools/mcp/callback', async (req, res) => { try { await tools.submitMcpCallback(String(req.body?.url || '')); res.json(tools.mcpSignInStatus()); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
 app.post('/api/tools/mcp', async (_req, res) => { try { res.json(await tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
 app.post('/api/tools/:id', async (req, res) => {
   if (!signedIn()) return res.status(401).json({ error: 'Enter your Houshyar24 key first.' });
