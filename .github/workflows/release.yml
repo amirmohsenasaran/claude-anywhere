@@ -136,6 +136,11 @@ jobs:
       # so a production install must be present before the bundler runs.
       - run: npm ci --omit=dev
 
+      # And its own Node (runtime/), so nobody has to install one before the app starts.
+      # On the Mac that is both chips in one binary, like the app itself.
+      - name: Node for the installer
+        run: node scripts/fetch-node.mjs ${{ startsWith(matrix.os, 'macos') && '--target universal-apple-darwin' || '' }}
+
       # github.sha is the commit CI ran on, which is one older than the release
       # commit this checks out — the built app must name the one it was built from.
       - name: Which commit this is
@@ -187,9 +192,7 @@ jobs:
             ---
 
             **Install:** Windows `.exe`, macOS `.dmg` (one file, both chips), Linux
-            `.deb`. [Node.js](https://nodejs.org/) 20
-            or newer must be installed, because the app runs its server with it. Claude Code
-            itself is included.
+            `.deb`. Node.js and Claude Code are both included; nothing else to install.
 
             The macOS build is not signed, so the first launch needs right-click → Open.
 
