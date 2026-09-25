@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-09-25
+
 ### Changed
 
 - **The installer brings its own Node.** The app used to open on "Install Node 20 or
@@ -459,7 +461,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.1...v0.9.2
