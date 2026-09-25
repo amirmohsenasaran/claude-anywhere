@@ -8,7 +8,7 @@ downloads.
 | | Why |
 |---|---|
 | **Windows 10 or 11** | For the native app. The web client works on any OS. |
-| **[Node.js][node] 20+** on `PATH` | The server runs on it. `node -v` should print v20 or newer. |
+| *(from source)* **[Node.js][node] 20+** on `PATH` | The server runs on it. The installer brings its own, so only `npm start` needs this. |
 | **A Claude account** | Max, Pro or a Console key. Claude Code itself comes with the app. |
 | *(from source)* [Rust][rust] + `cargo install tauri-cli --version "^2"` | Only to build the native window yourself. |
 

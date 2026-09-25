@@ -28,7 +28,8 @@
       "../package.json": "server/package.json",
       "../lib": "server/lib",
       "../public": "server/public",
-      "../node_modules": "server/node_modules"
+      "../node_modules": "server/node_modules",
+      "../runtime": "server/runtime"
     },
     "windows": {
       "nsis": {

@@ -6,3 +6,6 @@ release/
 src-tauri/target/
 src-tauri/gen/
 test-media/
+# The Node binary scripts/fetch-node.mjs puts there for the installer.
+runtime/*
+!runtime/README.md
