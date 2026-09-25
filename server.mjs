@@ -783,12 +783,12 @@ app.delete('/api/edition/key', (_req, res) => { clearProvider(); whoCache.delete
 // What each tool on this computer is, where its config lives, and whether it already
 // points at Houshyar24. The key itself never leaves the server; the values to paste by
 // hand (Cline) come with it masked, and a copy button asks for it on its own.
-app.get('/api/tools', (_req, res) => {
+app.get('/api/tools', async (_req, res) => {
   const key = signedIn() ? providerKey() : '';
-  res.json({ tools: tools.list(), mcp: tools.mcpStatus(), values: { openai: EDITION.openai, anthropic: EDITION.anthropic, key: key ? key.slice(0, 10) + '…' + key.slice(-4) : '' } });
+  res.json({ tools: tools.list(), mcp: await tools.mcpStatus(), values: { openai: EDITION.openai, anthropic: EDITION.anthropic, key: key ? key.slice(0, 10) + '…' + key.slice(-4) : '' } });
 });
 app.get('/api/tools/key', (_req, res) => res.json({ key: signedIn() ? providerKey() : '' }));
-app.post('/api/tools/mcp', (_req, res) => { try { res.json(tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
+app.post('/api/tools/mcp', async (_req, res) => { try { res.json(await tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
 app.post('/api/tools/:id', async (req, res) => {
   if (!signedIn()) return res.status(401).json({ error: 'Enter your Houshyar24 key first.' });
   // The tools that need a default model get the one this window has picked, or the first
