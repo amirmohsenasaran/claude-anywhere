@@ -1,0 +1,139 @@
+name: Houshyar24 release
+
+# The Houshyar24 edition lives on the houshyar24 branch and is released from it: every
+# push builds the three installers and publishes them as houshyar24-v1.0.<run>. The app
+# asks this repository's latest release whether it is out of date (package.json names
+# the repository), and the version is only in the tag, so the run number is what makes
+# each build newer than the last - nothing is committed back to the branch.
+
+on:
+  push:
+    branches: [houshyar24]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: houshyar24-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        run: |
+          v="1.0.${{ github.run_number }}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=houshyar24-v$v" >> "$GITHUB_OUTPUT"
+          echo "::notice::Building Houshyar24 Code $v"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows installer
+            args: ''
+          - os: macos-latest
+            name: macOS (universal)
+            args: '--target universal-apple-darwin'
+          - os: ubuntu-22.04
+            name: Linux (deb)
+            args: '--bundles deb'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: houshyar24-${{ matrix.os }}
+
+      - name: System webview and its build dependencies
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      # The installer carries the server and its dependencies (bundle.resources).
+      - run: npm ci --omit=dev
+
+      # npm only fetched the Claude Code binary for the runner's own chip (arm64). The Mac
+      # installer is for both, so the Intel one goes in beside it, same version.
+      - name: Claude Code for Intel Macs too
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          v=$(node -p "require('./node_modules/@anthropic-ai/claude-agent-sdk/package.json').optionalDependencies['@anthropic-ai/claude-agent-sdk-darwin-x64']")
+          npm install --no-save --omit=dev --force "@anthropic-ai/claude-agent-sdk-darwin-x64@$v"
+          ls node_modules/@anthropic-ai/
+
+      # And its own Node (runtime/), so nobody has to install one first.
+      - name: Node for the installer
+        run: node scripts/fetch-node.mjs ${{ startsWith(matrix.os, 'macos') && '--target universal-apple-darwin' || '' }}
+
+      # The version is the run's, stamped where the app and the bundler read it.
+      - name: Stamp the version
+        shell: bash
+        run: |
+          v="${{ needs.version.outputs.version }}"
+          node -e "
+            const fs = require('fs'), v = process.argv[1];
+            const edit = (f, re, to) => { const s = fs.readFileSync(f, 'utf8'); const t = s.replace(re, to); if (s === t) throw new Error(f + ': version not found'); fs.writeFileSync(f, t); };
+            edit('package.json', /(\"version\":\s*\")[^\"]+(\")/, '\$1' + v + '\$2');
+            edit('src-tauri/tauri.conf.json', /(\"version\":\s*\")[^\"]+(\")/, '\$1' + v + '\$2');
+            edit('src-tauri/Cargo.toml', /^(version = \")[^\"]+(\")/m, '\$1' + v + '\$2');
+            edit('src-tauri/Cargo.lock', /(name = \"claude-anywhere\"\nversion = \")[^\"]+(\")/, '\$1' + v + '\$2');
+          " "$v"
+          echo "version $v"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_ANYWHERE_COMMIT: ${{ github.sha }}
+        with:
+          args: ${{ matrix.args }}
+          tagName: ${{ needs.version.outputs.tag }}
+          releaseName: Houshyar24 Code ${{ needs.version.outputs.version }}
+          releaseCommitish: ${{ github.sha }}
+          releaseBody: |
+            Houshyar24 Code ${{ needs.version.outputs.version }}, built from `${{ github.sha }}`.
+
+            **Install:** Windows `.exe`, macOS `.dmg` (one file, both chips), Linux `.deb`.
+            Node.js and Claude Code are included; nothing else to install. It installs beside
+            Claude Anywhere and uses its own port (7778) and its own data.
+
+            **First run:** enter your Houshyar24 API key — make one at
+            https://houshyar24.ir/developer/keys.
+
+            The macOS build is not signed, so the first launch needs right-click → Open.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+
+  publish:
+    name: Publish
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make it downloadable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ needs.version.outputs.tag }}"
+          gh release edit "$tag" --repo "${{ github.repository }}" --draft=false --latest
+          echo "::notice::$tag is out: $(gh release view "$tag" --repo "${{ github.repository }}" --json url -q .url)"

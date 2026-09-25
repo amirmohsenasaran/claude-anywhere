@@ -381,7 +381,7 @@ fn connection_test_now(url: String, password: String) -> Result<String, String> 
         .call()
         .map_err(|e| format!("Nothing answered at {base}: {e}"))?
         .into_json::<serde_json::Value>()
-        .map_err(|_| format!("{base} answered, but not as Claude Anywhere."))?;
+        .map_err(|_| format!("{base} answered, but not as Houshyar24 Code."))?;
     let needs = cfg["passwordRequired"].as_bool().unwrap_or(false);
     if needs && password.is_empty() {
         return Err("That computer has an app password. Put it in below.".into());
@@ -635,7 +635,7 @@ fn check_for_updates(app: AppHandle) {
         let (title, body) = match answer {
             Some(v) if v["newer"] == serde_json::Value::Bool(true) => (
                 format!(
-                    "Claude Anywhere {} is available",
+                    "Houshyar24 Code {} is available",
                     v["latest"].as_str().unwrap_or("")
                 ),
                 format!(
@@ -730,7 +730,7 @@ pub fn run() {
                             remember_picker_url(w.app_handle(), u);
                         }
                     })
-                    .title("Claude")
+                    .title("Houshyar24 Code")
                     .inner_size(1200.0, 820.0)
                     .min_inner_size(380.0, 600.0)
                     // On Windows there is no caption bar: the page draws the title bar and
@@ -931,19 +931,21 @@ fn ensure_env_file(env_file: &Path, server_root: &Path) -> std::io::Result<()> {
         .unwrap_or_else(|_| "there".into());
     fs::write(
         env_file,
-        format!("# Optional app password. Empty = no password (keep the PC on a network you trust).\nREMOTE_PASSWORD=\nHOST=0.0.0.0\nPORT=7777\nUSER_NAME={user}\n"),
+        format!("# Optional app password. Empty = no password (keep the PC on a network you trust).\nREMOTE_PASSWORD=\nHOST=0.0.0.0\nPORT=7778\nUSER_NAME={user}\n"),
     )
 }
 
+// 7778, not 7777: this edition installs beside Claude Anywhere, and the two must not
+// adopt each other's server - the port is how a window finds one.
 fn read_env(env_file: &Path) -> (String, u16) {
     let text = fs::read_to_string(env_file).unwrap_or_default();
     let mut password = String::new();
-    let mut port = 7777u16;
+    let mut port = 7778u16;
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("REMOTE_PASSWORD=") {
             password = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("PORT=") {
-            port = v.trim().parse().unwrap_or(7777);
+            port = v.trim().parse().unwrap_or(7778);
         }
     }
     (password, port)
@@ -1018,7 +1020,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
             .ok_or("No free port near the configured one")?;
     }
 
-    let node = find_node(&root).ok_or("Node.js was not found: this copy of the app has no Node of its own and none is on PATH. Install Node 20 or newer from nodejs.org, or reinstall Claude Anywhere, and start it again.")?;
+    let node = find_node(&root).ok_or("Node.js was not found: this copy of the app has no Node of its own and none is on PATH. Install Node 20 or newer from nodejs.org, or reinstall Houshyar24 Code, and start it again.")?;
     let cfg = SpawnCfg {
         node,
         root: tidy(root),
@@ -1162,7 +1164,7 @@ fn supervise_server(app: AppHandle) {
             let _ = app
                 .notification()
                 .builder()
-                .title("Claude Anywhere server stopped")
+                .title("Houshyar24 Code server stopped")
                 .body("Restarting it.")
                 .show();
         }
@@ -1179,7 +1181,7 @@ fn supervise_server(app: AppHandle) {
                 let _ = app
                     .notification()
                     .builder()
-                    .title("Claude Anywhere server did not come back")
+                    .title("Houshyar24 Code server did not come back")
                     .body(format!("{e}"))
                     .show();
                 thread::sleep(Duration::from_secs(5));
@@ -1367,7 +1369,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let icon = app.default_window_icon().cloned().expect("window icon");
     TrayIconBuilder::with_id("main")
         .icon(icon)
-        .tooltip("Claude Anywhere")
+        .tooltip("Houshyar24 Code")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {

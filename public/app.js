@@ -125,6 +125,8 @@
     if (pane === 'general') paintGeneral();
     if (pane === 'about') paintAbout();
     if (pane === 'account') loadAccountPane();
+    if (pane === 'houshyar') paintHoushyar();
+    if (pane === 'tools') openTools();
     if (pane === 'computers') openComputers();
     if (pane === 'connectors') { openConnectors(); paintVersion(); }
   }
@@ -207,11 +209,12 @@
     m.appendChild(item('Which computer…', ($('#sidebar-host').textContent || '').split(' · ').slice(0, 2).join(' · '), false, () => { m.classList.add('hidden'); openSettings('computers'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"4\" y=\"4\" width=\"12\" height=\"8\" rx=\"1.4\"/><path d=\"M2.5 15h15\" stroke-linecap=\"round\"/></svg>" }));
     m.appendChild(item('Connectors & plugins…', '', false, () => { m.classList.add('hidden'); openSettings('connectors'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M7.5 3v4M12.5 3v4M5 7.5h10v2a5 5 0 0 1-5 5 5 5 0 0 1-5-5z\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M10 14.5V18\" stroke-linecap=\"round\"/></svg>" }));
     m.appendChild(el('div', 'menu-sep'));
-    m.appendChild(item('Switch Claude account…', '', false, () => { m.classList.add('hidden'); openSettings('account'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"7\" r=\"3\"/><path d=\"M3.8 16.5a6.4 6.4 0 0 1 12.4 0\" stroke-linecap=\"round\"/></svg>" }));
+    if (EDITION) m.appendChild(item('Set up tools…', 'Codex, OpenCode, Hermes and more', false, () => { m.classList.add('hidden'); openSettings('tools'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M12.2 3.3a4 4 0 0 0-5 5L3.5 12a1.8 1.8 0 0 0 2.5 2.5l3.7-3.7a4 4 0 0 0 5-5l-2.3 2.3-2-.5-.5-2z\" stroke-linejoin=\"round\"/></svg>" }));
+    m.appendChild(item(EDITION ? 'Houshyar24 key…' : 'Switch Claude account…', '', false, () => { m.classList.add('hidden'); openSettings(EDITION ? 'houshyar' : 'account'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"7\" r=\"3\"/><path d=\"M3.8 16.5a6.4 6.4 0 0 1 12.4 0\" stroke-linecap=\"round\"/></svg>" }));
     m.appendChild(item('Keep this computer awake', (AWAKE.find((x) => x[0] === awakeMode) || AWAKE[0])[1], false, () => { m.classList.add('hidden'); setAwake(AWAKE[(AWAKE.findIndex((x) => x[0] === awakeMode) + 1) % AWAKE.length][0]); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2.4 10S5.2 5.6 10 5.6 17.6 10 17.6 10 14.8 14.4 10 14.4 2.4 10 2.4 10z\" stroke-linejoin=\"round\"/><circle cx=\"10\" cy=\"10\" r=\"2.1\"/></svg>" }));
     m.appendChild(item('Check for updates', '', false, async () => { m.classList.add('hidden'); openSettings('general'); await checkUpdateNow(); paintGeneral(); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M10 3.5v9M6.5 9.5L10 13l3.5-3.5M4 16.5h12\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>" }));
     m.appendChild(el('div', 'menu-sep'));
-    m.appendChild(item('About Claude Anywhere', ($('#sidebar-host').textContent || '').split(' · ').pop(), false, () => { m.classList.add('hidden'); openSettings('about'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"10\" r=\"7\"/><path d=\"M10 9v4.5\" stroke-linecap=\"round\"/><circle cx=\"10\" cy=\"6.6\" r=\".9\" fill=\"currentColor\" stroke=\"none\"/></svg>" }));
+    m.appendChild(item('About ' + (EDITION?.name || 'Claude Anywhere'), ($('#sidebar-host').textContent || '').split(' · ').pop(), false, () => { m.classList.add('hidden'); openSettings('about'); }, { icon: "<svg viewBox=\"0 0 20 20\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"10\" cy=\"10\" r=\"7\"/><path d=\"M10 9v4.5\" stroke-linecap=\"round\"/><circle cx=\"10\" cy=\"6.6\" r=\".9\" fill=\"currentColor\" stroke=\"none\"/></svg>" }));
   });
 
   // ---------- what the General and About panes say ----------
@@ -371,13 +374,124 @@
 
   acctModal.addEventListener('click', (e) => { if (e.target === acctModal) { acctModal.classList.add('hidden'); localStorage.setItem('cr.accountChosen', '1'); } });
 
+  // ---------- Houshyar24 edition: the key screen, its pane, the tools, the MCP offer ----------
+  let EDITION = null; // /api/me says; null in the ordinary app
+  // The first screen until a key is in; resolves once Houshyar24 has accepted one.
+  function houshyarGate() {
+    return new Promise((resolve) => {
+      $('#app').classList.add('hidden'); $('#login').classList.add('hidden'); $('#h24-gate').classList.remove('hidden');
+      setTimeout(() => $('#h24-key').focus(), 50);
+      $('#h24-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const key = $('#h24-key').value.trim(); if (!key) return;
+        const btn = $('#h24-submit'); btn.disabled = true; btn.textContent = 'در حال بررسی…'; $('#h24-error').hidden = true;
+        try {
+          await api('/edition/key', { method: 'POST', body: JSON.stringify({ key }) });
+          $('#h24-key').value = ''; $('#h24-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
+          resolve();
+        } catch (err) { $('#h24-error').hidden = false; $('#h24-error').textContent = err.message; }
+        finally { btn.disabled = false; btn.textContent = 'ورود'; }
+      };
+    });
+  }
+  async function paintHoushyar() {
+    $('#h24-pane-error').hidden = true;
+    try { const t = await api('/tools'); $('#h24-key-desc').textContent = t.values.key ? t.values.key + ' · ' + t.values.anthropic : 'No key'; } catch (e) { $('#h24-key-desc').textContent = e.message; }
+  }
+  $('#h24-replace').addEventListener('click', async () => {
+    const key = $('#h24-newkey').value.trim(); if (!key) return $('#h24-newkey').focus();
+    const btn = $('#h24-replace'); btn.disabled = true; btn.textContent = 'Testing…'; $('#h24-pane-error').hidden = true;
+    try { await api('/edition/key', { method: 'POST', body: JSON.stringify({ key }) }); $('#h24-newkey').value = ''; await refreshMe(); await loadModels(true); paintHoushyar(); }
+    catch (e) { $('#h24-pane-error').hidden = false; $('#h24-pane-error').textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = 'Replace'; }
+  });
+  $('#h24-signout').addEventListener('click', async () => {
+    try { await api('/edition/key', { method: 'DELETE' }); } catch {}
+    settingsModal.classList.add('hidden');
+    await houshyarGate(); await refreshMe(); await loadModels(true);
+  });
+
+  // One row per tool: what it is, whether it is here and already pointed at Houshyar24,
+  // and the button. Cline has no file to write, so its row is the values to paste.
+  async function openTools() {
+    const list = $('#tools-list'); $('#tools-error').hidden = true;
+    $('#tools-host').textContent = state.host || 'this computer';
+    let t; try { t = await api('/tools'); } catch (e) { list.innerHTML = ''; $('#tools-error').hidden = false; $('#tools-error').textContent = e.message; return; }
+    list.innerHTML = '';
+    const mcp = el('div', 'ct-row');
+    const mi = el('div', 'ct-info'); const mn = el('div', 'ct-name'); mn.appendChild(document.createTextNode('Houshyar24 MCP')); mn.appendChild(el('span', 'tag', 'Claude Code'));
+    mi.appendChild(mn); mi.appendChild(el('div', 'ct-desc wrap', t.mcp.added ? 'Added. Sign in once: run claude in a terminal, type /mcp, pick ' + t.mcp.name + ' → Authenticate.' : 'Houshyar24\'s own tools inside Claude, from ' + t.mcp.url));
+    mcp.appendChild(mi);
+    if (!t.mcp.added) { const b = el('button', 'btn btn-ghost small', 'Connect'); b.type = 'button'; b.onclick = () => connectMcp(b).then(openTools); mcp.appendChild(b); } else mcp.appendChild(el('span', 'ct-status connected', 'Added'));
+    list.appendChild(mcp);
+    for (const tool of t.tools) {
+      const r = el('div', 'ct-row' + (tool.manual ? ' tool-manual' : ''));
+      const info = el('div', 'ct-info'); const name = el('div', 'ct-name'); name.appendChild(document.createTextNode(tool.name));
+      if (!tool.manual) name.appendChild(el('span', 'tag', tool.configured ? 'Set up' : tool.installed ? 'Installed' : 'Not installed'));
+      info.appendChild(name); info.appendChild(el('div', 'ct-desc wrap', tool.how));
+      if (tool.file) info.appendChild(el('div', 'ct-desc', tool.file));
+      const note = el('div', 'ct-desc wrap tool-note'); info.appendChild(note);
+      r.appendChild(info);
+      if (tool.manual) {
+        const vals = el('div', 'tool-values');
+        for (const [label, value, secret] of [['Base URL', t.values.openai], ['API key', t.values.key, true], ['Model ID', state.model]]) {
+          const b = el('button', 'btn btn-ghost small', 'Copy ' + label); b.type = 'button';
+          b.onclick = async () => { const v = secret ? (await api('/tools/key')).key : value; try { await navigator.clipboard.writeText(v); b.textContent = 'Copied'; } catch { note.textContent = label + ': ' + v; } setTimeout(() => { b.textContent = 'Copy ' + label; }, 1500); };
+          vals.appendChild(b);
+        }
+        r.appendChild(vals);
+      } else {
+        const b = el('button', 'btn ' + (tool.configured ? 'btn-ghost' : 'btn-primary') + ' small', tool.configured ? 'Set up again' : 'Set up'); b.type = 'button';
+        b.onclick = async () => {
+          b.disabled = true; const was = b.textContent; b.textContent = 'Setting up…'; note.classList.remove('error');
+          try {
+            const done = await api('/tools/' + tool.id, { method: 'POST', body: JSON.stringify({ model: state.model }) });
+            note.textContent = 'Wrote ' + done.wrote.join(', ') + (done.env ? '; the key is in ' + done.env : '') + '. ' + (done.then || '') + (tool.installed ? '' : ' — ' + tool.name + ' itself is not installed yet.');
+            b.textContent = 'Set up again'; b.className = 'btn btn-ghost small'; name.querySelector('.tag').textContent = 'Set up';
+          } catch (e) { note.classList.add('error'); note.textContent = e.message; b.textContent = was; }
+          finally { b.disabled = false; }
+        };
+        r.appendChild(b);
+      }
+      list.appendChild(r);
+    }
+  }
+  $('#tools-refresh').addEventListener('click', openTools);
+
+  async function connectMcp(btn) {
+    const was = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+    try { await api('/tools/mcp', { method: 'POST', body: '{}' }); return true; }
+    catch (e) { alert(e.message); return false; }
+    finally { if (btn) { btn.disabled = false; btn.textContent = was; } }
+  }
+  // Offered once a key is in, until it is connected or turned down on this device.
+  async function suggestMcp() {
+    if (!EDITION?.signedIn) return;
+    let dismissed = false; try { dismissed = !!localStorage.getItem('cr.h24.mcpDismissed'); } catch {}
+    if (dismissed) return;
+    let t; try { t = await api('/tools'); } catch { return; }
+    const bar = $('#mcp-banner');
+    if (t.mcp.added) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    $('#mb-action').onclick = async () => {
+      if (!(await connectMcp($('#mb-action')))) return;
+      $('#mb-text').textContent = 'Houshyar24 MCP added';
+      $('#mb-detail').textContent = 'sign in once: claude → /mcp → ' + t.mcp.name + ' → Authenticate';
+      $('#mb-action').textContent = 'Done'; $('#mb-action').onclick = () => bar.classList.add('hidden');
+    };
+    $('#mb-close').onclick = () => { bar.classList.add('hidden'); try { localStorage.setItem('cr.h24.mcpDismissed', '1'); } catch {} };
+  }
+
   async function refreshMe() {
     const me = await api('/me');
     state.userName = me.userName; state.host = me.host;
+    EDITION = me.edition || null;
+    // One account in this edition: the Account pane (switching) gives way to its own two.
+    for (const [pane, show] of [['account', !EDITION], ['houshyar', !!EDITION], ['tools', !!EDITION]]) $(`.set-tab[data-pane="${pane}"]`)?.classList.toggle('hidden', !show);
     const acc = me.account || {};
     $('#sidebar-name').textContent = me.userName;
     $('#sidebar-account').innerHTML = '';
-    $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'oauth_token' ? 'Token account' : acc.loggedIn === false ? 'Not signed in' : 'Signed in')));
+    $('#sidebar-account').appendChild(document.createTextNode(acc.email || (acc.auth === 'provider' && acc.loggedIn ? acc.name : acc.auth === 'oauth_token' ? 'Token account' : acc.loggedIn === false ? 'Not signed in' : 'Signed in')));
     if (acc.plan) { $('#sidebar-account').appendChild(document.createTextNode(' · ')); $('#sidebar-account').appendChild(el('span', 'plan', acc.plan)); }
     // Which machine is answering, said plainly: "This computer" only when it is.
     activeComputer = await whichComputer();
@@ -1407,7 +1521,7 @@
     const mine = devicePlatform();
     const deviceOld = deviceApp && newerThanMine(u.latest, deviceApp.version);
     if (u.newer || deviceOld) {
-      box.appendChild(el('span', 'update-yes', 'Claude Anywhere ' + u.latest + ' is available'));
+      box.appendChild(el('span', 'update-yes', (EDITION?.name || 'Claude Anywhere') + ' ' + u.latest + ' is available'));
       const here = onThisComputer();
       // That computer: it can fetch and install its own file, which is the only way to
       // update a machine you are not sitting at.
@@ -1548,7 +1662,7 @@
       const mine = devicePlatform();
       const forMe = mine && u.downloads?.[mine];
       const here = onThisComputer();
-      $('#ub-text').textContent = 'Claude Anywhere ' + u.latest + ' is available';
+      $('#ub-text').textContent = (EDITION?.name || 'Claude Anywhere') + ' ' + u.latest + ' is available';
       $('#ub-detail').textContent = [
         deviceApp ? 'this app is ' + deviceApp.version : u.current && 'you have ' + u.current,
         u.newer && !here && (v.host || 'that computer') + ' runs ' + (u.current || '?'),
@@ -3183,6 +3297,7 @@
     let me;
     try { me = await untilServer(() => refreshMe()); } catch { return showLogin(); }
     $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+    if (me.edition && !me.edition.signedIn) { await houshyarGate(); me = await refreshMe(); }
     try { const o = await api('/order'); state.order = { projects: o.projects || [], sessions: o.sessions || {}, pinned: o.pinned || [] }; } catch {}
     deviceApp = await whatAmI();
     // Opening the app is exactly when "is there a new one?" should be answered afresh:
@@ -3192,7 +3307,8 @@
     route();
     // First time on this device: ask which account to use (local or token).
     let chosen = false; try { chosen = !!localStorage.getItem('cr.accountChosen'); } catch {}
-    if (!chosen && !me.hasToken) openAccounts();
+    if (!chosen && !me.hasToken && !EDITION) openAccounts();
+    suggestMcp();
     setInterval(() => { if (!document.hidden) loadSessions().catch(() => {}); }, 10000);
     // Coming back after the screen was off: rebuild the open chat from disk and reattach.
     let hiddenAt = 0;

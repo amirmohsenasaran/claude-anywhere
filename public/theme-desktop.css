@@ -914,3 +914,17 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 
 /* ---------- v47: a discounted model says so in the menu ---------- */
 .menu-item .tag.discount { background: rgba(239, 68, 68, .14); color: #ef4444; font-weight: 600; cursor: help; }
+
+/* ---------- v48: Houshyar24 edition — the key screen, the tools pane, the MCP offer ---------- */
+.h24-gate .wordmark { font-family: inherit; font-weight: 600; }
+.h24-gate .login-hint.small { font-size: 12.5px; color: var(--ink-3); }
+.h24-gate a, .set-pane[data-pane="houshyar"] a { color: #3b82f6; text-decoration: none; }
+#tools-list { max-height: none; }
+#tools-list .ct-row { align-items: flex-start; }
+.ct-desc.wrap { white-space: normal; direction: auto; text-align: start; }
+.tool-note:empty { display: none; }
+.tool-note { color: var(--ink-2); margin-top: 4px; }
+.tool-note.error { color: var(--danger); }
+.tool-values { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.btn.small { font-size: 12.5px; padding: 5px 10px; flex: none; }
+@media (max-width: 860px) { #tools-list .ct-row { flex-wrap: wrap; } .tool-values { flex-direction: row; flex-wrap: wrap; } }

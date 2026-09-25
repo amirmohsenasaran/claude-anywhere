@@ -32,7 +32,9 @@ import * as pr from './lib/pr.mjs';
 import * as awake from './lib/awake.mjs';
 import * as update from './lib/update.mjs';
 import * as models from './lib/models.mjs';
-import { getAuth, activeAccount, setActive, setToken, clearToken, setProvider, clearProvider, classifyToken, envFor, localSource, verifyEnv, candidateEnv, candidateProviderEnv } from './lib/auth.mjs';
+import { getAuth, activeAccount, setActive, setToken, clearToken, setProvider, clearProvider, classifyToken, envFor, localSource, verifyEnv, candidateEnv, candidateProviderEnv, providerKey } from './lib/auth.mjs';
+import { EDITION, providerFor, isOurs } from './lib/edition.mjs';
+import * as tools from './lib/tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -138,6 +140,16 @@ app.use('/api', (req, res, next) => {
   // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
   const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && knownToken(String(req.query.token || ''));
   if (!knownToken(auth.replace(/^Bearer /, '')) && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+});
+
+// The Houshyar24 edition has one account. Nothing switches it, and no turn runs on this
+// computer's own Claude login while no Houshyar24 key has been entered - the window's
+// key screen is a courtesy, this is the rule.
+const signedIn = () => isOurs(getAuth().provider) && activeAccount() === 'provider';
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && req.path.startsWith('/accounts/')) return res.status(403).json({ error: 'This app runs on Houshyar24 only; change the key in Settings.' });
+  if (req.method === 'POST' && (req.path === '/sessions' || /^\/sessions\/[^/]+\/send$/.test(req.path)) && !signedIn()) return res.status(401).json({ error: 'Enter your Houshyar24 key first.' });
   next();
 });
 
@@ -702,7 +714,7 @@ function reachableAt() {
   const rank = (k) => (k === 'tailscale' ? 0 : k === 'lan' ? 1 : 2);
   return out.sort((a, b) => rank(a.kind) - rank(b.kind));
 }
-app.get('/api/me', (_req, res) => res.json({ version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
+app.get('/api/me', (_req, res) => res.json({ edition: { id: EDITION.id, name: EDITION.name, brand: EDITION.brand, keysUrl: EDITION.keysUrl, keyPrefix: EDITION.keyPrefix, signedIn: signedIn() }, version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: PASSWORD_REQUIRED, addresses: reachableAt() }));
 
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
 app.get('/api/accounts', (_req, res) => {
@@ -734,6 +746,18 @@ app.delete('/api/accounts/token', (_req, res) => { clearToken(); whoCache.delete
 // tiny turn, and whatever the endpoint says back is what the screen shows - an endpoint
 // that only speaks OpenAI's API answers with its own complaint, which is the honest
 // answer to "can I use this here?".
+// Its own list first: the menu will offer nothing else, and the test turn has to ask
+// for a model the provider actually serves - Claude's haiku is not one of hy24's.
+// Answers the error to show, or '' once the provider is kept.
+async function addProvider(p) {
+  let offered;
+  try { offered = await models.fromProvider(p); } catch (e) { if (e.refused || !p.model) return String(e.message || e) + (e.refused ? '.' : '. Name a model below to use this provider anyway.'); }
+  const check = await verifyEnv(candidateProviderEnv(p), p.model || offered[0].value);
+  if (!check.ok) return p.name + ' did not answer as the Anthropic API with ' + (p.model || offered[0].value) + ': ' + check.error + (p.model ? '' : ' — name the model to test with below.');
+  setProvider(p);
+  whoCache.delete('provider'); models.forget();
+  return '';
+}
 app.post('/api/accounts/provider', async (req, res) => {
   const b = req.body || {};
   const baseUrl = String(b.baseUrl || '').trim();
@@ -741,18 +765,41 @@ app.post('/api/accounts/provider', async (req, res) => {
   const name = String(b.name || '').trim() || (() => { try { return new URL(baseUrl).hostname; } catch { return 'Provider'; } })();
   if (!/^https?:\/\//i.test(baseUrl)) return res.status(400).json({ error: 'The address has to start with http:// or https://' });
   if (!key) return res.status(400).json({ error: 'Paste the key that provider gave you.' });
-  const p = { name, baseUrl, key, keyKind: b.keyKind === 'apikey' ? 'apikey' : 'bearer', model: String(b.model || '').trim() };
-  // Its own list first: the menu will offer nothing else, and the test turn has to ask
-  // for a model the provider actually serves - Claude's haiku is not one of hy24's.
-  let offered;
-  try { offered = await models.fromProvider(p); } catch (e) { if (e.refused || !p.model) return res.status(400).json({ error: String(e.message || e) + (e.refused ? '.' : '. Name a model below to use this provider anyway.') }); }
-  const check = await verifyEnv(candidateProviderEnv(p), p.model || offered[0].value);
-  if (!check.ok) return res.status(400).json({ error: name + ' did not answer as the Anthropic API with ' + (p.model || offered[0].value) + ': ' + check.error + (p.model ? '' : ' — name the model to test with below.') });
-  setProvider(p);
-  whoCache.delete('provider'); models.forget();
+  const error = await addProvider({ name, baseUrl, key, keyKind: b.keyKind === 'apikey' ? 'apikey' : 'bearer', model: String(b.model || '').trim() });
+  if (error) return res.status(400).json({ error });
   res.json({ active: 'provider', provider: whoAmI('provider') });
 });
 app.delete('/api/accounts/provider', (_req, res) => { clearProvider(); whoCache.delete('provider'); models.forget(); res.json({ active: activeAccount() }); });
+
+// ---------- the Houshyar24 edition: its key, and the other tools it sets up ----------
+app.post('/api/edition/key', async (req, res) => {
+  const key = String(req.body?.key || '').trim();
+  if (!key) return res.status(400).json({ error: 'Paste your Houshyar24 key first.' });
+  const error = await addProvider(providerFor(key));
+  if (error) return res.status(400).json({ error });
+  res.json({ signedIn: signedIn() });
+});
+app.delete('/api/edition/key', (_req, res) => { clearProvider(); whoCache.delete('provider'); models.forget(); res.json({ signedIn: false }); });
+// What each tool on this computer is, where its config lives, and whether it already
+// points at Houshyar24. The key itself never leaves the server; the values to paste by
+// hand (Cline) come with it masked, and a copy button asks for it on its own.
+app.get('/api/tools', (_req, res) => {
+  const key = signedIn() ? providerKey() : '';
+  res.json({ tools: tools.list(), mcp: tools.mcpStatus(), values: { openai: EDITION.openai, anthropic: EDITION.anthropic, key: key ? key.slice(0, 10) + '…' + key.slice(-4) : '' } });
+});
+app.get('/api/tools/key', (_req, res) => res.json({ key: signedIn() ? providerKey() : '' }));
+app.post('/api/tools/mcp', (_req, res) => { try { res.json(tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
+app.post('/api/tools/:id', async (req, res) => {
+  if (!signedIn()) return res.status(401).json({ error: 'Enter your Houshyar24 key first.' });
+  // The tools that need a default model get the one this window has picked, or the first
+  // Houshyar24 offers; the ones that list models get every one of them.
+  const offered = (models.cached() || []).filter((m) => m.value && m.value !== 'default');
+  const list = offered.map((m) => ({ id: m.value, name: m.displayName, vision: !!m.vision }));
+  const model = String(req.body?.model || '') && offered.some((m) => m.value === req.body.model) ? req.body.model : list[0]?.id;
+  if (!model) return res.status(400).json({ error: 'Houshyar24\'s model list has not loaded yet; try again in a moment.' });
+  try { res.json(await tools.setup(req.params.id, { key: providerKey(), model, models: list })); }
+  catch (e) { res.status(400).json({ error: String(e.message || e) }); }
+});
 
 // Sidebar order (projects, sessions within each project, pinned), shared by every device.
 // The list never re-sorts itself: new items slot in once, then only drag-and-drop moves them.
