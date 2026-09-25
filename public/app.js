@@ -496,16 +496,16 @@
   // Add it if it is not there, then sign in: Claude Code hands back Houshyar24's
   // authorisation page and listens for the redirect itself; this opens the page and
   // waits until it reports the server connected. say(state, text) narrates.
-  async function connectMcp(say) {
+  async function connectMcp(say, { name = '', again = false } = {}) {
     // A browser opens a window only straight from the click, so it is opened now, empty,
     // and pointed at the sign-in page once the server has one. The app hands URLs to the shell.
     const tab = window.__TAURI__ ? null : window.open('about:blank', '_blank');
     try {
-      say('working', 'Adding it to Claude Code…');
-      const st = await api('/tools/mcp', { method: 'POST', body: '{}' });
-      say('working', 'Opening Houshyar24 sign-in…');
+      let st = null;
+      if (!name) { say('working', 'Adding it to Claude Code…'); st = await api('/tools/mcp', { method: 'POST', body: '{}' }); }
+      say('working', 'Opening the sign-in…');
       // Back to this server, which hands the code to Claude Code and the browser back here.
-      const r = await api('/tools/mcp/signin', { method: 'POST', body: JSON.stringify({ redirect: location.origin + '/mcp-callback' }) });
+      const r = await api('/tools/mcp/signin', { method: 'POST', body: JSON.stringify({ redirect: location.origin + '/mcp-callback', ...(name ? { name } : {}), again }) });
       if (r.state === 'connected') { tab?.close(); say('connected', 'Connected'); return 'connected'; }
       if (tab) tab.location.href = r.authUrl; else openExternal(r.authUrl);
       say('waiting', 'Approve it in the browser that just opened', r.authUrl, st);
@@ -517,7 +517,7 @@
           // The browser was in front; the app comes back to it on its own.
           try { await window.__TAURI__?.window?.getCurrentWindow?.().setFocus(); } catch {}
           window.focus();
-          say('connected', 'Connected — Houshyar24\'s tools are in every new session'); return 'connected';
+          say('connected', 'Connected — its tools are in every new session'); return 'connected';
         }
         say('failed', now.state === 'expired' ? 'The sign-in timed out; press it again.' : 'Sign-in failed: ' + (now.error || now.state));
         return now.state;
@@ -1474,6 +1474,19 @@
       info.appendChild(name); info.appendChild(el('div', 'ct-desc', (c.type + ' · ' + (c.target || '')).slice(0, 120)));
       if (c.error) info.appendChild(el('div', 'ct-desc error', c.error.slice(0, 160)));
       row.appendChild(info);
+      // An http server signs in with OAuth; its token can go stale or belong to the wrong
+      // person, so it can be done again from here - the same flow Connect runs.
+      if (!c.builtin && (c.type === 'http' || c.type === 'sse')) {
+        const desc = info.querySelector('.ct-desc');
+        const b = el('button', 'btn btn-ghost small', c.status === 'needs-auth' ? 'Sign in' : 'Re-authenticate'); b.type = 'button';
+        b.onclick = () => connectMcp((state, text) => {
+          desc.textContent = text; b.disabled = state === 'working';
+          if (state === 'waiting') { b.textContent = 'Paste address…'; b.onclick = pasteMcpCallback; }
+          if (state === 'connected') { b.textContent = 'Re-authenticate'; b.onclick = openConnectors; name.querySelector('.ct-status')?.remove(); name.appendChild(el('span', 'ct-status connected', 'Connected')); }
+          if (state === 'failed') { b.disabled = false; b.textContent = 'Try again'; b.onclick = openConnectors; }
+        }, { name: c.name, again: c.status !== 'needs-auth' });
+        row.appendChild(b);
+      }
       if (!c.builtin) row.appendChild(toggleEl(c.enabled, (on) => api('/connectors/' + encodeURIComponent(c.name), { method: 'POST', body: JSON.stringify({ enabled: on, sessionId: state.current }) })));
       cl.appendChild(row);
     }

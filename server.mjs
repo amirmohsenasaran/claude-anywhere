@@ -822,7 +822,7 @@ app.get('/api/tools/key', (_req, res) => res.json({ key: signedIn() ? providerKe
 // Sign in to it where it was added: the URL comes back to be opened, and the window
 // asks after the state until Claude Code reports it connected.
 app.get('/api/tools/mcp/connection', async (_req, res) => res.json({ status: await tools.mcpConnection() }));
-app.post('/api/tools/mcp/signin', async (req, res) => { try { res.json(await tools.startMcpSignIn(/^https?:\/\/[^/]+\/mcp-callback$/.test(req.body?.redirect || '') ? req.body.redirect : '')); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
+app.post('/api/tools/mcp/signin', async (req, res) => { try { res.json(await tools.startMcpSignIn(/^https?:\/\/[^/]+\/mcp-callback$/.test(req.body?.redirect || '') ? req.body.redirect : '', { name: req.body?.name ? String(req.body.name) : undefined, again: !!req.body?.again })); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
 app.get('/api/tools/mcp/signin', (_req, res) => res.json(tools.mcpSignInStatus()));
 app.post('/api/tools/mcp/callback', async (req, res) => { try { await tools.submitMcpCallback(String(req.body?.url || '')); res.json(tools.mcpSignInStatus()); } catch (e) { res.status(400).json({ error: String(e.message || e) }); } });
 app.post('/api/tools/mcp', async (_req, res) => { try { res.json(await tools.addMcp()); } catch (e) { res.status(400).json({ error: String(e.stderr || e.message || e).trim() }); } });
