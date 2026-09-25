@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The installer brings its own Node.** The app used to open on "Install Node 20 or
+  newer" when there was none on `PATH`; now Node 22 ships inside it (`server/runtime/`)
+  and the shell runs that one, falling back to a Node on `PATH` only for a build without
+  it. On the Mac it is one binary for both chips, like the app.
+
 ## [0.9.4] — 2026-09-23
 
 ## [0.9.3] — 2026-09-22
