@@ -406,6 +406,7 @@
           <h3 class="set-title">Which Claude account?</h3>
           <p class="modal-hint" id="acct-hint">Everything this app sends to Claude is billed to the account you pick here. Sessions stay on this computer either way.</p>
       <div class="account-list">
+        <p id="acct-empty" class="modal-hint hidden">No accounts connected yet. Add one below.</p>
         <button class="account-card" data-which="local">
           <div class="account-title"><span id="acct-local-title">This computer's login</span> <span class="tag">Local</span></div>
           <div class="account-desc" id="acct-local-desc">…</div>
@@ -425,32 +426,67 @@
         </button>
       </div>
       <div class="token-box">
-        <div class="token-row">
-          <input id="acct-token-input" type="password" placeholder="Paste a token from claude setup-token, or a Console API key" autocomplete="off" spellcheck="false" />
-          <button id="acct-token-add" class="btn btn-primary">Add</button>
-        </div>
         <div class="token-actions">
           <button id="acct-token-remove" class="link-btn small hidden">Remove token</button>
+          <button id="prov-remove" class="link-btn small hidden" type="button">Remove provider</button>
           <!-- These are one computer's accounts. The other computers are a click away. -->
           <button id="acct-computers" class="link-btn small">Another computer…</button>
         </div>
+      </div>
+      <!-- Adding is a step of its own: first what kind of account, then only what that kind
+           needs. hy24 is a provider whose address is known, so it asks for the key alone. -->
+      <div id="acct-add" class="acct-add" data-step="closed">
+        <div class="acct-add-head">
+          <span class="set-name">Add an account</span>
+          <button id="acct-add-back" class="link-btn small" type="button">Back</button>
+        </div>
+        <button id="acct-add-start" class="btn btn-ghost acct-add-start" type="button">Add account…</button>
+        <div class="acct-add-step" data-step="choose">
+          <p class="modal-hint">What would you like to add?</p>
+          <div class="account-list">
+            <button class="account-card add-choice" data-add="token" type="button">
+              <div class="account-title">Claude token <span class="tag">Token</span></div>
+              <div class="account-desc">A token from claude setup-token, or a Console API key</div>
+            </button>
+            <button class="account-card add-choice" data-add="hy24" type="button">
+              <div class="account-title">هوشیار۲۴ <span class="tag">Houshyar24</span></div>
+              <div class="account-desc">Your Houshyar24 API key — Claude, GPT, Gemini and more, with their prices</div>
+            </button>
+            <button class="account-card add-choice" data-add="provider" type="button">
+              <div class="account-title">Another provider <span class="tag">Endpoint</span></div>
+              <div class="account-desc">A gateway, a reseller, your own proxy — an address that answers the Anthropic API</div>
+            </button>
+          </div>
+        </div>
+        <div class="acct-add-step" data-step="token">
+          <p class="modal-hint">Paste a token from <code>claude setup-token</code>, or a Console API key.</p>
+          <div class="token-row">
+            <input id="acct-token-input" type="password" placeholder="Paste a token from claude setup-token, or a Console API key" autocomplete="off" spellcheck="false" />
+            <button id="acct-token-add" class="btn btn-primary">Add</button>
+          </div>
+        </div>
+        <div class="acct-add-step" data-step="hy24">
+          <p class="modal-hint">Paste an API key from <a href="https://houshyar24.ir/developer/keys" target="_blank" rel="noopener">houshyar24.ir/developer/keys</a>. It is tested with one tiny turn before it is saved.</p>
+          <div class="token-row">
+            <input id="hy24-key" type="password" placeholder="sk-hy24-…" autocomplete="off" spellcheck="false" dir="ltr" />
+            <button id="hy24-add" class="btn btn-primary" type="button">Add</button>
+          </div>
+        </div>
+        <div class="acct-add-step" data-step="provider">
+          <p class="modal-hint">An address that answers the Anthropic Messages API — a gateway, a reseller, your company's proxy. It is tested with one tiny turn before it is saved; one that only speaks OpenAI's API will say so.</p>
+          <div class="provider-grid">
+            <label>Name<input id="prov-name" type="text" placeholder="My gateway" autocomplete="off" spellcheck="false" /></label>
+            <label>Address<input id="prov-url" type="url" placeholder="https://api.example.com" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+            <label>Key<input id="prov-key" type="password" placeholder="The key that provider gave you" autocomplete="off" spellcheck="false" /></label>
+            <label>Sends the key as<select id="prov-kind"><option value="bearer">Authorization: Bearer</option><option value="apikey">x-api-key</option></select></label>
+            <label>Model<input id="prov-model" type="text" placeholder="Optional — the model id that provider uses" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+          </div>
+          <div class="token-actions">
+            <button id="prov-save" class="btn btn-primary" type="button">Test and save</button>
+          </div>
+        </div>
         <p id="acct-error" class="login-error" hidden></p>
       </div>
-      <details id="acct-provider-box" class="provider-box">
-        <summary>Use another provider…</summary>
-        <p class="modal-hint">An address that answers the Anthropic Messages API — a gateway, a reseller, your company's proxy. It is tested with one tiny turn before it is saved; one that only speaks OpenAI's API will say so.</p>
-        <div class="provider-grid">
-          <label>Name<input id="prov-name" type="text" placeholder="hy24" autocomplete="off" spellcheck="false" /></label>
-          <label>Address<input id="prov-url" type="url" placeholder="https://api.example.com" autocomplete="off" spellcheck="false" dir="ltr" /></label>
-          <label>Key<input id="prov-key" type="password" placeholder="The key that provider gave you" autocomplete="off" spellcheck="false" /></label>
-          <label>Sends the key as<select id="prov-kind"><option value="bearer">Authorization: Bearer</option><option value="apikey">x-api-key</option></select></label>
-          <label>Model<input id="prov-model" type="text" placeholder="Optional — the model id that provider uses" autocomplete="off" spellcheck="false" dir="ltr" /></label>
-        </div>
-        <div class="token-actions">
-          <button id="prov-save" class="btn btn-primary" type="button">Test and save</button>
-          <button id="prov-remove" class="link-btn small hidden" type="button">Remove provider</button>
-        </div>
-      </details>
         </section>
 
         <section class="set-pane" data-pane="computers">
