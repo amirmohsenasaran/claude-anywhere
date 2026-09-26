@@ -64,6 +64,15 @@ const bearer = (req) => String(req.get('authorization') || '').replace(/^Bearer 
 // ---------- http ----------
 const app = express();
 app.disable('x-powered-by');
+// Remote access off (the default, and always without a password): only this computer may use it. Everything else -
+// another device on the network, a tunnel, a proxy - is turned away with the reason,
+// before the page or any API answers. Setting a password opens it again.
+const CLOSED = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remote access is off</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;background:#1a1a1a;color:#eee}main{max-width:420px;padding:24px;text-align:center}h1{font-size:20px;margin:0 0 8px}p{color:#bbb;margin:0}</style></head><body><main><h1>Remote access is off</h1><p>Only the computer itself can use it. Turn remote access on there, in Settings → Remote access, to use it from here.</p></main></body></html>`;
+app.use((req, res, next) => {
+  if (access.remoteAllowed() || access.isLocal(req)) return next();
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'Remote access is off on that computer. Turn it on there, in Settings → Remote access.', remoteClosed: true });
+  res.status(403).type('html').send(CLOSED);
+});
 app.use(express.json({ limit: '60mb' })); // attachments travel as base64
 
 // Attachments: images are sent to Claude as image blocks; any other file is saved on
@@ -716,17 +725,21 @@ function reachableAt() {
 app.get('/api/me', (_req, res) => res.json({ version: appVersion, userName: USER_NAME, host: process.env.COMPUTERNAME || process.env.HOSTNAME || 'this machine', account: whoAmI(), active: activeAccount(), hasToken: getAuth().hasToken, port: PORT, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', passwordRequired: access.passwordRequired(), passwordSource: access.source(), addresses: reachableAt() }));
 
 // ---------- remote access: the password, the signed-in devices, the failed attempts ----------
-app.get('/api/access', (req, res) => res.json({ source: access.source(), minLength: access.MIN_PASSWORD, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', devices: access.devices(bearer(req)), failures: access.failures() }));
-// Changing it asks for the current one: a stolen device token must not be enough to take
-// the computer over. The device doing it stays signed in with a new token.
+app.get('/api/access', (req, res) => res.json({ source: access.source(), minLength: access.MIN_PASSWORD, listensEverywhere: HOST === '0.0.0.0' || HOST === '::', remoteOpen: access.remoteAllowed(), fromApp: access.isAppKey(bearer(req)), devices: access.devices(bearer(req)), failures: access.failures() }));
+// From a browser, changing it asks for the current one: a stolen device token must not be
+// enough to take the computer over. The desktop app's own window is the person at this
+// computer, and is not asked. The device doing it stays signed in with a new token.
 app.post('/api/access/password', (req, res) => {
   const ip = access.clientIp(req);
   const wait = access.locked(ip);
   if (wait) return res.status(429).json({ error: 'Too many wrong passwords. Try again in ' + waitWords(wait) + '.' });
-  if (access.passwordRequired() && !access.checkPassword(String(req.body?.current || ''))) { access.failed(ip); return res.status(401).json({ error: 'The current password is not right.' }); }
-  try { res.json({ token: access.setPassword(String(req.body?.password || ''), { name: deviceName(req), ip }), source: access.source() }); }
+  if (access.passwordRequired() && !access.isAppKey(bearer(req)) && !access.checkPassword(String(req.body?.current || ''))) { access.failed(ip); return res.status(401).json({ error: 'The current password is not right.' }); }
+  try { res.json({ token: access.setPassword(String(req.body?.password || ''), { name: deviceName(req), ip, fromApp: access.isAppKey(bearer(req)) }), source: access.source() }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
+// The switch. Turning it on needs a password to be set; turning it off from another
+// device is allowed, and closes that device out with everything else.
+app.post('/api/access/remote', (req, res) => { try { res.json({ remoteOpen: access.setRemote(!!req.body?.on) }); } catch (e) { res.status(400).json({ error: e.message }); } });
 app.delete('/api/access/devices/:id', (req, res) => res.json({ revoked: access.revoke(req.params.id), devices: access.devices(bearer(req)) }));
 
 // ---------- accounts: this computer's login, and an optional token; switch any time ----------
@@ -1276,7 +1289,7 @@ export function startServer({ host = HOST, port = PORT } = {}) {
       server.on('upgrade', (req, socket, head) => {
         const hit = parsePreviewUrl((req.url || '').split('?')[0]);
         if (!hit) return;
-        if (!knownToken(cookieOf(req, PREVIEW_COOKIE) || '')) return socket.destroy();
+        if (!knownToken(cookieOf(req, PREVIEW_COOKIE) || '') || (!access.remoteAllowed() && !access.isLocal(req))) return socket.destroy();
         const qs = (req.url || '').includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
         proxyUpgrade(req, socket, head, hit.port, hit.rest + qs);
       });
