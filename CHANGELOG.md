@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-26
+
 ### Added
 
 - **Remote access has a proper lock.** *Settings → Remote access* sets the app password
@@ -477,7 +479,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.2...v0.9.3
