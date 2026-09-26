@@ -557,9 +557,13 @@
 
         <section class="set-pane" data-pane="remote">
           <h3 class="set-title">Remote access</h3>
+          <div class="set-row">
+            <div class="set-info"><div class="set-name">Remote access</div><div class="set-desc" id="ra-switch-desc">…</div></div>
+            <div id="ra-switch"></div>
+          </div>
           <p class="modal-hint" id="ra-reach">…</p>
           <div id="ra-addresses"></div>
-          <p id="ra-warn" class="ra-warn" hidden>No app password: anyone who can reach this computer's address can use Claude here. Set one before opening it to the internet.</p>
+          <p id="ra-warn" class="ra-warn" hidden>Set an app password below to turn remote access on.</p>
           <div class="ra-section">
             <div class="set-name">App password</div>
             <p class="modal-hint small" id="ra-pw-state">…</p>
