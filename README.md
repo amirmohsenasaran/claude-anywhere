@@ -142,9 +142,8 @@ See [docs/features.md](docs/features.md) for the whole list with the detail.
 
 Download from [Releases][releases]: a `.exe` for Windows, a `.dmg` for macOS
 (one file, both chips), a `.deb` for Linux. It brings its own
-Claude Code binary, so the `claude` CLI is not required — but [Node.js][node]
-20 or newer must be installed and on `PATH`, because the app runs the server
-with it.
+Claude Code binary and its own [Node.js][node] to run the server with, so
+neither the `claude` CLI nor Node has to be installed.
 
 The macOS build is not signed yet, so the first launch needs right-click → Open.
 
@@ -176,7 +175,7 @@ packages as well:
 
 ```bash
 npm run desktop              # run it as a native window
-npm run dist                 # build the installer for this platform into src-tauri/target/release/bundle
+npm run dist                 # fetch Node into runtime/, then build the installer into src-tauri/target/release/bundle
 ```
 
 New here? [docs/getting-started.md](docs/getting-started.md) walks the whole

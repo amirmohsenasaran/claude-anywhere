@@ -1016,7 +1016,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
                 port,
                 token,
                 env_file: env_file.clone(),
-                spawn: find_node().map(|node| SpawnCfg {
+                spawn: find_node(&root).map(|node| SpawnCfg {
                     node,
                     root: tidy(root),
                     data_dir: data_dir.clone(),
@@ -1030,7 +1030,7 @@ fn start_server(app: &AppHandle) -> Result<ServerState, Box<dyn std::error::Erro
             .ok_or("No free port near the configured one")?;
     }
 
-    let node = find_node().ok_or("Node.js was not found on PATH. Install Node 20 or newer from nodejs.org and start Claude Anywhere again.")?;
+    let node = find_node(&root).ok_or("Node.js was not found: this copy of the app has no Node of its own and none is on PATH. Install Node 20 or newer from nodejs.org, or reinstall Claude Anywhere, and start it again.")?;
     let cfg = SpawnCfg {
         node,
         root: tidy(root),
@@ -1202,20 +1202,19 @@ fn supervise_server(app: AppHandle) {
     });
 }
 
-// Node from PATH, or the usual install folder; resolved here so the log says which one
-// ran. A macOS app launched from Finder gets a bare PATH with no Homebrew in it, and a
-// Linux one started from a desktop entry is not much better, so the known places are
-// tried as well.
+// The installer's own Node first (runtime/, fetched by scripts/fetch-node.mjs): asking
+// people to install Node before the app would start was the one setup step the app
+// could not do for them. Then Node from PATH, or the usual install folder, for a build
+// without one; resolved here so the log says which one ran. A macOS app launched from
+// Finder gets a bare PATH with no Homebrew in it, and a Linux one started from a
+// desktop entry is not much better, so the known places are tried as well.
 const NODE_BIN: &str = if cfg!(windows) { "node.exe" } else { "node" };
 
-fn find_node() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| {
-            std::env::split_paths(&p)
-                .map(|d| d.join(NODE_BIN))
-                .collect()
-        })
-        .unwrap_or_default();
+fn find_node(root: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = vec![root.join("runtime").join(NODE_BIN)];
+    if let Some(p) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&p).map(|d| d.join(NODE_BIN)));
+    }
     if cfg!(windows) {
         if let Ok(pf) = std::env::var("ProgramFiles") {
             candidates.push(Path::new(&pf).join("nodejs").join(NODE_BIN));

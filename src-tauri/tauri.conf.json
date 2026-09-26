@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Claude Anywhere",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "identifier": "com.arya.claude-anywhere",
   "build": {
     "frontendDist": "../public"
@@ -28,7 +28,8 @@
       "../package.json": "server/package.json",
       "../lib": "server/lib",
       "../public": "server/public",
-      "../node_modules": "server/node_modules"
+      "../node_modules": "server/node_modules",
+      "../runtime": "server/runtime"
     },
     "windows": {
       "nsis": {

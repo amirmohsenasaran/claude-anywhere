@@ -19,6 +19,15 @@ All notable changes to this project are documented here. The format follows
   set from the app never locks the app out of itself; the token phones and the shell
   derive from a saved password keeps working.
 
+## [0.9.5] — 2026-09-25
+
+### Changed
+
+- **The installer brings its own Node.** The app used to open on "Install Node 20 or
+  newer" when there was none on `PATH`; now Node 22 ships inside it (`server/runtime/`)
+  and the shell runs that one, falling back to a Node on `PATH` only for a build without
+  it. On the Mac it is one binary for both chips, like the app.
+
 ## [0.9.4] — 2026-09-23
 
 ## [0.9.3] — 2026-09-22
@@ -464,7 +473,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.1...v0.9.2
