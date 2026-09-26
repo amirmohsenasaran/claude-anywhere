@@ -128,6 +128,7 @@
     if (pane === 'houshyar') paintHoushyar();
     if (pane === 'tools') openTools();
     if (pane === 'computers') openComputers();
+    if (pane === 'remote') paintRemote();
     if (pane === 'connectors') { openConnectors(); paintVersion(); }
   }
   settingsModal.querySelectorAll('.set-tab').forEach((t) => t.addEventListener('click', () => openSettings(t.dataset.pane)));
@@ -302,9 +303,63 @@
       b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(a.url); b.textContent = 'Copied'; setTimeout(() => { b.textContent = a.url; }, 1200); } catch {} });
       box.appendChild(b);
     }
-    if (!me.passwordRequired) box.appendChild(el('span', 'muted warn-plain', 'No app password: anyone who can reach that address can use Claude here.'));
+    if (!me.passwordRequired) {
+      const w = el('span', 'muted warn-plain', 'No app password: anyone who can reach that address can use Claude here. ');
+      const set = el('button', 'link-btn small', 'Set one'); set.type = 'button'; set.onclick = () => openSettings('remote');
+      w.appendChild(set); box.appendChild(w);
+    }
     return box;
   }
+
+  // ---------- remote access: the password, the devices signed in with it ----------
+  async function paintRemote() {
+    $('#ra-error').hidden = true;
+    let a, me;
+    try { [a, me] = await Promise.all([api('/access'), api('/me')]); } catch (e) { $('#ra-error').hidden = false; $('#ra-error').textContent = e.message; return; }
+    $('#ra-reach').hidden = a.listensEverywhere; // the address block says it then
+    $('#ra-reach').textContent = 'Only ' + (state.host || 'this computer') + ' itself can reach it (HOST is 127.0.0.1 in .env), unless something like Tailscale forwards to it.';
+    const ab = $('#ra-addresses'); ab.innerHTML = ''; if (a.listensEverywhere) { const blk = addressBlock({ ...me, passwordRequired: true }); ab.appendChild(blk); }
+    $('#ra-warn').hidden = a.source !== 'none' || !a.listensEverywhere;
+    const env = a.source === 'env';
+    $('#ra-pw-state').textContent = env ? 'Set in .env (REMOTE_PASSWORD) on this computer — change it there.' : a.source === 'app' ? 'Set. Changing it signs every other device out.' : 'Not set. At least ' + a.minLength + ' characters; every device then signs in once.';
+    $('#ra-pw-form').hidden = env;
+    $('#ra-current').hidden = a.source !== 'app';
+    $('#ra-remove').hidden = a.source !== 'app';
+    $('#ra-save').textContent = a.source === 'app' ? 'Change password' : 'Set password';
+    $('#ra-new').placeholder = 'New password (' + a.minLength + '+ characters)';
+    const list = $('#ra-devices'); list.innerHTML = '';
+    if (!a.devices.length) list.appendChild(el('div', 'muted small pad', a.source === 'none' ? 'No password, so nothing signs in: every device is let in.' : 'No devices signed in with the password yet.'));
+    for (const d of a.devices) {
+      const r = el('div', 'ct-row'); const info = el('div', 'ct-info');
+      const n = el('div', 'ct-name'); n.appendChild(document.createTextNode(d.name)); if (d.current) n.appendChild(el('span', 'tag', 'This device')); info.appendChild(n);
+      info.appendChild(el('div', 'ct-desc', [d.ip, 'signed in ' + ago(d.createdAt), 'last seen ' + ago(d.lastSeen)].filter(Boolean).join(' · ')));
+      r.appendChild(info);
+      const b = el('button', 'btn btn-ghost small', d.current ? 'Sign out' : 'Revoke'); b.type = 'button';
+      b.onclick = async () => { await api('/access/devices/' + d.id, { method: 'DELETE' }); if (d.current) return logout(); paintRemote(); };
+      r.appendChild(b); list.appendChild(r);
+    }
+    $('#ra-failures-box').hidden = !a.failures.length;
+    $('#ra-failures').innerHTML = ''; for (const f of a.failures) $('#ra-failures').appendChild(el('div', 'ct-desc', f.ip + ' · ' + ago(f.at)));
+  }
+  async function savePassword(password) {
+    $('#ra-error').hidden = true;
+    try {
+      const r = await api('/access/password', { method: 'POST', body: JSON.stringify({ current: $('#ra-current').value, password }) });
+      // The server signed every device out and gave this one a new token.
+      state.token = r.token; try { localStorage.setItem('cr.token', r.token); } catch {}
+      $('#ra-current').value = ''; $('#ra-new').value = ''; $('#ra-new').type = 'password';
+      paintRemote(); refreshMe().catch(() => {});
+    } catch (e) { $('#ra-error').hidden = false; $('#ra-error').textContent = e.message; }
+  }
+  $('#ra-save').addEventListener('click', () => { const p = $('#ra-new').value; if (!p) return $('#ra-new').focus(); savePassword(p); });
+  $('#ra-remove').addEventListener('click', () => { if (confirm('Remove the app password? Anyone who can reach this computer could then use Claude here.')) savePassword(''); });
+  // Readable, long, and shown once so it can be written down or saved in a password manager.
+  $('#ra-generate').addEventListener('click', () => {
+    const words = 'amber,birch,cobalt,delta,ember,fjord,garnet,harbor,indigo,juniper,krypton,lagoon,meadow,nectar,onyx,prairie,quartz,raven,sierra,tundra,umber,velvet,willow,xenon,yonder,zephyr'.split(',');
+    const pick = () => words[crypto.getRandomValues(new Uint32Array(1))[0] % words.length];
+    const n = crypto.getRandomValues(new Uint32Array(1))[0] % 900 + 100;
+    $('#ra-new').value = [pick(), pick(), pick(), pick()].join('-') + '-' + n; $('#ra-new').type = 'text'; $('#ra-new').select();
+  });
 
   async function openComputers() {
     if (settingsModal.classList.contains('hidden') || !$('.set-pane[data-pane="computers"]').classList.contains('on')) return openSettings('computers');

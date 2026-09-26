@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Remote access has a proper lock.** *Settings → Remote access* sets the app password
+  from the app (kept as an scrypt hash; `REMOTE_PASSWORD` in `.env` still works and wins),
+  lists every device signed in with it — each with a token of its own, revocable on its
+  own — and shows recent wrong guesses. Five wrong passwords lock that address out for a
+  minute, then longer, with a ceiling across all addresses for a guesser behind a proxy.
+  Changing the password signs every other device out and needs the current one. The
+  desktop window opens its own server with a local key (`data/local.key`), so a password
+  set from the app never locks the app out of itself; the token phones and the shell
+  derive from a saved password keeps working.
+
+## [0.9.5] — 2026-09-25
+
 ### Changed
 
 - **The installer brings its own Node.** The app used to open on "Install Node 20 or
@@ -459,7 +473,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.1...v0.9.2
