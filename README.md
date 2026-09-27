@@ -50,7 +50,7 @@ on a network that cannot reach a hosted one.
 When something is wrong for the way you work, you change it — and several things
 in here exist because Desktop does not do them: a sidebar that never re-sorts
 itself, per-task Stop for background commands and subagents, Rewind on any
-earlier message, and a dev-server preview that reaches your phone.
+earlier message, and a Browser pane that reaches your phone.
 
 | | Claude Desktop | Claude Anywhere |
 |---|---|---|
@@ -60,7 +60,7 @@ earlier message, and a dev-server preview that reaches your phone.
 | Where your code goes | stays on the machine | stays on the machine, and there is no server of ours |
 | Source | closed | MIT, ~4,000 lines you can read and change |
 | Sidebar order | sorts itself | yours, by drag and drop |
-| Preview of your dev server | yes, on that machine | yes, and on your phone |
+| Browser pane: dev servers, HTML and PDF files | yes, on that machine | yes, and on your phone |
 | Per-session git worktrees | yes | yes |
 | Panes: terminal, split view | yes | not yet |
 | macOS and Linux app | yes | yes, unsigned so far |
@@ -114,8 +114,12 @@ on a session, this one follows along and shows what it is doing.
   with elapsed time, live output and its own Stop; send one to the background
   and let Claude carry on.
 - **Changes panel**: every file that differs from `HEAD`, with per-file diffs.
-- **Preview**: the project's dev server inside the app, proxied so your phone
-  can see a server that only listens on the PC — hot reload included.
+- **Browser** (Ctrl+Shift+B): tabs for the project's dev servers and its own
+  HTML pages and PDFs — click one in the chat and it opens there. Each dev server
+  is shown at the root of a port of its own (5173 on 15173), so its router, its
+  sign-in and hot reload work as on the PC, from your phone too, and the page
+  cannot read the app's own sign-in. Behind `tailscale serve` (one https port)
+  it falls back to a path on the app's own address.
 - **Rewind to here** on any earlier message: a fork of the session up to just
   before it, with the message back in the composer to change and resend.
 - **Watches your other windows**: a session being worked on in VS Code, a
@@ -244,8 +248,11 @@ Near term, in the order they are likely to happen:
 - [x] macOS and Linux shells, so the native window is not Windows-only.
 - [x] Releases built and published by CI, and an app that offers them — to the
       device you are holding, and to the computer you are driving.
-- [ ] Preview tools for Claude: the previewed page's console, network errors
-      and DOM, so it can fix what it is looking at.
+- [x] A Browser pane with tabs: dev servers at their own root, HTML and PDF files.
+- [ ] External sites inside the Browser in the desktop app (a native view; the
+      phone opens them in Safari or Chrome).
+- [ ] Browser tools for Claude: the page's console, network errors and DOM,
+      screenshots and clicks, so it can check what it built.
 - [ ] Terminal pane and split view.
 
 Bigger, and deliberately further out:

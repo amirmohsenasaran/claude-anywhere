@@ -126,6 +126,16 @@ await page.goto('http://127.0.0.1:7779/');
   writable before suspecting anything else.
 - **Windows paths in heredocs**: `\U`, `\a` and friends get mangled. Write a
   file with the Write tool or a PowerShell here-string instead.
+- **A preview under a path prefix breaks every client router.** Served at
+  `/preview/5173/`, an app's router reads that prefix in `location.pathname` and
+  draws its own "not found", however well the HTML and sockets are rewritten; and
+  on the app's origin the page can read the app's token out of `localStorage`. The
+  Browser serves each dev server at the root of a port of its own
+  (`lib/preview.mjs`); the prefix path is only the fallback behind `tailscale serve`.
+- **An upgrade's head bytes go to the other side.** In a WebSocket proxy, what the
+  dev server sent right behind its 101 arrives as `upHead` — write it to the page.
+  `socket.unshift(upHead)` sent it back to the dev server, and a first HMR message
+  (Vite's "connected") vanished about one time in ten.
 
 ## Git
 

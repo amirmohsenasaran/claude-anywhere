@@ -24,7 +24,8 @@ import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, cont
 import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS, sessionFile } from './lib/tail.mjs';
-import { parsePreviewUrl, portFromReferer, proxyRequest, proxyUpgrade, listLocalPorts } from './lib/preview.mjs';
+import { parsePreviewUrl, portFromReferer, proxyRequest, proxyUpgrade, listLocalPorts, proxyAtRoot, upgradeAtRoot, listenOn, injectBridge } from './lib/preview.mjs';
+import { randomBytes } from 'node:crypto';
 import { searchTranscripts } from './lib/search.mjs';
 import * as worktrees from './lib/worktrees.mjs';
 import * as pr from './lib/pr.mjs';
@@ -104,7 +105,22 @@ function parseAttachments(body) {
 // proxy takes, and the host is always 127.0.0.1.
 const PREVIEW_COOKIE = 'ca_preview';
 const cookieOf = (req, name) => (req.headers.cookie || '').split(';').map((c) => c.trim()).find((c) => c.startsWith(name + '='))?.slice(name.length + 1);
-const previewAllowed = (req) => knownToken(cookieOf(req, PREVIEW_COOKIE) || '') || knownToken(String(req.query?.token || ''));
+// The key the frames ride on is not the sign-in token. A cookie goes to every port on the
+// host - the dev server's own included - and the pages behind it are other people's code
+// (a dependency of a dependency); with the token they could drive Claude. A key only opens
+// previews, and each signed-in device keeps one for a day.
+const previewKeys = new Map(); // key -> { exp, owner }
+function previewKeyFor(owner) {
+  const now = Date.now();
+  for (const [k, v] of previewKeys) if (v.exp < now) previewKeys.delete(k);
+  for (const [k, v] of previewKeys) if (v.owner === owner && v.exp - now > 3600e3) return k;
+  const k = randomBytes(24).toString('base64url');
+  previewKeys.set(k, { exp: now + 86400e3, owner });
+  return k;
+}
+const validPreviewKey = (k) => { const v = k && previewKeys.get(k); return !!v && v.exp > Date.now(); };
+const previewAllowed = (req) => validPreviewKey(cookieOf(req, PREVIEW_COOKIE)) || knownToken(String(req.query?.token || ''));
+const previewCookie = (k) => `${PREVIEW_COOKIE}=${k}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`;
 app.use((req, res, next) => {
   const hit = parsePreviewUrl(req.path);
   if (hit) {
@@ -160,14 +176,102 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Signed in, so the cookie the frame will ride on can be handed out.
-app.get('/api/preview/grant', (req, res) => {
-  // Lax, not None: the frame is same-origin, so this is enough, and it never
-  // travels to anyone else's site.
-  res.setHeader('Set-Cookie', `${PREVIEW_COOKIE}=${bearer(req)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
-  res.json({ ok: true });
+// Signed in, so the cookie the frames ride on can be handed out. Lax, not None: another
+// port of this host is still the same site, and the cookie never goes to anyone else's.
+app.get('/api/preview/grant', async (req, res) => {
+  const key = previewKeyFor(bearer(req));
+  res.setHeader('Set-Cookie', previewCookie(key));
+  let files = 0;
+  try { files = await filesOrigin(); } catch {}
+  res.json({ ok: true, key, files });
 });
-app.get('/api/preview/ports', async (_req, res) => res.json({ ports: await listLocalPorts({ self: PORT }) }));
+app.get('/api/preview/ports', async (_req, res) => res.json({ ports: (await listLocalPorts({ self: PORT })).filter((p) => !ownPorts.has(p.port)) }));
+// The origin a dev server is shown on: its own port plus 10000, when that is free.
+app.get('/api/preview/origin', async (req, res) => {
+  const port = Number(req.query.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || ownPorts.has(port)) return res.status(400).json({ error: 'That is not a port the Browser can show.' });
+  try { res.json({ port: await devOrigin(port) }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------- the Browser's own origins ----------
+// A port of our own for each dev server shown, and one for the project's files: see
+// lib/preview.mjs for why a preview needs an origin of its own. The app's gate applies -
+// remote access off means this computer only - and then the preview key.
+const ownPorts = new Set([PORT]);
+const originOf = new Map(); // 'dev:5173' | 'files' -> Promise<port>
+const RESERVED = '/__claude-anywhere/';
+function originGate(req, res) {
+  if (!access.remoteAllowed() && !access.isLocal(req)) { res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' }); res.end(CLOSED); return false; }
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname === RESERVED + 'ping') {
+    // How the pane finds out this origin can be reached from where it is, cookie and all.
+    const from = req.headers.origin;
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...(from ? { 'access-control-allow-origin': from, 'access-control-allow-credentials': 'true', vary: 'Origin' } : {}) });
+    res.end(JSON.stringify({ ok: true, key: previewAllowed(req) }));
+    return false;
+  }
+  if (url.pathname === RESERVED + 'enter') {
+    // "Open in browser": a browser the app never handed the cookie to is given it here.
+    const key = url.searchParams.get('key') || '', to = url.searchParams.get('to') || '/';
+    if (!validPreviewKey(key) || !to.startsWith('/') || to.startsWith('//')) { res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' }); res.end('This link has expired. Open it again from the app.'); return false; }
+    res.writeHead(302, { 'set-cookie': previewCookie(key), location: to });
+    res.end();
+    return false;
+  }
+  if (!previewAllowed(req)) { res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' }); res.end('Open this from the app first.'); return false; }
+  return true;
+}
+function origin(name, wants, onRequest, onUpgrade) {
+  if (!originOf.has(name)) {
+    originOf.set(name, listenOn(HOST, wants.filter((p) => p > 0 && p < 65536 && !ownPorts.has(p)), onRequest, onUpgrade)
+      .then(({ port }) => { ownPorts.add(port); return port; })
+      .catch((e) => { originOf.delete(name); throw e; }));
+  }
+  return originOf.get(name);
+}
+const devOrigin = (port) => origin('dev:' + port, [port + 10000, port + 20000],
+  (req, res) => { if (originGate(req, res)) proxyAtRoot(req, res, port, PREVIEW_COOKIE); },
+  (req, socket, head) => {
+    if ((!access.remoteAllowed() && !access.isLocal(req)) || !previewAllowed(req)) return socket.destroy();
+    upgradeAtRoot(req, socket, head, port, PREVIEW_COOKIE);
+  });
+const filesApp = express();
+filesApp.disable('x-powered-by');
+filesApp.use((req, res) => { if (originGate(req, res)) serveProjectFile(req, res, req.path, false); });
+const filesOrigin = () => origin('files', [PORT + 10000], filesApp);
+
+// A project's file at a path that keeps its folder - /C:/Users/me/site/index.html - so the
+// page's own relative links, its CSS, scripts and pictures, resolve beside it. Only under a
+// folder some session has worked in, like every other file the app shows.
+async function serveProjectFile(req, res, urlPath, sandboxed) {
+  let p;
+  try { p = decodeURIComponent(urlPath); } catch { return res.status(400).type('text').send('Not a file path.'); }
+  if (/^\/[A-Za-z]:[\\/]/.test(p)) p = p.slice(1);
+  if (!path.isAbsolute(p)) return res.status(400).type('text').send('Not a file path.');
+  p = path.normalize(p);
+  if (!(await insideProjectRoots(p))) return res.status(403).type('text').send('That file is outside the project folders.');
+  let st;
+  try { st = fs.statSync(p); } catch { return res.status(404).type('text').send('There is no such file on this computer.'); }
+  if (st.isDirectory()) {
+    if (!urlPath.endsWith('/')) return res.redirect(302, req.originalUrl.split('?')[0] + '/');
+    p = path.join(p, 'index.html');
+    if (!fs.existsSync(p)) return res.status(404).type('text').send('This folder has no index.html.');
+  }
+  // Served from the app's own origin (the fallback), a page gets no origin of its own at
+  // all, so it cannot read the app's storage; it can still run, which is the point of it.
+  const sandbox = sandboxed ? { 'Content-Security-Policy': 'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads' } : {};
+  if (/\.html?$/i.test(p) && fs.statSync(p).size <= 16 * 1024 * 1024) {
+    return res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', ...sandbox }).send(injectBridge(fs.readFileSync(p, 'utf8')));
+  }
+  res.sendFile(p, { dotfiles: 'allow', acceptRanges: true, headers: { 'Cache-Control': 'no-cache', ...(/\.(html?|svg)$/i.test(p) ? sandbox : {}) } });
+}
+// The same files for a page that cannot reach another port - the app behind `tailscale
+// serve` is one https origin - with the key in the path, where relative links keep it.
+app.use('/files/', (req, res) => {
+  const m = /^\/([A-Za-z0-9_-]{20,})(\/.*)$/.exec(req.path);
+  if (!m || !validPreviewKey(m[1])) return res.status(401).type('text').send('This link has expired. Open it again from the app.');
+  serveProjectFile(req, res, m[2], true);
+});
 
 // ---------- small preferences file: pinned sessions (shared by every device) ----------
 const DATA_DIR = envOf('DATA_DIR') || path.join(here, 'data');
@@ -1087,10 +1191,17 @@ app.get('/api/notify', (req, res) => {
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|m4v|mp3|m4a|wav|ogg)$/i; // images, plus video/audio that answers link to
 // A folder some session has worked in, or the temp folder. The file browser and the
 // image route share it, so widening one never quietly widens the other.
+// A page opened in the Browser asks for its CSS, scripts and pictures one by one, and each
+// of those is checked here: the list of folders is kept for a few seconds, not re-read.
+let rootsCache = { at: 0, roots: null };
 async function insideProjectRoots(p) {
-  const roots = new Set([os.tmpdir()]);
-  for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
-  for (const w of listWorktrees()) roots.add(path.normalize(w.path)); // a worktree is newer than any transcript that names it
+  let roots = rootsCache.roots;
+  if (!roots || Date.now() - rootsCache.at > 15000) {
+    roots = new Set([os.tmpdir()]);
+    for (const s of await listSessions({ limit: 500 })) if (s.cwd && path.normalize(s.cwd).replace(/[\\/]+$/, '').length > 3) roots.add(path.normalize(s.cwd)); // a session run from a drive root would open the whole drive
+    for (const w of listWorktrees()) roots.add(path.normalize(w.path)); // a worktree is newer than any transcript that names it
+    rootsCache = { at: Date.now(), roots };
+  }
   const lower = path.normalize(p).toLowerCase();
   return [...roots].some((r) => { const base = r.toLowerCase().replace(/[\\/]+$/, ''); return lower === base || lower.startsWith(base + path.sep) || lower.startsWith(base + '/'); });
 }
@@ -1289,7 +1400,7 @@ export function startServer({ host = HOST, port = PORT } = {}) {
       server.on('upgrade', (req, socket, head) => {
         const hit = parsePreviewUrl((req.url || '').split('?')[0]);
         if (!hit) return;
-        if (!knownToken(cookieOf(req, PREVIEW_COOKIE) || '') || (!access.remoteAllowed() && !access.isLocal(req))) return socket.destroy();
+        if (!validPreviewKey(cookieOf(req, PREVIEW_COOKIE)) || (!access.remoteAllowed() && !access.isLocal(req))) return socket.destroy();
         const qs = (req.url || '').includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
         proxyUpgrade(req, socket, head, hit.port, hit.rest + qs);
       });

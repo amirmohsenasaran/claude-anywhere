@@ -922,3 +922,31 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .ra-pw .token-row input { font-family: var(--mono); }
 .ra-warn { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: rgba(217, 164, 65, .12); color: #d9a441; font-size: 13px; }
 .ra-failures { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+
+/* ---------- v49: the Browser - tabs, a frame per tab, and a start page ---------- */
+/* Desktop's Browser pane keeps a tab per page; switching tabs must not reload one, so
+   every tab keeps its own frame in the stage and only the one in front is shown. */
+.pv-head { gap: 4px; }
+.pv-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.pv-tabs::-webkit-scrollbar { display: none; }
+.pv-tab { flex: 0 1 auto; display: flex; align-items: center; gap: 2px; min-width: 64px; max-width: 180px; height: 28px; padding: 0 3px 0 10px; border-radius: 8px; font-size: 12.5px; color: var(--ink-2); cursor: default; user-select: none; -webkit-user-select: none; }
+.pv-tab:hover { background: var(--bg-2); }
+.pv-tab.on { background: var(--bg-3); color: var(--ink); }
+.pv-tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-tab-x { flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-3); opacity: 0; }
+.pv-tab:hover .pv-tab-x, .pv-tab.on .pv-tab-x { opacity: 1; }
+.pv-tab-x:hover { background: var(--bg-3); color: var(--ink); }
+@media (hover: none) { .pv-tab-x { opacity: 1; } }
+.pv-bar .icon-btn:disabled { opacity: .35; cursor: default; background: none; }
+.pv-note { padding: 0 14px 8px; }
+.pv-stage { position: relative; flex: 1; min-height: 0; background: #fff; }
+.pv-stage > .pv-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+.pv-start, .pv-card { position: absolute; inset: 0; overflow: auto; background: var(--bg); color: var(--ink); }
+.pv-start { display: flex; flex-direction: column; gap: 6px; padding: 28px 22px; }
+.pv-start-title { font-family: var(--serif); font-size: 21px; }
+.pv-start-list { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.pv-start-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: start; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); }
+.pv-start-item:hover { background: var(--bg-2); }
+.pv-start-port { font-size: 13.5px; font-weight: 500; }
+.pv-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; color: var(--ink-2); font-size: 14px; }
+.fx-preview { align-self: flex-start; margin: -4px 12px 6px; }

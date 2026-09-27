@@ -966,7 +966,7 @@
     const br = $('#nb-branch'); br.classList.add('hidden');
     if (state.cwd) { try { const g = await api('/git?cwd=' + encodeURIComponent(state.cwd)); if (g.git && !state.current) { br.textContent = g.branch; br.classList.remove('hidden'); } } catch {} }
   }
-  function pickFolder(cwd) { state.cwd = cwd || ''; localStorage.setItem('cr.cwd', state.cwd); renderProjectChip(); }
+  function pickFolder(cwd) { state.cwd = cwd || ''; localStorage.setItem('cr.cwd', state.cwd); renderProjectChip(); pvFollow(); }
   // Desktop's folder menu: No folder / Recent / Open folder…
   function renderProjectMenu(menu) {
     menu.innerHTML = '';
@@ -1319,7 +1319,7 @@
     m.appendChild(item('Fork', '', false, async () => { m.classList.add('hidden'); try { const r = await api(`/sessions/${state.current}/fork`, { method: 'POST', body: JSON.stringify({}) }); await loadSessions(); location.hash = '#/s/' + r.sessionId; } catch (e) { alert(e.message); } }, { hint: 'F' }));
     m.appendChild(item('Changes', '', false, () => { m.classList.add('hidden'); openChanges(); }));
     m.appendChild(item('Files', 'Look through this session\'s folder', false, () => { m.classList.add('hidden'); openFiles(); }));
-    m.appendChild(item('Preview', 'Show this project\'s dev server, here and on your phone', false, () => { m.classList.add('hidden'); openPreview(); }));
+    m.appendChild(item('Browser', 'Dev servers and the project\'s pages and PDFs, here and on your phone', false, () => { m.classList.add('hidden'); openPreview(); }));
     m.appendChild(item('Worktrees…', 'A second checkout on its own branch', false, () => { m.classList.add('hidden'); showWorktrees(state.cwd); }));
     m.appendChild(item('Keep computer awake', (AWAKE.find((a) => a[0] === awakeMode) || AWAKE[0])[1], false, () => {
       m.classList.add('hidden');
@@ -2170,8 +2170,8 @@
   }
   function stopPlayer() { const h = $('#lb-play'); h.classList.add('hidden'); h.innerHTML = ''; }
   function closeImage() { lb.classList.add('hidden'); stopPlayer(); lbImg.classList.remove('hidden'); lbImg.removeAttribute('src'); lbImg.style.width = ''; }
-  // A file the assistant pointed at, by path: a picture or a clip opens over the page,
-  // anything else opens in the Files panel, where it can be read.
+  // A file the assistant pointed at, by path: a picture or a clip opens over the page, a
+  // web page or a PDF in the Browser, anything else in the Files panel, where it can be read.
   const isImage = (h) => /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)(\?|#|$)/i.test(h || '');
   const absPath = (p) => {
     const s = String(p || '').replace(/^file:\/\/\/?/i, '');
@@ -2188,6 +2188,7 @@
     const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
     if (isImage(p)) return openImage(localFileUrl(p), name);
     if (isVideo(p) || isAudio(p)) return openPlayer(p, name);
+    if (/\.(html?|pdf)(\?|#|$)/i.test(p)) return openFileInBrowser(absPath(p).replace(/[?#].*$/, ''));
     openFiles();
     openFileAt(absPath(p), name);
   });
@@ -2203,106 +2204,357 @@
     openImage(im.currentSrc || im.src, im.alt || '');
   });
 
-  // ---------- Preview: whatever this project's dev server is serving ----------
-  // The page is proxied through our own origin, so the phone can see a server
-  // that only listens on the PC's localhost, and hot reload keeps working.
-  const pvPanel = $('#preview-panel'), pvFrame = $('#pv-frame'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr');
-  let previewOpen = false, pvPort = 0, pvPath = '/', pvPorts = [], pvAll = false;
-  const pvKey = () => 'cr.preview.' + (state.cwd || 'any');
-  function pvRemember() { try { localStorage.setItem(pvKey(), JSON.stringify({ port: pvPort, path: pvPath })); } catch {} }
-  function pvRecall() { try { return JSON.parse(localStorage.getItem(pvKey()) || '{}'); } catch { return {}; } }
-  const setAddr = (port, p) => { pvAddr.value = port ? 'localhost:' + port + (p || '/') : ''; };
+  // ---------- Browser: dev servers and the project's own pages, in tabs ----------
+  // Desktop's Browser pane: a tab per page, each keeping its place while another is
+  // looked at. A dev server is shown from a port of our own, at its root, so its router
+  // sees the paths it was built for and its sign-in sticks; a page or a PDF Claude wrote
+  // is shown with its CSS and pictures beside it. Where those ports cannot be reached -
+  // the app behind https on one port - /preview/<port>/ and a sandboxed copy stand in.
+  const pvPanel = $('#preview-panel'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr'), pvTabsEl = $('#pv-tabs'), pvStage = $('#pv-stage');
+  let previewOpen = false, pvPorts = [], pvAll = false, pvFrameSeq = 0;
+  const pv = { key: '', files: 0, roots: null, tabs: [], active: null, seq: 0, cwd: null };
+  const originUrl = (port) => { const u = new URL(location.href); u.port = String(port); return u.origin; };
+  const fileUrlPath = (p) => '/' + String(p).replace(/\\/g, '/').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  // An iPhone draws the first page of a PDF inside a page and nothing after it; its own viewer shows them all.
+  const pdfOutside = (t) => isIOS && t.kind === 'file' && /\.pdf$/i.test(t.file || '');
+  const tabAddr = (t) => t.kind === 'server' ? 'localhost:' + t.port + (t.path || '/') : t.kind === 'file' ? t.file : '';
+  const tabTitle = (t) => t.title || (t.kind === 'server' ? 'localhost:' + t.port : t.kind === 'file' ? baseName(t.file) : 'New tab');
+  const specOf = (t) => ({ kind: t.kind, port: t.port, path: t.path, file: t.file });
 
-  async function openPreview() {
+  async function grant() {
+    const r = await api('/preview/grant');
+    pv.key = r.key || ''; pv.files = r.files || 0;
+    if (pv.roots === null) pv.roots = await canReach(pv.files);
+  }
+  // Another port of this host answers only when nothing stands in front of the app (plain
+  // http, no tunnel), and it only counts when the cookie arrived with the question.
+  async function canReach(port) {
+    if (!port || location.protocol !== 'http:') return false;
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 2500);
+    try { const r = await fetch(originUrl(port) + '/__claude-anywhere/ping', { credentials: 'include', signal: ctl.signal }); return !!(await r.json()).key; }
+    catch { return false; } finally { clearTimeout(timer); }
+  }
+  // Kept under the project the tabs belong to, not whichever is in front this moment: a
+  // page still reporting in while another project comes forward must not land in its list.
+  const pvProject = () => (pv.cwd ?? state.cwd) || 'any';
+  const pvKey = () => 'cr.browser.' + pvProject();
+  function pvSave() {
+    const kept = pv.tabs.filter((t) => t.kind !== 'blank');
+    try { localStorage.setItem(pvKey(), JSON.stringify({ active: kept.indexOf(pv.active), tabs: kept.map((t) => ({ ...specOf(t), title: t.title })) })); } catch {}
+  }
+  function pvRestore() {
+    try {
+      const s = JSON.parse(localStorage.getItem(pvKey()) || 'null');
+      if (s?.tabs?.length) return s;
+      // What the one-page preview remembered, before there were tabs.
+      const old = JSON.parse(localStorage.getItem('cr.preview.' + pvProject()) || 'null');
+      if (old?.port) return { active: 0, tabs: [{ kind: 'server', port: old.port, path: old.path || '/' }] };
+    } catch {}
+    return null;
+  }
+  let noteTimer = null;
+  function note(text) { pvNote.textContent = text; pvNote.classList.remove('hidden'); clearTimeout(noteTimer); noteTimer = setTimeout(() => pvNote.classList.add('hidden'), 6000); }
+
+  async function openPreview({ auto = true } = {}) {
     if (tasksOpen) closeTasks();
     if (changesOpen) closeChanges();
     if (filesOpen) closeFiles();
     previewOpen = true; pvPanel.classList.remove('hidden'); app.classList.add('panel-open');
-    // The frame cannot send our token, so the server hands out a cookie first.
-    try { await api('/preview/grant'); } catch (e) { pvNote.textContent = e.message; }
-    const saved = pvRecall();
-    await loadPorts();
-    // What was open here last time, if it is still up; otherwise the likeliest dev
-    // server. Never a guess: with nothing to show, it says so and waits.
-    const still = saved.port && pvPorts.some((x) => x.port === saved.port && x.serves);
-    const pick = still ? saved.port : (pvPorts.find((x) => x.dev) || pvPorts.find((x) => x.serves))?.port;
-    if (pick) go(pick, still && saved.path ? saved.path : '/');
-    else showNote('Nothing on this computer is serving a page yet. Start the dev server, then press reload.');
+    // The frames cannot send our token, so the server hands out a cookie of their own first.
+    try { await grant(); } catch (e) { note(e.message); }
+    if (pv.cwd === (state.cwd || '') && pv.tabs.length) return activate(pv.active || pv.tabs[0]);
+    await showProject(auto);
   }
-  function showNote(text) { pvNote.textContent = text; pvNote.classList.remove('hidden'); pvFrame.classList.add('hidden'); }
-  function closePreview() { previewOpen = false; pvPanel.classList.add('hidden'); app.classList.remove('panel-open'); pvFrame.src = 'about:blank'; }
+  // Each project keeps its own tabs, and the pane shows the project in front - following it
+  // when another session's comes forward, since the pane can open before a session loading
+  // in the background has said which project it is.
+  async function showProject(auto = true) {
+    for (const t of pv.tabs) t.frame?.remove();
+    pv.tabs = []; pv.active = null; pv.cwd = state.cwd || '';
+    paintTabs(); paintBar(); // the last project's tabs go now, not after the servers are counted
+    const saved = pvRestore();
+    if (saved) {
+      for (const s of saved.tabs) { const t = addTab(); go(t, s, { show: false }); if (s.title) t.title = s.title; }
+      return activate(pv.tabs[Math.min(Math.max(saved.active, 0), pv.tabs.length - 1)]);
+    }
+    if (!auto) return;
+    // Nothing open before: the likeliest dev server, never a guess - with none, a start page.
+    // Chosen before the tab is shown, or the start page takes the focus and the bar stays empty.
+    await loadPorts();
+    if (pv.cwd !== (state.cwd || '') || pv.tabs.length) return; // the project moved on meanwhile
+    const pick = (pvPorts.find((x) => x.dev) || pvPorts.find((x) => x.serves))?.port;
+    const t = addTab();
+    if (pick) go(t, { kind: 'server', port: pick, path: '/' }, { show: false });
+    activate(t);
+  }
+  function pvFollow() { if (previewOpen && pv.cwd !== (state.cwd || '')) showProject(); }
+  function closePreview() {
+    previewOpen = false; pvPanel.classList.add('hidden'); app.classList.remove('panel-open');
+    // Closed, a page stops: no hot-reload socket or timers running behind the chat.
+    for (const t of pv.tabs) { t.frame?.remove(); t.frame = null; }
+  }
   $('#pv-close').addEventListener('click', closePreview);
+
+  // A tab opens next to the one in front, like a browser's.
+  function addTab() {
+    const t = { id: ++pv.seq, kind: 'blank', title: '', frame: null, hist: [], at: -1, root: undefined, origin: 0, bridged: false };
+    const i = pv.active ? pv.tabs.indexOf(pv.active) + 1 : pv.tabs.length;
+    pv.tabs.splice(i, 0, t);
+    return t;
+  }
+  function activate(t) {
+    if (!t) return;
+    pv.active = t;
+    for (const x of pv.tabs) x.frame?.classList.toggle('hidden', x !== t);
+    const start = pvStage.querySelector('.pv-start');
+    if (t.kind === 'blank') showStart(); else { start?.classList.add('hidden'); if (!t.frame && !t.loading) t.loading = load(t).finally(() => { t.loading = null; }); }
+    paintTabs(); paintBar(); pvSave();
+  }
+  function closeTab(t) {
+    const i = pv.tabs.indexOf(t); if (i < 0) return;
+    pv.tabs.splice(i, 1); t.frame?.remove(); t.frame = null;
+    if (pv.active === t) { pv.active = null; activate(pv.tabs[i] || pv.tabs[i - 1] || addTab()); }
+    else paintTabs();
+    pvSave();
+  }
+  // Somewhere new, from the bar, a menu or the chat. A fresh frame each time: pointing the
+  // old one elsewhere would add a step to the window's own history, and the phone's back
+  // gesture would walk through the page instead of leaving it.
+  function go(t, spec, { push = true, show = true } = {}) {
+    if (t.kind !== spec.kind || t.port !== spec.port) { t.root = undefined; t.origin = 0; }
+    t.kind = spec.kind; t.port = spec.port; t.path = spec.kind === 'server' ? spec.path || '/' : undefined; t.file = spec.file; t.title = ''; t.bridged = false;
+    if (push) { t.hist = t.hist.slice(0, t.at + 1); t.hist.push({ addr: tabAddr(t), spec: specOf(t), frame: 0, seen: false }); t.at = t.hist.length - 1; }
+    t.frame?.remove(); t.frame = null;
+    if (show && t === pv.active && previewOpen) activate(t);
+    else if (show) paintTabs();
+    pvSave();
+  }
+  function tabSrc(t) {
+    if (t.kind === 'server') return t.root ? originUrl(t.origin) + (t.path || '/') : '/preview/' + t.port + (t.path || '/');
+    const u = fileUrlPath(t.file);
+    return pv.roots ? originUrl(pv.files) + u : '/files/' + pv.key + u;
+  }
+  async function load(t) {
+    // A loop, not an if: the bar can point the tab at another server while this asks.
+    while (t.kind === 'server' && t.root === undefined) {
+      t.root = false;
+      if (pv.roots) { try { const port = t.port, r = await api('/preview/origin?port=' + port); if (t.port === port && t.root === false) { t.origin = r.port || 0; t.root = !!t.origin; } } catch {} }
+    }
+    if (!previewOpen || !pv.tabs.includes(t) || t.frame || t.kind === 'blank') return;
+    let f;
+    if (pdfOutside(t)) {
+      f = el('div', 'pv-card');
+      f.appendChild(el('div', null, 'An iPhone shows only the first page of a PDF inside a page, so it opens in its own viewer.'));
+      const b = el('button', 'btn btn-ghost', 'Open ' + baseName(t.file)); b.type = 'button';
+      b.addEventListener('click', () => openExternal(outsideUrl(t))); f.appendChild(b);
+    } else {
+      f = el('iframe', 'pv-frame'); f.title = tabTitle(t);
+      f.setAttribute('allow', 'clipboard-read; clipboard-write; fullscreen');
+      f.src = tabSrc(t);
+    }
+    f._id = ++pvFrameSeq; t.frame = f;
+    const cur = t.hist[t.at]; if (cur) { cur.frame = f._id; cur.seen = false; }
+    f.classList.toggle('hidden', t !== pv.active);
+    pvStage.appendChild(f);
+  }
+  const tell = (t, cmd) => { try { t.frame.contentWindow.postMessage({ caBrowser: 1, cmd }, '*'); } catch {} };
+
+  // What the page says from inside: where it is now and what it is called. The frame is
+  // another origin, so this is the only way to know - and the tab keeps its own list of
+  // steps, so Back never walks out of the page and into the app's history.
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (!m || m.caBrowser !== 1 || m.t !== 'nav') return;
+    const t = pv.tabs.find((x) => x.frame && x.frame.contentWindow === e.source);
+    if (!t) return;
+    t.bridged = true;
+    t.title = String(m.title || '').slice(0, 200);
+    let u; try { u = new URL(m.href); } catch { return; }
+    if (t.kind === 'server') { const p = /^\/preview\/\d+(\/.*)?$/.exec(u.pathname); t.path = (p ? p[1] || '/' : u.pathname) + u.search + u.hash; }
+    else if (t.kind === 'file') {
+      try { let p = decodeURIComponent(u.pathname.replace(/^\/files\/[^/]+/, '')); if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, '\\'); t.file = p; } catch {}
+    }
+    const here = tabAddr(t), id = t.frame._id, cur = t.hist[t.at], prev = t.hist[t.at - 1], next = t.hist[t.at + 1];
+    const how = m.how === 'title' && cur && cur.addr !== here ? 'pop' : m.how;
+    if (how === 'title' || (cur && cur.addr === here)) { if (cur) { cur.seen = true; cur.frame = id; } }
+    else if (cur && cur.frame === id && (!cur.seen || how === 'replace')) { cur.addr = here; cur.spec = specOf(t); cur.seen = true; }
+    else if (prev && prev.frame === id && prev.addr === here) t.at--;
+    else if (next && next.frame === id && next.addr === here) t.at++;
+    else { t.hist = t.hist.slice(0, t.at + 1); t.hist.push({ addr: here, spec: specOf(t), frame: id, seen: true }); t.at = t.hist.length - 1; }
+    if (t.frame.title !== undefined) t.frame.title = tabTitle(t);
+    paintTabs(); if (t === pv.active) paintBar(); pvSave();
+  });
+
+  function paintTabs() {
+    pvTabsEl.innerHTML = '';
+    for (const t of pv.tabs) {
+      const b = el('div', 'pv-tab' + (t === pv.active ? ' on' : ''));
+      b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(t === pv.active)); b.title = tabAddr(t) || tabTitle(t);
+      const name = el('span', 'pv-tab-name', tabTitle(t)); name.dir = 'auto'; b.appendChild(name);
+      const x = el('button', 'pv-tab-x'); x.type = 'button'; x.title = 'Close tab'; x.setAttribute('aria-label', 'Close tab');
+      x.innerHTML = '<svg viewBox="0 0 20 20" width="11" height="11"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+      x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t); });
+      b.appendChild(x);
+      b.addEventListener('click', () => { if (pv.active !== t) activate(t); });
+      b.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(t); } });
+      pvTabsEl.appendChild(b);
+    }
+    const on = pvTabsEl.querySelector('.pv-tab.on');
+    if (on) {
+      const l = on.offsetLeft, r = l + on.offsetWidth;
+      if (l < pvTabsEl.scrollLeft) pvTabsEl.scrollLeft = l - 8;
+      else if (r > pvTabsEl.scrollLeft + pvTabsEl.clientWidth) pvTabsEl.scrollLeft = r - pvTabsEl.clientWidth + 8;
+    }
+  }
+  function paintBar() {
+    const t = pv.active;
+    if (document.activeElement !== pvAddr) {
+      pvAddr.value = t ? tabAddr(t) : '';
+      // A file's name is at the end of its path, which is the part worth seeing.
+      pvAddr.scrollLeft = t?.kind === 'file' ? pvAddr.scrollWidth : 0;
+    }
+    $('#pv-back').disabled = !(t && t.at > 0);
+    $('#pv-fwd').disabled = !(t && t.at < t.hist.length - 1);
+    $('#pv-home').disabled = !(t && t.kind === 'server');
+    $('#pv-reload').disabled = !(t && t.kind !== 'blank');
+    $('#pv-open').disabled = !(t && t.kind !== 'blank');
+  }
+  // A new tab starts here: what this computer is serving, one click away.
+  function showStart() {
+    let s = pvStage.querySelector('.pv-start');
+    if (!s) { s = el('div', 'pv-start'); pvStage.appendChild(s); }
+    s.classList.remove('hidden'); s.innerHTML = '';
+    s.appendChild(el('div', 'pv-start-title', 'Open a page'));
+    s.appendChild(el('div', 'muted small', 'A dev server running on this computer, a file from the project (an HTML page, a PDF), or a port like 5173.'));
+    const list = el('div', 'pv-start-list'); s.appendChild(list);
+    list.appendChild(el('div', 'muted small', 'Looking for servers…'));
+    loadPorts().then(() => {
+      if (pv.active?.kind !== 'blank') return;
+      list.innerHTML = '';
+      const shown = pvPorts.filter((p) => p.serves);
+      if (!shown.length) list.appendChild(el('div', 'muted small', 'Nothing on this computer is serving a page yet. Start the dev server, or ask Claude to.'));
+      for (const p of shown) {
+        const b = el('button', 'pv-start-item'); b.type = 'button';
+        b.appendChild(el('span', 'pv-start-port', 'localhost:' + p.port));
+        b.appendChild(el('span', 'muted small', [p.title, p.label].filter(Boolean).join(' · ') || p.process || ''));
+        b.addEventListener('click', () => go(pv.active, { kind: 'server', port: p.port, path: '/' }));
+        list.appendChild(b);
+      }
+    });
+  }
 
   async function loadPorts() {
     try { const r = await api('/preview/ports'); pvPorts = r.ports || []; }
-    catch (e) { pvPorts = []; showNote(e.message); }
+    catch (e) { pvPorts = []; note(e.message); }
   }
-  function go(port, p) {
-    pvPort = port; pvPath = p && p.startsWith('/') ? p : '/' + (p || '');
-    pvNote.classList.add('hidden'); pvFrame.classList.remove('hidden');
-    pvFrame.src = '/preview/' + pvPort + pvPath;
-    setAddr(pvPort, pvPath); pvRemember();
-  }
-  // What someone types in an address bar: a port, a localhost address, a bare path, or
-  // a full URL. Anything that is not this machine is refused rather than fetched —
-  // the proxy is a window onto what is already running here, not a way out to the web.
+  // What someone types in an address bar: a port, a localhost address, a path on the page in
+  // front, a file of the project's, or a web address - which opens in the real browser, since
+  // most sites refuse to be shown inside another page.
   function parseAddr(text) {
     let s = String(text || '').trim();
     if (!s) return null;
-    if (/^\d{1,5}$/.test(s)) return { port: Number(s), path: '/' };
-    if (s.startsWith('/')) return { port: pvPort, path: s };
+    const cur = pv.active;
+    const port = (n) => (Number.isInteger(n) && n > 0 && n < 65536 ? n : 0);
+    if (/^\d{1,5}$/.test(s)) return port(Number(s)) ? { kind: 'server', port: Number(s), path: '/' } : null;
+    if (/^file:\/\//i.test(s)) { try { let p = decodeURIComponent(new URL(s).pathname); if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, '\\'); return { kind: 'file', file: p }; } catch { return null; } }
+    if (/^[A-Za-z]:[\\/]/.test(s)) return { kind: 'file', file: s.replace(/\//g, '\\') };
+    if (s.startsWith('/')) return cur?.kind === 'server' ? { kind: 'server', port: cur.port, path: s } : { kind: 'file', file: s };
+    if (/^[^\s\\/:]+\.(html?|pdf)$/i.test(s) || (/[\\/]/.test(s) && /\.(html?|pdf|svg)$/i.test(s) && !/^[\w-]+(\.[\w-]+)+\//.test(s) && !/:\/\//.test(s))) return state.cwd ? { kind: 'file', file: absPath(s) } : null;
     const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
     if (scheme && !/^https?$/i.test(scheme[1])) return null;
-    s = s.replace(/^https?:\/\//i, '');
-    let m = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::(\d+))?(\/.*)?$/i.exec(s);
-    if (m) return { port: Number(m[1] || pvPort), path: m[2] || '/' };
-    m = /^(\d{1,5})(\/.*)$/.exec(s); // "5173/settings"
-    if (m) return { port: Number(m[1]), path: m[2] };
+    const bare = s.replace(/^https?:\/\//i, '');
+    let m = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::(\d+))?(\/.*)?$/i.exec(bare);
+    if (m) { const p = port(Number(m[1] || cur?.port || 80)); return p ? { kind: 'server', port: p, path: m[2] || '/' } : null; }
+    m = /^(\d{1,5})(\/.*)$/.exec(bare); // "5173/settings"
+    if (m) return port(Number(m[1])) ? { kind: 'server', port: Number(m[1]), path: m[2] } : null;
+    if (/^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/.test(bare)) return { kind: 'web', url: scheme ? s : 'https://' + s };
     return null;
   }
   function submitAddr() {
     const a = parseAddr(pvAddr.value);
-    if (!a || !a.port) { showNote('Only a server on this computer can be shown here. Try a port, like 5173, or localhost:5173/settings.'); return; }
-    go(a.port, a.path);
+    if (!a) { note('Type a port like 5173, a localhost address, a file path, or a web address.'); return; }
+    pvAddr.blur();
+    if (a.kind === 'web') { openExternal(a.url); note('Opened ' + a.url.replace(/^https?:\/\//, '') + ' in your browser.'); paintBar(); return; }
+    let t = pv.active;
+    if (!t) { t = addTab(); activate(t); }
+    go(t, a);
   }
-  pvAddr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitAddr(); } if (e.key === 'Escape') setAddr(pvPort, pvPath); });
+  pvAddr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitAddr(); } if (e.key === 'Escape') { pvAddr.blur(); paintBar(); } });
   pvAddr.addEventListener('focus', () => pvAddr.select());
-  // The frame is served from our own origin, so its history is ours to drive and its
-  // address is ours to read: clicking a link inside the page updates the bar.
-  const inFrame = (fn) => { try { return fn(pvFrame.contentWindow); } catch { return undefined; } };
-  $('#pv-back').addEventListener('click', () => inFrame((w) => w.history.back()));
-  $('#pv-fwd').addEventListener('click', () => inFrame((w) => w.history.forward()));
-  $('#pv-home').addEventListener('click', () => { if (pvPort) go(pvPort, '/'); });
+  pvAddr.addEventListener('blur', () => setTimeout(paintBar));
+
+  // Back and forward inside the page are the page's own (its router keeps its state);
+  // a step that belongs to an earlier frame is loaded again instead.
+  function step(dir) {
+    const t = pv.active; if (!t) return;
+    const to = t.hist[t.at + dir]; if (!to) return;
+    if (t.bridged && t.frame && to.frame === t.frame._id) return tell(t, dir < 0 ? 'back' : 'forward');
+    t.at += dir; go(t, to.spec, { push: false });
+  }
+  $('#pv-back').addEventListener('click', () => step(-1));
+  $('#pv-fwd').addEventListener('click', () => step(1));
+  $('#pv-home').addEventListener('click', () => { const t = pv.active; if (t?.kind === 'server') go(t, { kind: 'server', port: t.port, path: '/' }); });
   $('#pv-reload').addEventListener('click', async () => {
-    await loadPorts();
-    if (!inFrame((w) => { w.location.reload(); return true; }) && pvPort) go(pvPort, pvPath);
+    const t = pv.active; if (!t || t.kind === 'blank') return;
+    loadPorts();
+    // A restarted server has forgotten the key the frames ride on: ask for one first, or the
+    // page reloads into "Open this from the app first".
+    try { await grant(); } catch {}
+    if (t.bridged) tell(t, 'reload'); else go(t, specOf(t), { push: false });
   });
-  $('#pv-open').addEventListener('click', () => { if (pvPort) window.open('/preview/' + pvPort + pvPath, '_blank', 'noopener'); });
-  pvFrame.addEventListener('load', () => {
-    pvNote.classList.add('hidden');
-    const here = inFrame((w) => w.location.pathname + w.location.search + w.location.hash);
-    const m = here && /^\/preview\/(\d+)(\/[\s\S]*)?$/.exec(here);
-    if (m) { pvPort = Number(m[1]); pvPath = m[2] || '/'; setAddr(pvPort, pvPath); pvRemember(); }
-  });
+  // Only a tab asked for empty takes the typing; a blank tab passed through on the way to a
+  // page must not, or the bar keeps the focus and never shows where the page went.
+  $('#pv-new').addEventListener('click', () => { activate(addTab()); if (!isPhone()) pvAddr.focus(); });
+  // Outside the app: a browser that was never handed the cookie gets it on the way in.
+  function outsideUrl(t) {
+    const enter = (port, to) => originUrl(port) + '/__claude-anywhere/enter?key=' + encodeURIComponent(pv.key) + '&to=' + encodeURIComponent(to);
+    if (t.kind === 'server') return t.root ? enter(t.origin, t.path || '/') : location.origin + '/preview/' + t.port + (t.path || '/');
+    if (t.kind === 'file') return pv.roots ? enter(pv.files, fileUrlPath(t.file)) : location.origin + '/files/' + pv.key + fileUrlPath(t.file);
+    return '';
+  }
+  $('#pv-open').addEventListener('click', () => { const t = pv.active; if (t && t.kind !== 'blank') openExternal(outsideUrl(t)); });
   menuFor('#pv-servers', '#pv-port-menu', (m) => {
     m.innerHTML = '';
     const shown = pvAll ? pvPorts : pvPorts.filter((p) => p.serves);
     if (!shown.length) { m.appendChild(el('div', 'muted small pad', pvAll ? 'Nothing is listening.' : 'Nothing is serving a page.')); }
     let group = '';
+    const t = pv.active;
     for (const p of shown) {
       const kind = p.dev ? 'Servers for your projects' : p.serves ? 'Other pages on this computer' : 'Listening, but not a web server';
       if (kind !== group) { group = kind; m.appendChild(el('div', 'menu-title', kind)); }
       // The page's own title says far more than the name of the process behind the socket.
       const desc = [p.title, p.label].filter(Boolean).join(' · ') || p.process || '';
-      m.appendChild(item('localhost:' + p.port, desc, p.port === pvPort, () => { m.classList.add('hidden'); go(p.port, '/'); }));
+      m.appendChild(item('localhost:' + p.port, desc, t?.kind === 'server' && p.port === t.port, () => { m.classList.add('hidden'); go(pv.active || (activate(addTab()), pv.active), { kind: 'server', port: p.port, path: '/' }); }));
     }
     m.appendChild(el('div', 'menu-sep'));
     m.appendChild(item(pvAll ? 'Only what serves a page' : 'Show everything listening', '', false, () => { pvAll = !pvAll; $('#pv-servers').click(); $('#pv-servers').click(); }));
-    // Everything here is served under /preview/<port>/, which a few finished apps read
-    // as part of their own route and answer with their own "not found". Those still
-    // work the ordinary way, on this computer.
-    if (pvPort) m.appendChild(item('Open localhost:' + pvPort + ' outside the app', 'For a page whose router does not expect the preview path', false, () => { m.classList.add('hidden'); window.open('http://localhost:' + pvPort + pvPath, '_blank', 'noopener'); }));
+    // The app's own window onto localhost:<port>, for when that is what is wanted.
+    if (t?.kind === 'server') m.appendChild(item('Open localhost:' + t.port + ' outside the app', 'The dev server itself, in your browser on this computer', false, () => { m.classList.add('hidden'); openExternal('http://localhost:' + t.port + (t.path || '/')); }));
   });
+  // Loaded before the first click, so a list of servers is there when the menu opens.
+  $('#pv-servers').addEventListener('pointerdown', () => { if (!pvPorts.length) loadPorts(); });
+
+  // A page or a PDF from the chat or the Files panel opens in a tab of its own - or the tab
+  // it already has, loaded again, since Claude has usually just rewritten it. An iPhone
+  // shows a PDF in its own viewer instead.
+  async function openFileInBrowser(file) {
+    if (/^[A-Za-z]:/.test(file)) file = file.replace(/\//g, '\\'); // one spelling, so the same file finds its tab
+    if (isIOS && /\.pdf$/i.test(file)) {
+      const t = { kind: 'file', file };
+      // Safari lets a page open a window only while the tap is still being handled.
+      const w = window.__TAURI__?.opener?.openUrl ? null : window.open('about:blank', '_blank');
+      try { await grant(); } catch {}
+      if (w) w.location.href = outsideUrl(t); else openExternal(outsideUrl(t));
+      return;
+    }
+    if (!previewOpen) await openPreview({ auto: false });
+    const had = pv.tabs.find((t) => t.kind === 'file' && t.file.toLowerCase() === file.toLowerCase());
+    if (had) { if (pv.active !== had) activate(had); go(had, specOf(had), { push: false }); return; }
+    const t = pv.active?.kind === 'blank' ? pv.active : addTab();
+    go(t, { kind: 'file', file }, { show: false });
+    activate(t);
+  }
 
   // ---------- Files: what is in the session's folder, read only ----------
   // The server only opens paths under a folder some session has worked in, so this
@@ -2322,7 +2574,7 @@
   $('#fx-close').addEventListener('click', closeFiles);
   $('#fx-home').addEventListener('click', () => loadDir(fxHome || state.cwd || ''));
   $('#fx-up').addEventListener('click', () => { if (!fxView.classList.contains('hidden')) return showDir(); const up = fxDir.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, ''); if (up) loadDir(up); });
-  const showDir = () => { fxView.classList.add('hidden'); fxView.textContent = ''; fxList.classList.remove('hidden'); $('#fx-path').textContent = fxDir; };
+  const showDir = () => { fxView.classList.add('hidden'); fxView.textContent = ''; fxList.classList.remove('hidden'); $('#fx-path').textContent = fxDir; $('#fx-preview').classList.add('hidden'); };
   async function loadDir(dir) {
     if (!dir) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'muted small pad', 'This session has no folder.')); return; }
     showDir();
@@ -2349,6 +2601,11 @@
     } catch (e) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'note error', e.message)); }
   }
   async function openFileAt(p, name) {
+    // A PDF has nothing to read as text, and a page is more than its source: both go to
+    // the Browser, a page by the button above its source.
+    if (/\.pdf$/i.test(p)) return openFileInBrowser(p);
+    const page = /\.html?$/i.test(p);
+    $('#fx-preview').classList.toggle('hidden', !page); $('#fx-preview').onclick = page ? () => openFileInBrowser(p) : null;
     fxList.classList.add('hidden'); fxView.classList.remove('hidden'); fxView.textContent = 'Opening…'; $('#fx-path').textContent = p;
     try {
       const r = await api('/fs/read?path=' + encodeURIComponent(p));
@@ -3050,7 +3307,7 @@
     if (hasSession()) out.push(
       { name: 'Changes', group: 'Session', run: () => (changesOpen ? closeChanges() : openChanges()) },
       { name: 'Files', group: 'Session', run: () => (filesOpen ? closeFiles() : openFiles()) },
-      { name: 'Preview', group: 'Session', run: () => (previewOpen ? closePreview() : openPreview()) },
+      { name: 'Browser', group: 'Session', hint: 'Ctrl+Shift+B', run: () => (previewOpen ? closePreview() : openPreview()) },
       { name: 'Tasks', group: 'Session', run: () => (tasksOpen ? closeTasks() : openTasks()) },
       { name: 'Worktrees', group: 'Session', run: () => showWorktrees(state.cwd) },
       { name: 'New worktree…', group: 'Session', run: () => makeWorktree(state.cwd) },
@@ -3129,6 +3386,7 @@
     const k = e.key.toLowerCase();
     if (k === 'k') { e.preventDefault(); pal.classList.contains('hidden') ? openPalette() : closePalette(); }
     else if (k === 'f') { e.preventDefault(); const sb = $('#sidebar'); if (!sb.classList.contains('searching')) $('#search-btn').click(); else $('#search-input').focus(); app.classList.add('sidebar-open'); }
+    else if (k === 'b' && e.shiftKey) { e.preventDefault(); previewOpen ? closePreview() : openPreview(); } // Desktop's own shortcut for its Browser
     else if (k === 'b') { e.preventDefault(); app.classList.toggle('sidebar-open'); }
     else if (k === 'n') { e.preventDefault(); location.hash = '#/'; }
   });
@@ -3157,7 +3415,7 @@
       applySessionSettings(info.settings);
       $('#chat-meta').textContent = info.project || '';
       $('#chat-meta').title = [info.cwd, info.branch && 'Branch: ' + info.branch].filter(Boolean).join('\n');
-      state.cwd = info.cwd || state.cwd; renderProjectChip(); $('#project-btn').classList.add('locked');
+      state.cwd = info.cwd || state.cwd; renderProjectChip(); pvFollow(); $('#project-btn').classList.add('locked');
       renderHistory(messages);
       // The last turn never finished (the app or the PC restarted mid-work): say so, offer to go on.
       if (info.interrupted) {
