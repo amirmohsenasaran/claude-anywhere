@@ -9,3 +9,5 @@ test-media/
 # The Node binary scripts/fetch-node.mjs puts there for the installer.
 runtime/*
 !runtime/README.md
+# Screenshots the UI walkthrough (test/ui/browser.cjs) takes on every run.
+test/ui/shots/
