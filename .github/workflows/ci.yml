@@ -39,6 +39,32 @@ jobs:
             fi
           done
           echo "the server never answered"; exit 1
+      # The app and a dev server built to break the old preview proxy, over real sockets.
+      - name: Tests
+        run: npm test
+
+  browser:
+    name: Browser pane, in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Playwright is not a dependency of the app - it would ship in the desktop bundle -
+      # so it is fetched for this job alone.
+      - run: npm i --no-save playwright@1.63.0
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Walk through the Browser pane, desktop and phone
+        run: npm run test:ui
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-pane-screenshots
+          path: test/ui/shots/
 
   shell:
     name: Native shell (${{ matrix.os }})

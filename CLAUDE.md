@@ -19,6 +19,10 @@ npm run desktop                            # native window (needs Rust + tauri-c
   a change "does nothing".
 - Before committing: `node --check` on every `.mjs`/`app.js` you touched, and
   `cargo check` in `src-tauri/` if you touched Rust. CI runs both.
+- `npm test` runs the server-side tests against the real app, nothing to install.
+  `npm run test:ui` walks the Browser pane in Chromium and WebKit (after
+  `npm i --no-save playwright`) and leaves its screenshots in `test/ui/shots/`;
+  CI runs both and keeps the screenshots as an artifact.
 
 ## Proving a change works
 
