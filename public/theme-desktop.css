@@ -949,4 +949,3 @@ audio.lb-media { width: min(520px, 90vw); height: auto; }
 .pv-start-item:hover { background: var(--bg-2); }
 .pv-start-port { font-size: 13.5px; font-weight: 500; }
 .pv-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; color: var(--ink-2); font-size: 14px; }
-.fx-preview { align-self: flex-start; margin: -4px 12px 6px; }

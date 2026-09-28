@@ -125,6 +125,19 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('chat-title')?.textContent === 'Report and PDF');
     await page.keyboard.press('Control+Shift+B');
     check('the tabs are still there after the app reloads', await until(async () => (await pane.tabs()).length === left), (await pane.tabs()).join(', '));
+
+    // From the Files panel: a page renders in the Browser, it does not print its source.
+    await page.click('#pv-close');
+    await page.click('#session-menu-btn');
+    await page.click('.menu-item:has-text("Files")');
+    await page.waitForSelector('#files-panel:not(.hidden)');
+    await page.click('.fx-row:has-text("site")');
+    await page.waitForSelector('.fx-row:has-text("index.html")');
+    await page.click('.fx-row:has-text("index.html")');
+    check('an HTML file from the Files panel opens the Browser', await until(async () => !(await page.$eval('#preview-panel', (p) => p.classList.contains('hidden')))));
+    check('...rendered, not shown as source', await until(async () => (await pane.eval(() => getComputedStyle(document.getElementById('h')).color)) === 'rgb(200, 30, 30)'), 'the page did not render');
+    check('...and the Files panel is not left showing markup', await page.$eval('#fx-view', (n) => !/<!doctype|<html/i.test(n.textContent)));
+    await shot(page, 'desktop-files-html', clip);
     check('desktop: no errors in the app', !errors.length, errors.join(' | '));
     await browser.close();
   }
