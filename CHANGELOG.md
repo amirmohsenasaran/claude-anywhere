@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-09-29
+
 ## [0.10.1] — 2026-09-27
 
 ## [0.10.0] — 2026-09-26
@@ -481,7 +483,8 @@ settings across.
   from a browser, with live streaming, permission prompts and a new-session
   flow.
 
-[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.5...v0.10.0
 [0.9.5]: https://github.com/aryasadeghy/claude-anywhere/compare/v0.9.4...v0.9.5
