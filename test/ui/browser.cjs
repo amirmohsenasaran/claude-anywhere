@@ -29,13 +29,14 @@ async function main() {
   fs.mkdirSync(SHOTS, { recursive: true });
   const page_ = path.join(project.site, 'index.html'), page2 = path.join(project.site, 'page2.html'), pdf = path.join(project.site, 'report.pdf');
 
-  async function open(type, ctxOpts, { fallback = false } = {}) {
+  async function open(type, ctxOpts, { fallback = false, before = null } = {}) {
     const browser = await type.launch({ headless: true, ...(type === chromium && channel ? { channel } : {}) });
     const ctx = await browser.newContext({ colorScheme: 'light', ...ctxOpts });
     await ctx.addInitScript((token) => { if (window.top === window) { localStorage.setItem('cr.accountChosen', '1'); localStorage.setItem('cr.token', token); } }, app.token);
     // The servers this computer is running are the test's, whatever else the machine has open.
     await ctx.route('**/api/preview/ports', (r) => r.fulfill({ json: { ports: [{ port: dev.port, pid: 0, process: 'node', label: 'Node', http: true, status: 200, server: '', title: 'Test app', serves: true, dev: true }] } }));
     if (fallback) await ctx.route('**/__claude-anywhere/ping', (r) => r.abort());
+    if (before) await before(ctx);
     const page = await ctx.newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(app.base + '/#/s/' + sid);
@@ -125,6 +126,19 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('chat-title')?.textContent === 'Report and PDF');
     await page.keyboard.press('Control+Shift+B');
     check('the tabs are still there after the app reloads', await until(async () => (await pane.tabs()).length === left), (await pane.tabs()).join(', '));
+
+    // From the Files panel: a page renders in the Browser, it does not print its source.
+    await page.click('#pv-close');
+    await page.click('#session-menu-btn');
+    await page.click('.menu-item:has-text("Files")');
+    await page.waitForSelector('#files-panel:not(.hidden)');
+    await page.click('.fx-row:has-text("site")');
+    await page.waitForSelector('.fx-row:has-text("index.html")');
+    await page.click('.fx-row:has-text("index.html")');
+    check('an HTML file from the Files panel opens the Browser', await until(async () => !(await page.$eval('#preview-panel', (p) => p.classList.contains('hidden')))));
+    check('...rendered, not shown as source', await until(async () => (await pane.eval(() => getComputedStyle(document.getElementById('h')).color)) === 'rgb(200, 30, 30)'), 'the page did not render');
+    check('...and the Files panel is not left showing markup', await page.$eval('#fx-view', (n) => !/<!doctype|<html/i.test(n.textContent)));
+    await shot(page, 'desktop-files-html', clip);
     check('desktop: no errors in the app', !errors.length, errors.join(' | '));
     await browser.close();
   }
@@ -171,6 +185,30 @@ async function main() {
     const g = await pane.eval(() => ({ color: getComputedStyle(document.getElementById('h')).color, count: document.getElementById('count').textContent }));
     check('fallback: a page is shown sandboxed, styled, without storage', g?.color === 'rgb(200, 30, 30)' && /SecurityError/.test(g?.count || ''), JSON.stringify(g));
     check('fallback: no errors in the app', !errors.length, errors.join(' | '));
+    await browser.close();
+  }
+
+  // ---------- a server older than the page: it hands out no key, so it has no files ----------
+  // The page is read fresh from disk while the server process keeps running the code it
+  // started with, until someone restarts it. Its answer to the key request is the old one.
+  {
+    let restartAsked = false;
+    const { browser, page, errors } = await open(chromium, { viewport: { width: 1380, height: 860 } }, { before: async (ctx) => {
+      await ctx.route('**/api/preview/grant', (r) => r.fulfill({ json: { ok: true } }));
+      await ctx.route('**/api/restart', (r) => { restartAsked = true; r.fulfill({ json: { ok: true, restarting: false, queued: true, liveRuns: 1 } }); });
+      await ctx.route('**/api/me', async (r) => { const j = await (await r.fetch()).json(); r.fulfill({ json: { ...j, host: 'studio-pc' } }); });
+    } });
+    await page.click('#thread a.file-link:has-text("site/index.html")');
+    await page.waitForSelector('#pv-stage .pv-card:not(.hidden)');
+    const card = await page.textContent('#pv-stage .pv-card:not(.hidden)');
+    check('old server: the tab says the server is older than the page', /“studio-pc” is older than this page/.test(card), card);
+    check('old server: no frame is pointed at /files//… (the "Cannot GET")', !(await page.$$eval('#pv-stage iframe', (fs) => fs.some((f) => /\/files\/\//.test(f.src)))));
+    check('old server: "open in your browser" is off, it would lead nowhere', await page.$eval('#pv-open', (b) => b.disabled));
+    await shot(page, 'desktop-old-server', { x: 300, y: 0, width: 1080, height: 860 });
+    await page.click('#pv-stage .pv-card button:has-text("Restart server")');
+    check('old server: Restart server asks the server to restart', await until(() => restartAsked));
+    check('old server: and says it waits for the turn to end', await until(async () => /restarts by itself/.test(await page.textContent('#pv-stage .pv-card:not(.hidden)'))));
+    check('old server: no errors in the app', !errors.length, errors.join(' | '));
     await browser.close();
   }
 

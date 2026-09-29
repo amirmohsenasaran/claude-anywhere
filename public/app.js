@@ -7,7 +7,9 @@
     token: null, userName: '', host: '',
     sessions: [], projects: [], cwd: localStorage.getItem('cr.cwd') || '',
     current: null,       // session id or null for "new chat"
-    running: false, es: null, lastEventId: -1,
+    running: false,      // a live run of ours is open (its SSE): a send is queued into it, not started fresh
+    answering: false,    // Claude is actively producing this turn: the "Working" pill, the status line, the Stop button
+    es: null, lastEventId: -1,
     live: null,          // streaming assistant message being built
   };
   try { state.token = localStorage.getItem('cr.token'); } catch {}
@@ -2212,7 +2214,7 @@
   // the app behind https on one port - /preview/<port>/ and a sandboxed copy stand in.
   const pvPanel = $('#preview-panel'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr'), pvTabsEl = $('#pv-tabs'), pvStage = $('#pv-stage');
   let previewOpen = false, pvPorts = [], pvAll = false, pvFrameSeq = 0;
-  const pv = { key: '', files: 0, roots: null, tabs: [], active: null, seq: 0, cwd: null };
+  const pv = { key: '', files: 0, roots: null, tabs: [], active: null, seq: 0, cwd: null, old: false, grantError: '' };
   const originUrl = (port) => { const u = new URL(location.href); u.port = String(port); return u.origin; };
   const fileUrlPath = (p) => '/' + String(p).replace(/\\/g, '/').split('/').filter(Boolean).map(encodeURIComponent).join('/');
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -2223,8 +2225,13 @@
   const specOf = (t) => ({ kind: t.kind, port: t.port, path: t.path, file: t.file });
 
   async function grant() {
-    const r = await api('/preview/grant');
-    pv.key = r.key || ''; pv.files = r.files || 0;
+    try {
+      const r = await api('/preview/grant');
+      pv.key = r.key || ''; pv.files = r.files || 0;
+      // A server started before the Browser answers without a key and has no files to show:
+      // the page is new (static files are read fresh) while the process still runs old code.
+      pv.old = !r.key; pv.grantError = '';
+    } catch (e) { pv.grantError = e.message; throw e; }
     if (pv.roots === null) pv.roots = await canReach(pv.files);
   }
   // Another port of this host answers only when nothing stands in front of the app (plain
@@ -2343,7 +2350,8 @@
     }
     if (!previewOpen || !pv.tabs.includes(t) || t.frame || t.kind === 'blank') return;
     let f;
-    if (pdfOutside(t)) {
+    if (t.kind === 'file' && !pv.key) f = keylessCard(t);
+    else if (pdfOutside(t)) {
       f = el('div', 'pv-card');
       f.appendChild(el('div', null, 'An iPhone shows only the first page of a PDF inside a page, so it opens in its own viewer.'));
       const b = el('button', 'btn btn-ghost', 'Open ' + baseName(t.file)); b.type = 'button';
@@ -2418,7 +2426,7 @@
     $('#pv-fwd').disabled = !(t && t.at < t.hist.length - 1);
     $('#pv-home').disabled = !(t && t.kind === 'server');
     $('#pv-reload').disabled = !(t && t.kind !== 'blank');
-    $('#pv-open').disabled = !(t && t.kind !== 'blank');
+    $('#pv-open').disabled = !(t && t.kind !== 'blank' && outsideUrl(t));
   }
   // A new tab starts here: what this computer is serving, one click away.
   function showStart() {
@@ -2510,10 +2518,39 @@
   function outsideUrl(t) {
     const enter = (port, to) => originUrl(port) + '/__claude-anywhere/enter?key=' + encodeURIComponent(pv.key) + '&to=' + encodeURIComponent(to);
     if (t.kind === 'server') return t.root ? enter(t.origin, t.path || '/') : location.origin + '/preview/' + t.port + (t.path || '/');
+    if (t.kind === 'file' && !pv.key) return ''; // no key, no file: see keylessCard
     if (t.kind === 'file') return pv.roots ? enter(pv.files, fileUrlPath(t.file)) : location.origin + '/files/' + pv.key + fileUrlPath(t.file);
     return '';
   }
-  $('#pv-open').addEventListener('click', () => { const t = pv.active; if (t && t.kind !== 'blank') openExternal(outsideUrl(t)); });
+  $('#pv-open').addEventListener('click', () => { const t = pv.active; const u = t && t.kind !== 'blank' ? outsideUrl(t) : ''; if (u) openExternal(u); });
+  // A file tab without a key would load /files//… and the frame would say only "Cannot GET".
+  // Either the server that sent this page is older than it - the update bar's "A new version
+  // is ready" - or the key could not be fetched. The tab says which, with the way out.
+  function keylessCard(t) {
+    const f = el('div', 'pv-card');
+    const note = el('div', 'muted small');
+    if (pv.old) {
+      const host = state.host && state.host !== 'this machine' ? '“' + state.host + '”' : 'this computer';
+      f.appendChild(el('div', null, 'The server on ' + host + ' is older than this page, so it cannot open files in the Browser yet. Restart it, then open the file again.'));
+      const b = el('button', 'btn btn-ghost', 'Restart server'); b.type = 'button';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          const r = await api('/restart', { method: 'POST', body: JSON.stringify({}) });
+          note.textContent = r.queued ? 'Claude is working. The server restarts by itself the moment this turn ends, and the window reloads.' : 'Restarting…';
+          await waitForServer(() => location.reload());
+        } catch (e) { b.disabled = false; note.textContent = e.message; }
+      });
+      f.appendChild(b);
+    } else {
+      f.appendChild(el('div', null, 'This file could not be opened here' + (pv.grantError ? ': ' + pv.grantError : '.')));
+      const b = el('button', 'btn btn-ghost', 'Try again'); b.type = 'button';
+      b.addEventListener('click', async () => { try { await grant(); } catch {} go(t, specOf(t), { push: false }); });
+      f.appendChild(b);
+    }
+    f.appendChild(note);
+    return f;
+  }
   menuFor('#pv-servers', '#pv-port-menu', (m) => {
     m.innerHTML = '';
     const shown = pvAll ? pvPorts : pvPorts.filter((p) => p.serves);
@@ -2574,7 +2611,7 @@
   $('#fx-close').addEventListener('click', closeFiles);
   $('#fx-home').addEventListener('click', () => loadDir(fxHome || state.cwd || ''));
   $('#fx-up').addEventListener('click', () => { if (!fxView.classList.contains('hidden')) return showDir(); const up = fxDir.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, ''); if (up) loadDir(up); });
-  const showDir = () => { fxView.classList.add('hidden'); fxView.textContent = ''; fxList.classList.remove('hidden'); $('#fx-path').textContent = fxDir; $('#fx-preview').classList.add('hidden'); };
+  const showDir = () => { fxView.classList.add('hidden'); fxView.textContent = ''; fxList.classList.remove('hidden'); $('#fx-path').textContent = fxDir; };
   async function loadDir(dir) {
     if (!dir) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'muted small pad', 'This session has no folder.')); return; }
     showDir();
@@ -2601,11 +2638,10 @@
     } catch (e) { fxList.innerHTML = ''; fxList.appendChild(el('div', 'note error', e.message)); }
   }
   async function openFileAt(p, name) {
-    // A PDF has nothing to read as text, and a page is more than its source: both go to
-    // the Browser, a page by the button above its source.
-    if (/\.pdf$/i.test(p)) return openFileInBrowser(p);
-    const page = /\.html?$/i.test(p);
-    $('#fx-preview').classList.toggle('hidden', !page); $('#fx-preview').onclick = page ? () => openFileInBrowser(p) : null;
+    // A page, a PDF or an SVG is more than its source: each renders in the Browser rather
+    // than being printed as text here. (Clicking one used to show its markup, which read as
+    // the file failing to open.)
+    if (/\.(html?|pdf|svg)$/i.test(p)) return openFileInBrowser(p);
     fxList.classList.add('hidden'); fxView.classList.remove('hidden'); fxView.textContent = 'Opening…'; $('#fx-path').textContent = p;
     try {
       const r = await api('/fs/read?path=' + encodeURIComponent(p));
@@ -2614,7 +2650,37 @@
       if (r.image) { const img = el('img'); img.src = localFileUrl(p); img.alt = name; img.addEventListener('click', () => openImage(img.src, name)); fxView.appendChild(img); return; }
       if (r.binary) { fxView.textContent = name + ' is not text (' + fxSize(r.size) + ').'; return; }
       fxView.textContent = r.text + (r.truncated ? '\n\n… the first 512 KB of ' + fxSize(r.size) + '.' : '');
-    } catch (e) { fxView.textContent = e.message; }
+    } catch (e) {
+      // The server's machine does not have this file. In the app it may sit on the machine
+      // this window is on instead (a file you have locally while the session runs on another
+      // computer); the shell can read that, the way a dropped file is read.
+      if (/not on this pc|not found|no path/i.test(e.message || '') && await showFromShell(p, name)) return;
+      fxView.textContent = notThere(e.message);
+    }
+  }
+  // A file the server's machine cannot see, read from the window's machine through the shell.
+  // Only in the app (a plain browser has no shell) and only as a fallback, so the ordinary
+  // path is untouched.
+  async function showFromShell(p, name) {
+    const invoke = bridge(); if (!invoke) return false;
+    try {
+      const bytes = new Uint8Array(await invoke('dropped_file', { path: p }));
+      fxView.textContent = '';
+      if (/\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(p)) {
+        const url = URL.createObjectURL(new Blob([bytes]));
+        const img = el('img'); img.src = url; img.alt = name; img.addEventListener('click', () => openImage(url, name)); fxView.appendChild(img); return true;
+      }
+      if (bytes.includes(0)) { fxView.textContent = name + ' is not text (' + fxSize(bytes.length) + ').'; return true; }
+      fxView.textContent = new TextDecoder().decode(bytes);
+      return true;
+    } catch { return false; }
+  }
+  // "Not on this PC" on its own reads as a bug. Say whose disk was looked at and why it can
+  // differ from the window you are in.
+  function notThere(msg) {
+    if (!/not on this pc/i.test(msg || '')) return msg;
+    const host = state.host && state.host !== 'this machine' ? '“' + state.host + '”' : 'the computer running this session';
+    return 'This file is not on ' + host + ', which is where the session runs. If it is on another computer, open that one from the account menu.';
   }
 
   // ---------- worktrees: a second checkout of the same repository, on its own branch ----------
@@ -2813,23 +2879,34 @@
   }
 
   // ---------- live turn ----------
-  function setRunning(on) {
-    state.running = on;
+  // A turn is actively producing: the "Working" pill, the status line, the Stop button. A
+  // backgrounded task that outlives the answer does not count - see setRunning.
+  function setAnswering(on) {
+    state.answering = on;
     $('#live-pill').classList.toggle('hidden', !on && !state.elsewhere);
     if (on) { $('#live-pill').classList.remove('elsewhere'); $('#live-text').textContent = 'Working'; statusStart(); } else statusStop();
-    $('#input').disabled = false;
     paintSendButton();
   }
-  // While Claude works the button is Stop, unless there is text typed: then it sends (queues) it.
+  // Our live run's stream is open, so a send is queued into it rather than starting a fresh
+  // one. This stays true while a backgrounded command or agent keeps the process alive after
+  // the answer; the composer still goes idle then (setAnswering(false) on `result`), so the
+  // next message is not labelled as waiting behind work that is not the answer.
+  function setRunning(on) {
+    state.running = on;
+    $('#input').disabled = false;
+    setAnswering(on);
+  }
+  // Stop shows only while Claude is actually answering; once only a background task is left,
+  // the button sends again (that task has its own Stop in the tasks panel).
   function paintSendButton() {
     const hasText = !!$('#input').value.trim() || pending.length > 0;
-    $('#send').classList.toggle('running', state.running && !hasText);
-    $('#send').title = state.running && !hasText ? 'Stop' : state.running ? 'Send (queued until Claude finishes)' : 'Send';
+    $('#send').classList.toggle('running', state.answering && !hasText);
+    $('#send').title = state.answering && !hasText ? 'Stop' : state.answering ? 'Send (queued until Claude finishes)' : 'Send';
   }
   // Another window (VS Code, terminal, Claude Desktop) is mid-turn on this session.
   function setElsewhere(on) {
     state.elsewhere = on;
-    if (state.running) return;
+    if (state.answering) return;
     $('#live-pill').classList.toggle('hidden', !on);
     $('#live-pill').classList.toggle('elsewhere', on);
     $('#live-text').textContent = on ? 'Working in another window' : 'Working';
@@ -2884,9 +2961,10 @@
           const q = ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`);
           if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); }
           else thread.appendChild(userMsg(ev.text, { id: ev.id, images: ev.images || [] }));
-          // A turn's clock starts at its prompt, which for a page catching up was a while ago.
-          if (replaying && ev.at) status.startedAt = ev.at; else if (state.running) status.startedAt = Date.now();
-          if (state.running) statusStart();
+          // A prompt being taken up is a turn starting - including a queued message that runs
+          // after only a background task was left, when the composer had gone idle. Relight it.
+          if (!replaying) { status.startedAt = ev.at || Date.now(); setAnswering(true); }
+          else if (ev.at) { status.startedAt = ev.at; if (state.answering) statusStart(); }
           autoscroll(); break;
         }
         case 'init':
@@ -2961,7 +3039,11 @@
         case 'result':
           if (ev.isError) authNote(ev.text);
           if (state.live) addActions(state.live, Date.now());
-          state.live = null; statusStop(); refreshGit();
+          state.live = null; refreshGit();
+          // The answer is done. Unless another turn is already queued behind it, the composer
+          // goes idle now - even if a backgrounded task keeps the run alive - so the next
+          // message starts a turn instead of waiting behind work that is not the answer.
+          if (!ev.more) setAnswering(false); else statusStop();
           if (document.visibilityState === 'visible') markRead(sessionId); // finished in front of you: no dot
           if (changesOpen) loadChanges();
           break;
@@ -3139,9 +3221,9 @@
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(min-width: 861px)').matches) { e.preventDefault(); submit(); }
-    if (e.key === 'Escape' && state.running) { e.preventDefault(); stop(); }
+    if (e.key === 'Escape' && state.answering) { e.preventDefault(); stop(); }
   });
-  send.addEventListener('click', () => { if (state.running && !input.value.trim() && !pending.length) stop(); else submit(); });
+  send.addEventListener('click', () => { if (state.answering && !input.value.trim() && !pending.length) stop(); else submit(); });
 
   // ---------- attachments: images go to Claude as images; other files are saved on the PC and referenced ----------
   const pending = []; // { kind: 'image'|'file', name, media_type, data (base64), dataUrl }
@@ -3231,9 +3313,11 @@
     input.value = ''; input.style.height = 'auto'; try { localStorage.removeItem(draftKey(state.current)); } catch {}
     empty.classList.remove('show'); stickToBottom = true;
     const body = { text, attachments, files };
-    // Claude is mid-turn on this chat: the message is queued and runs right after, like Desktop.
+    // Our run's stream is open, so the message goes into it (like Desktop). If Claude is still
+    // answering it waits its turn and is labelled so; if only a background task is left it runs
+    // at once, so it is shown as a plain message, not "queued behind" that task.
     if (state.running && state.current) {
-      const ghost = userMsg(shown, { queued: true, images }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
+      const ghost = userMsg(shown, { queued: state.answering, images }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
       try { const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify(body) }); if (r.id) ghost.dataset.promptId = r.id; }
       catch (e) { ghost.remove(); thread.appendChild(el('div', 'note error', e.message)); }
       return;
