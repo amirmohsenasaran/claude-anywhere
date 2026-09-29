@@ -2214,7 +2214,7 @@
   // the app behind https on one port - /preview/<port>/ and a sandboxed copy stand in.
   const pvPanel = $('#preview-panel'), pvNote = $('#pv-note'), pvAddr = $('#pv-addr'), pvTabsEl = $('#pv-tabs'), pvStage = $('#pv-stage');
   let previewOpen = false, pvPorts = [], pvAll = false, pvFrameSeq = 0;
-  const pv = { key: '', files: 0, roots: null, tabs: [], active: null, seq: 0, cwd: null };
+  const pv = { key: '', files: 0, roots: null, tabs: [], active: null, seq: 0, cwd: null, old: false, grantError: '' };
   const originUrl = (port) => { const u = new URL(location.href); u.port = String(port); return u.origin; };
   const fileUrlPath = (p) => '/' + String(p).replace(/\\/g, '/').split('/').filter(Boolean).map(encodeURIComponent).join('/');
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -2225,8 +2225,13 @@
   const specOf = (t) => ({ kind: t.kind, port: t.port, path: t.path, file: t.file });
 
   async function grant() {
-    const r = await api('/preview/grant');
-    pv.key = r.key || ''; pv.files = r.files || 0;
+    try {
+      const r = await api('/preview/grant');
+      pv.key = r.key || ''; pv.files = r.files || 0;
+      // A server started before the Browser answers without a key and has no files to show:
+      // the page is new (static files are read fresh) while the process still runs old code.
+      pv.old = !r.key; pv.grantError = '';
+    } catch (e) { pv.grantError = e.message; throw e; }
     if (pv.roots === null) pv.roots = await canReach(pv.files);
   }
   // Another port of this host answers only when nothing stands in front of the app (plain
@@ -2345,7 +2350,8 @@
     }
     if (!previewOpen || !pv.tabs.includes(t) || t.frame || t.kind === 'blank') return;
     let f;
-    if (pdfOutside(t)) {
+    if (t.kind === 'file' && !pv.key) f = keylessCard(t);
+    else if (pdfOutside(t)) {
       f = el('div', 'pv-card');
       f.appendChild(el('div', null, 'An iPhone shows only the first page of a PDF inside a page, so it opens in its own viewer.'));
       const b = el('button', 'btn btn-ghost', 'Open ' + baseName(t.file)); b.type = 'button';
@@ -2420,7 +2426,7 @@
     $('#pv-fwd').disabled = !(t && t.at < t.hist.length - 1);
     $('#pv-home').disabled = !(t && t.kind === 'server');
     $('#pv-reload').disabled = !(t && t.kind !== 'blank');
-    $('#pv-open').disabled = !(t && t.kind !== 'blank');
+    $('#pv-open').disabled = !(t && t.kind !== 'blank' && outsideUrl(t));
   }
   // A new tab starts here: what this computer is serving, one click away.
   function showStart() {
@@ -2512,10 +2518,39 @@
   function outsideUrl(t) {
     const enter = (port, to) => originUrl(port) + '/__claude-anywhere/enter?key=' + encodeURIComponent(pv.key) + '&to=' + encodeURIComponent(to);
     if (t.kind === 'server') return t.root ? enter(t.origin, t.path || '/') : location.origin + '/preview/' + t.port + (t.path || '/');
+    if (t.kind === 'file' && !pv.key) return ''; // no key, no file: see keylessCard
     if (t.kind === 'file') return pv.roots ? enter(pv.files, fileUrlPath(t.file)) : location.origin + '/files/' + pv.key + fileUrlPath(t.file);
     return '';
   }
-  $('#pv-open').addEventListener('click', () => { const t = pv.active; if (t && t.kind !== 'blank') openExternal(outsideUrl(t)); });
+  $('#pv-open').addEventListener('click', () => { const t = pv.active; const u = t && t.kind !== 'blank' ? outsideUrl(t) : ''; if (u) openExternal(u); });
+  // A file tab without a key would load /files//… and the frame would say only "Cannot GET".
+  // Either the server that sent this page is older than it - the update bar's "A new version
+  // is ready" - or the key could not be fetched. The tab says which, with the way out.
+  function keylessCard(t) {
+    const f = el('div', 'pv-card');
+    const note = el('div', 'muted small');
+    if (pv.old) {
+      const host = state.host && state.host !== 'this machine' ? '“' + state.host + '”' : 'this computer';
+      f.appendChild(el('div', null, 'The server on ' + host + ' is older than this page, so it cannot open files in the Browser yet. Restart it, then open the file again.'));
+      const b = el('button', 'btn btn-ghost', 'Restart server'); b.type = 'button';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          const r = await api('/restart', { method: 'POST', body: JSON.stringify({}) });
+          note.textContent = r.queued ? 'Claude is working. The server restarts by itself the moment this turn ends, and the window reloads.' : 'Restarting…';
+          await waitForServer(() => location.reload());
+        } catch (e) { b.disabled = false; note.textContent = e.message; }
+      });
+      f.appendChild(b);
+    } else {
+      f.appendChild(el('div', null, 'This file could not be opened here' + (pv.grantError ? ': ' + pv.grantError : '.')));
+      const b = el('button', 'btn btn-ghost', 'Try again'); b.type = 'button';
+      b.addEventListener('click', async () => { try { await grant(); } catch {} go(t, specOf(t), { push: false }); });
+      f.appendChild(b);
+    }
+    f.appendChild(note);
+    return f;
+  }
   menuFor('#pv-servers', '#pv-port-menu', (m) => {
     m.innerHTML = '';
     const shown = pvAll ? pvPorts : pvPorts.filter((p) => p.serves);
