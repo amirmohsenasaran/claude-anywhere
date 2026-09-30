@@ -1698,25 +1698,30 @@
 
   // ---------- thread rendering ----------
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
-  let stickToBottom = true;
-  scroll.addEventListener('scroll', () => { stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  let stickToBottom = true, ownTop = -1;
+  // Only the reader's own scrolling decides whether the thread sticks to its end. A scroll the
+  // page makes itself (to the end, or past an older page it placed) has its scroll event a frame
+  // later, when the pictures and videos just placed may have grown the thread - and that read as
+  // "the reader left the end": a tall window opened a long session 1,300 px above its end.
+  scroll.addEventListener('scroll', () => { if (Math.abs(scroll.scrollTop - ownTop) < 2) return; ownTop = -1; stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  const scrollThreadTo = (y) => { scroll.scrollTop = y; ownTop = scroll.scrollTop; };
   // Held while a backlog is drawn in one pass: scrolling after every piece of it made the
   // browser lay the whole thread out again each time. It scrolls once, at the end.
   let holdScroll = false;
-  const autoscroll = () => { if (stickToBottom && !holdScroll) scroll.scrollTop = scroll.scrollHeight; };
+  const autoscroll = () => { if (stickToBottom && !holdScroll) scrollThreadTo(scroll.scrollHeight); };
   // A transcript keeps growing after it is drawn: pictures arrive, fonts settle, long
   // code blocks reflow. Scrolling to the end once therefore lands somewhere in the
   // middle, which is what opening a session used to look like. Stay pinned while it
   // settles, and let go the moment the reader scrolls away themselves.
   let pinTimer = null, pinWatch = null;
   function pinToBottom(ms = 3000) {
-    scroll.scrollTop = scroll.scrollHeight;
+    scrollThreadTo(scroll.scrollHeight);
     clearTimeout(pinTimer); pinWatch?.disconnect();
     if (typeof ResizeObserver !== 'function') return;
     // Both ends move: the thread grows as pictures and fonts arrive, and the window
     // shrinks as the bars below it appear - the git bar, a running task, the update
     // banner. Either one leaves the end off-screen.
-    pinWatch = new ResizeObserver(() => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; });
+    pinWatch = new ResizeObserver(() => { if (stickToBottom) scrollThreadTo(scroll.scrollHeight); });
     pinWatch.observe(thread);
     pinWatch.observe(scroll);
     pinTimer = setTimeout(() => { pinWatch?.disconnect(); pinWatch = null; }, ms);
@@ -2227,7 +2232,8 @@
       if (hist.midTurn) joinTurn(first?.previousElementSibling, first);
       hist.before = p.before; hist.more = !!p.more; hist.midTurn = !!p.midTurn;
       paintHistoryTop();
-      scroll.scrollTop = t0 + (scroll.scrollHeight - h0);
+      // A reader at the end stays at the end; anyone else keeps what they were looking at.
+      scrollThreadTo(stickToBottom ? scroll.scrollHeight : t0 + (scroll.scrollHeight - h0));
       reanchor();
     } catch (e) {
       if (seq === openSeq) { hist.failed = true; paintHistoryTop(); }
@@ -2265,7 +2271,7 @@
     scroll.addEventListener('scroll', remember, { passive: true });
     reanchor = remember; // an older page, placed and scrolled for: measure from here, not from before it
     new ResizeObserver(() => {
-      if (anchor?.isConnected && !stickToBottom && !holdScroll) { const d = anchor.getBoundingClientRect().top - anchorTop; if (Math.abs(d) >= 1) scroll.scrollTop += d; }
+      if (anchor?.isConnected && !stickToBottom && !holdScroll) { const d = anchor.getBoundingClientRect().top - anchorTop; if (Math.abs(d) >= 1) scrollThreadTo(scroll.scrollTop + d); }
       remember();
     }).observe(thread);
   }

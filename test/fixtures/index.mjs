@@ -5,6 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -119,6 +120,16 @@ export function makeSession(configDir, cwd, id = 'cccccccc-1111-2222-3333-444444
 const pbBytes = (field, bytes) => Buffer.concat([Buffer.from([(field << 3) | 2, bytes.length]), bytes]);
 export const thinkingSignature = (kind) => Buffer.concat([Buffer.from([0x08, 0x04]), pbBytes(2, pbBytes(1, pbBytes(8, Buffer.from(kind))))]).toString('base64');
 export const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+// A plain PNG of a given size: a picture with some height, which grows the thread when it
+// arrives - what a sent screenshot does, and what a 1-pixel one does not.
+const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = CRC[(c ^ b) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+const chunk = (type, data) => { const t = Buffer.from(type), len = Buffer.alloc(4), crc = Buffer.alloc(4); len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([t, data]))); return Buffer.concat([len, t, data, crc]); };
+export function pngOf(w, h, rgb = [217, 119, 87]) {
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: w }, () => rgb).flat())]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
+}
 
 // A long session the way a day of work leaves one: turns of commands, reads and writes, two
 // compactions, a message answered by a second process off the parent chain, background
@@ -167,7 +178,7 @@ export function makeLongSession(configDir, cwd, { id = 'eeeeeeee-1111-2222-3333-
     call('Bash', { command: `test thing-${i}`, description: `Test thing ${i}` }, i === 16 ? 'Exit code 2' : 'ok', { isError: i === 16 });
     if (i === 15) folded(notice('Upload the renders', 'failed', failing), 'task-notification');
     // The pictures a turn reads or sends are on disk, as they would be: a sent one is drawn from its file.
-    if (i % 5 === 0 || i % 9 === 0) fs.writeFileSync(path.join(cwd, `shot-${i}.png`), Buffer.from(PIXEL, 'base64'));
+    if (i % 5 === 0 || i % 9 === 0) fs.writeFileSync(path.join(cwd, `shot-${i}.png`), pngOf(400, 240));
     if (i % 5 === 0) call('Read', { file_path: path.join(cwd, `shot-${i}.png`) }, '', { image: true });
     if (i % 7 === 0 || i === turns) call('Write', { file_path: path.join(cwd, 'out', `thing-${i}.txt`), content: 'one\ntwo\nthree\n' }, 'File created');
     if (i % 9 === 0) call('mcp__claude-anywhere__SendUserFile', { files: [path.join(cwd, `shot-${i}.png`)], caption: `Thing ${i}` }, 'Sent');

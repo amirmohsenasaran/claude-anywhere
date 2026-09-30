@@ -74,10 +74,11 @@ async function main() {
   const app = await fx.startApp({ port: await fx.freePort(), dataDir: path.join(tmp, 'data'), configDir: path.join(tmp, 'claude') });
   fs.mkdirSync(SHOTS, { recursive: true });
 
-  async function open(type, ctxOpts) {
+  async function open(type, ctxOpts, before = null) {
     const browser = await type.launch({ headless: true, ...(type === chromium && channel ? { channel } : {}) });
     const ctx = await browser.newContext({ colorScheme: 'dark', ...ctxOpts });
     await ctx.addInitScript((token) => { if (window.top === window) { localStorage.setItem('cr.accountChosen', '1'); localStorage.setItem('cr.token', token); } }, app.token);
+    if (before) await before(ctx);
     const page = await ctx.newPage();
     const errors = []; page.on('pageerror', (e) => errors.push(e.message));
     const requests = []; page.on('request', (r) => { if (/\/history/.test(r.url())) requests.push(r.url()); });
@@ -146,6 +147,30 @@ async function main() {
     const t = await text(page);
     check('a turn written by another window shows as it happens, the way the history shows it', followed && t.includes('Carrying on from Desktop.') && !t.includes('a meta line from elsewhere') && !t.includes('a private thought from elsewhere') && !t.includes('No response requested.'), followed ? '' : 'the notice never arrived');
     check('no errors on the page', !errors.length, errors.join(' | '));
+    await browser.close();
+  }
+
+  // ---------- a tall window: the first page is shorter than the screen ----------
+  // An older page loads at once, and the page scrolls itself to keep the end in view. Its
+  // pictures grow the thread before that scroll's own event arrives - which used to read as the
+  // reader leaving the end, and a real session opened 1,300 px above it. Here the growth is
+  // made certain: the moment the older page goes in, the thread gains 600 px.
+  {
+    const grow = (ctx) => ctx.addInitScript(() => {
+      if (window.top !== window) return;
+      addEventListener('DOMContentLoaded', () => {
+        const t = document.getElementById('thread'); let done = false;
+        new MutationObserver((ms) => {
+          if (done || !ms.some((m) => m.addedNodes.length > 3 && m.nextSibling)) return;
+          done = true; const d = document.createElement('div'); d.className = 'grew'; d.style.height = '600px'; t.appendChild(d);
+        }).observe(t, { childList: true });
+      });
+    });
+    const { browser, page, errors, requests } = await open(chromium, { viewport: { width: 1380, height: 4200 } }, grow);
+    await wait(1500);
+    const gap = await page.evaluate(() => { const sc = document.getElementById('scroll'); return Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop); });
+    check('a tall window: an older page comes at once, the thread grows, and it still opens at its end', requests.length >= 2 && !!(await page.$('.grew')) && gap < 2, `${requests.length} requests, grew: ${!!(await page.$('.grew'))}, ${gap} px from the end`);
+    check('a tall window: no errors on the page', !errors.length, errors.join(' | '));
     await browser.close();
   }
 

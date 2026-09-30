@@ -31,7 +31,9 @@ before(async () => {
 });
 after(async () => {
   await app?.stop();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // What the app started may still be writing into its folders for a moment after it stops
+  // (Linux answered ENOTEMPTY in CI): retry, and never fail a run over a temp folder.
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch {}
 });
 
 test('the newest page comes first, and it is a page, not the whole session', async () => {
