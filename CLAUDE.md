@@ -140,6 +140,20 @@ await page.goto('http://127.0.0.1:7779/');
   dev server sent right behind its 101 arrives as `upHead` — write it to the page.
   `socket.unshift(upHead)` sent it back to the dev server, and a first HMR message
   (Vite's "connected") vanished about one time in ten.
+- **`getSessionMessages()` is not the history.** It starts at the last compaction and
+  follows parent links, so a compacted session lost its past, and lines off that chain never
+  showed: a message a second process answered, background-task notices the CLI keeps "for
+  the transcript only", messages typed mid-turn (`queued_command` attachments). Desktop
+  shows the transcript in file order; `lib/history.mjs` reads it that way, from the end, a
+  page at a time (`/api/sessions/:id/history`), pictures as URLs. Opening a 430 MB session
+  is one 150-line page.
+- **Some thinking is text.** A thinking block whose signature — a protobuf, field 2 > 1 > 8
+  — says `narration` is the model talking to the reader; Desktop shows it as part of the
+  answer and hides the rest of the thinking. `lib/history.mjs` and `app.js` both check it.
+- **The chat keeps its own scroll anchor.** An older page goes in above the reader and its
+  pictures settle a frame later; browser anchoring is not in every Safari and has to be
+  paused while a page is placed, which is when the pictures land. `#scroll` has
+  `overflow-anchor: none` and `app.js` holds the element at the top of the view in place.
 
 ## Git
 

@@ -24,7 +24,7 @@
     const res = await fetch('/api' + path, { ...opts, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token, ...(opts.headers || {}) } });
     if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
     return data;
   }
 
@@ -1698,25 +1698,30 @@
 
   // ---------- thread rendering ----------
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
-  let stickToBottom = true;
-  scroll.addEventListener('scroll', () => { stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  let stickToBottom = true, ownTop = NaN;
+  // Only the reader's own scrolling decides whether the thread sticks to its end. A scroll the
+  // page makes itself (to the end, or past an older page it placed) has its scroll event a frame
+  // later, when the pictures and videos just placed may have grown the thread - and that read as
+  // "the reader left the end": a tall window opened a long session 1,300 px above its end.
+  scroll.addEventListener('scroll', () => { if (Math.abs(scroll.scrollTop - ownTop) < 2) return; ownTop = NaN; stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  const scrollThreadTo = (y) => { scroll.scrollTop = y; ownTop = scroll.scrollTop; };
   // Held while a backlog is drawn in one pass: scrolling after every piece of it made the
   // browser lay the whole thread out again each time. It scrolls once, at the end.
   let holdScroll = false;
-  const autoscroll = () => { if (stickToBottom && !holdScroll) scroll.scrollTop = scroll.scrollHeight; };
+  const autoscroll = () => { if (stickToBottom && !holdScroll) scrollThreadTo(scroll.scrollHeight); };
   // A transcript keeps growing after it is drawn: pictures arrive, fonts settle, long
   // code blocks reflow. Scrolling to the end once therefore lands somewhere in the
   // middle, which is what opening a session used to look like. Stay pinned while it
   // settles, and let go the moment the reader scrolls away themselves.
   let pinTimer = null, pinWatch = null;
   function pinToBottom(ms = 3000) {
-    scroll.scrollTop = scroll.scrollHeight;
+    scrollThreadTo(scroll.scrollHeight);
     clearTimeout(pinTimer); pinWatch?.disconnect();
     if (typeof ResizeObserver !== 'function') return;
     // Both ends move: the thread grows as pictures and fonts arrive, and the window
     // shrinks as the bars below it appear - the git bar, a running task, the update
     // banner. Either one leaves the end off-screen.
-    pinWatch = new ResizeObserver(() => { if (stickToBottom) scroll.scrollTop = scroll.scrollHeight; });
+    pinWatch = new ResizeObserver(() => { if (stickToBottom) scrollThreadTo(scroll.scrollHeight); });
     pinWatch.observe(thread);
     pinWatch.observe(scroll);
     pinTimer = setTimeout(() => { pinWatch?.disconnect(); pinWatch = null; }, ms);
@@ -1750,44 +1755,96 @@
     return { root: m, body, blocks: new Map(), tools: new Map(), group: null };
   }
   // Consecutive tool calls fold into one "Ran 3 commands ›" line, like Desktop.
-  const TOOL_KIND = { Bash: 'command', PowerShell: 'command', Read: 'read', Glob: 'search', Grep: 'search', Edit: 'edit', Write: 'create', NotebookEdit: 'edit', Agent: 'agent', WebFetch: 'fetch', WebSearch: 'browse', SendUserFile: 'sent' };
+  const TASK_STEP = '__task'; // a background task's notice, counted in the group it arrived in
+  const TOOL_KIND = { Bash: 'command', PowerShell: 'command', Read: 'read', Glob: 'search', Grep: 'search', Edit: 'edit', MultiEdit: 'edit', Write: 'create', NotebookEdit: 'edit', Agent: 'agent', Task: 'agent', WebFetch: 'fetch', WebSearch: 'browse', SendUserFile: 'sent', [TASK_STEP]: 'finished' };
   const isSendTool = (n) => n === 'SendUserFile' || /__SendUserFile$/.test(n || '');
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
   const baseName = (p) => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
-  // Desktop's wording, in the order the tools first happened:
-  // "Fetched 4 pages, browsed the web, ran 15 commands, created hasanlu-doc.txt, used a tool"
-  function groupLabel(names, inputs = []) {
-    const order = []; const c = {}; const files = { create: [], edit: [] };
-    names.forEach((n, i) => { const k = isSendTool(n) ? 'sent' : (TOOL_KIND[n] || 'tool'); if (!c[k]) { c[k] = 0; order.push(k); } c[k]++; const f = inputs[i]?.file_path || inputs[i]?.notebook_path; if (f && (k === 'create' || k === 'edit') && !files[k].includes(baseName(f))) files[k].push(baseName(f)); });
-    if (order.includes('tool')) order.push(order.splice(order.indexOf('tool'), 1)[0]); // "used a tool" goes last, as in Desktop
-    const parts = order.map((k) => {
-      switch (k) {
-        case 'fetch': return 'Fetched ' + plural(c[k], 'page', 'pages');
-        case 'browse': return 'Browsed the web';
-        case 'command': return 'Ran ' + plural(c[k], 'command', 'commands');
-        case 'create': return 'Created ' + (files.create.length === 1 ? files.create[0] : plural(c[k], 'file', 'files'));
-        case 'edit': return 'Edited ' + (files.edit.length === 1 ? files.edit[0] : plural(c[k], 'file', 'files'));
-        case 'read': return 'Read ' + plural(c[k], 'file', 'files');
-        case 'search': return 'Searched ' + plural(c[k], 'time', 'times');
-        case 'agent': return 'Ran ' + plural(c[k], 'agent', 'agents');
-        case 'sent': return 'Sent';
-        default: return c[k] === 1 ? 'Used a tool' : 'Used ' + plural(c[k], 'tool', 'tools');
-      }
+  // How one step reads inside an open group, in Desktop's words: a command by its description,
+  // "Read thumb.tsx", "Used claude-anywhere: SendUserFile".
+  function stepTitle(name, input) {
+    const i = input && typeof input === 'object' ? input : {};
+    const first = (s) => String(s || '').split('\n')[0].slice(0, 200);
+    const file = baseName(i.file_path || i.notebook_path || '');
+    switch (name) {
+      case 'Bash': case 'PowerShell': return i.description ? [first(i.description), ''] : ['Ran', first(i.command)];
+      case 'Read': return ['Read', file];
+      case 'Write': return ['Created', file];
+      case 'Edit': case 'MultiEdit': case 'NotebookEdit': return ['Edited', file];
+      case 'Grep': case 'Glob': return ['Searched', first(i.pattern)];
+      case 'WebFetch': return ['Fetched', first(i.url)];
+      case 'WebSearch': return ['Searched the web', first(i.query)];
+      case 'Agent': case 'Task': return i.description ? [first(i.description), ''] : ['Agent', first(i.prompt)];
+      case 'TodoWrite': return ['Updated the task list', ''];
+      case 'Skill': return ['Used a skill', first(i.skill)];
+    }
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(name || '');
+    if (mcp) return ['Used', mcp[1].replace(/^claude_ai_/, '').replace(/_/g, ' ') + ': ' + mcp[2]];
+    return [name, toolSummary(name, i)];
+  }
+  const taskFailed = (names, inputs) => names.some((n, i) => n === TASK_STEP && inputs[i]?.status === 'failed');
+  // A step that ran into an error, or that was stopped before it finished.
+  const STOPPED =/interrupted by user|user doesn.t want to proceed|was stopped|was killed|\bkilled\b/i;
+  // Desktop's wording, in the order the tools first happened, "used a tool" after the others:
+  // "Ran 3 commands, read _ms_stories.jpg, used a tool, finished a background command".
+  // Past four kinds the rest become "and 2 more actions"; one command alone is its description.
+  function groupLabel(names, inputs = [], outcome = {}) {
+    const order = []; const c = {}; const failed = {}; const stopped = {}; const one = {};
+    names.forEach((n, i) => {
+      const k = TOOL_KIND[n] || 'tool'; // a connector's SendUserFile is "used a tool", as Desktop counts it
+      if (!c[k]) { c[k] = 0; failed[k] = 0; stopped[k] = 0; order.push(k); one[k] = i; }
+      c[k]++;
+      if (outcome[i] === 'failed') failed[k]++; else if (outcome[i] === 'stopped') stopped[k]++;
     });
-    if (!parts.length) return 'Worked';
-    return parts.map((p, i) => i ? p[0].toLowerCase() + p.slice(1) : p).join(', ');
+    if (order.includes('tool')) order.push(order.splice(order.indexOf('tool'), 1)[0]);
+    // A background command that failed leads the line (its "Finished" in red); one that ended
+    // well trails it - which is where Desktop puts each.
+    if (order.includes('finished')) { order.splice(order.indexOf('finished'), 1); taskFailed(names, inputs) ? order.unshift('finished') : order.push('finished'); }
+    if (!order.length) return 'Worked';
+    const soleCall = names.length === 1;
+    const said = (k) => {
+      const n = c[k], inp = inputs[one[k]] || {}, file = baseName(inp.file_path || inp.notebook_path || '');
+      switch (k) {
+        case 'fetch': return 'Fetched ' + plural(n, 'page', 'pages');
+        case 'browse': return 'Browsed the web';
+        case 'command': return soleCall && inp.description ? 'Ran ' + String(inp.description).split('\n')[0] : n === 1 ? 'Ran a command' : 'Ran ' + plural(n, 'command', 'commands');
+        case 'create': return n === 1 ? 'Created ' + (order.length === 1 && file ? file : 'a file') : 'Created ' + plural(n, 'file', 'files');
+        case 'edit': return n === 1 ? 'Edited ' + (order.length === 1 && file ? file : 'a file') : 'Edited ' + plural(n, 'file', 'files');
+        case 'read': return n === 1 && file ? 'Read ' + file : 'Read ' + plural(n, 'file', 'files');
+        case 'search': return 'Searched ' + plural(n, 'time', 'times');
+        case 'agent': return 'Ran ' + plural(n, 'agent', 'agents');
+        case 'sent': return 'Sent';
+        case 'finished': return n === 1 ? 'Finished a background command' : 'Finished ' + plural(n, 'background command', 'background commands');
+        default: return n === 1 ? 'Used a tool' : 'Used ' + plural(n, 'tool', 'tools');
+      }
+    };
+    const tally = (f, s) => f || s ? ' (' + [f && f + ' failed', s && s + ' stopped'].filter(Boolean).join(', ') + ')' : '';
+    const shown = order.length > 4 ? order.slice(0, 3) : order;
+    const parts = shown.map((k) => said(k) + (soleCall ? '' : tally(failed[k], stopped[k])));
+    if (shown.length < order.length) {
+      const rest = order.slice(3);
+      const n = rest.reduce((a, k) => a + c[k], 0);
+      parts.push('and ' + plural(n, 'more action', 'more actions') + tally(rest.reduce((a, k) => a + failed[k], 0), rest.reduce((a, k) => a + stopped[k], 0)));
+    }
+    return parts.map((p, i) => i ? p[0].toLowerCase() + p.slice(1) : p).join(', ') + (soleCall && outcome[0] === 'stopped' ? ' · Stopped' : soleCall && outcome[0] === 'failed' ? ' · Failed' : '');
   }
   // Lines a group added / removed, from Write and Edit inputs (the "+137 −0" next to Desktop's group line).
   const lineCount = (s) => { if (!s) return 0; s = String(s); return s.split('\n').length - (s.endsWith('\n') ? 1 : 0); };
   function groupDiff(names, inputs) {
     let add = 0, del = 0;
-    names.forEach((n, i) => { const inp = inputs[i] || {}; if (n === 'Write') add += lineCount(inp.content); else if (n === 'Edit') { add += lineCount(inp.new_string); del += lineCount(inp.old_string); } else if (n === 'NotebookEdit') add += lineCount(inp.new_source); });
+    names.forEach((n, i) => { const inp = inputs[i] || {}; if (n === 'Write') add += lineCount(inp.content); else if (n === 'Edit') { add += lineCount(inp.new_string); del += lineCount(inp.old_string); } else if (n === 'MultiEdit') { for (const e of inp.edits || []) { add += lineCount(e.new_string); del += lineCount(e.old_string); } } else if (n === 'NotebookEdit') add += lineCount(inp.new_source); });
     return { add, del };
   }
   function paintGroupSummary(g) {
+    // A notice with no tool call beside it is a line of its own, as in Desktop: nothing to open.
+    const lone = g._names.length === 1 && g._names[0] === TASK_STEP;
+    g.classList.toggle('lone-task', lone);
+    if (lone) { g.querySelector('summary').textContent = g._inputs[0].line; return; }
     if (g._fromCli) return;
     const s = g.querySelector('summary'); s.innerHTML = '';
-    s.appendChild(document.createTextNode(groupLabel(g._names, g._inputs)));
+    const label = groupLabel(g._names, g._inputs, g._outcome || {});
+    if (label.startsWith('Finished') && taskFailed(g._names, g._inputs)) { s.appendChild(el('span', 'task-failed', 'Finished')); s.appendChild(document.createTextNode(label.slice(8))); }
+    else s.appendChild(document.createTextNode(label));
     const d = groupDiff(g._names, g._inputs);
     if (d.add || d.del) { const st = el('span', 'group-diff'); st.innerHTML = `<span class="add">+${d.add.toLocaleString()}</span> <span class="del">−${d.del.toLocaleString()}</span>`; s.appendChild(st); }
   }
@@ -1808,7 +1865,9 @@
     return card;
   }
   function toolGroupFor(msg) {
-    if (msg.group && msg.group === msg.body.lastElementChild) return msg.group;
+    // The files a connector's SendUserFile delivered sit under its group without closing it.
+    const g0 = msg.group, last = msg.body.lastElementChild;
+    if (g0 && (g0 === last || (g0._cards?.length && g0._cards[g0._cards.length - 1] === last))) return g0;
     const g = el('details', 'tool-group'); g.appendChild(el('summary', null, 'Working')); g.appendChild(el('div', 'group-body'));
     g._names = []; g._inputs = []; msg.body.appendChild(g); msg.group = g; return g;
   }
@@ -1822,32 +1881,35 @@
       const shown = stripHarness(block.text);
       node.innerHTML = md(shown);
       node.classList.toggle('hidden', !shown);
-    } else if (block.type === 'thinking') {
-      if (!node) { node = stepEl('thinking', 'Thought', ''); msg.body.appendChild(node); msg.blocks.set(index, node); msg.group = null; }
-      node.querySelector('.step-body').textContent = block.thinking || '';
-      if (!block.thinking && !block.live) node.classList.add('hidden'); else node.classList.remove('hidden');
-      if (block.live) { node.open = true; node.classList.add('live'); node.querySelector('.name').textContent = 'Thinking'; }
     } else if (block.type === 'tool_use') {
       if (!node) {
         node = stepEl('tool', block.name, ''); node._toolId = block.id;
-        if (isSendTool(block.name)) msg.group = null; // "Sent ›" is its own line in Desktop
+        if (block.name === 'SendUserFile') msg.group = null; // Desktop's own: "Sent ›" is a line of its own
         const g = toolGroupFor(msg); g.querySelector('.group-body').appendChild(node); g._names.push(block.name); g._inputs.push(block.input || {}); node._groupIndex = g._names.length - 1;
         paintGroupSummary(g);
         msg.blocks.set(index, node); msg.tools.set(block.id, node);
       } else if (node._groupIndex != null && node.parentElement?.parentElement) { const g = node.parentElement.parentElement; g._inputs[node._groupIndex] = block.input || {}; paintGroupSummary(g); }
-      node.querySelector('.arg').textContent = toolSummary(block.name, block.input);
+      const [verb, arg] = stepTitle(block.name, block.input);
+      node.querySelector('.name').textContent = verb;
+      node.querySelector('.arg').textContent = arg;
       const b = node.querySelector('.step-body'); b.innerHTML = '';
       b.appendChild(el('div', 'label', 'Input'));
       const pre = el('pre', null, typeof block.input === 'string' ? block.input : JSON.stringify(block.input, null, 2)); b.appendChild(pre);
-      // A file sent to the user is shown below its "Sent ›" line, like Desktop, once the input is complete.
+      // A file sent to the user is shown once the input is complete. Desktop's own SendUserFile
+      // is a "Sent ›" line with the files under it, and the next tool starts a new group. Through
+      // the claude-anywhere connector Desktop counts it in the group ("used a tool"); the group
+      // stays whole here too, and the files it sent are shown under its line.
       if (isSendTool(block.name) && block.input && (block.input.files || block.input.path) && !node._sentCard) {
         node._sentCard = sentCard(block.input);
-        const g = node.parentElement?.parentElement; (g || msg.body).after ? g.after(node._sentCard) : msg.body.appendChild(node._sentCard);
-        msg.group = null; // the next tool starts a new group under the card
+        const g = node.closest('details.tool-group');
+        if (!g) msg.body.appendChild(node._sentCard);
+        else if (block.name === 'SendUserFile') { g.after(node._sentCard); msg.group = null; }
+        else { (g._cards ||= []); (g._cards[g._cards.length - 1] || g).after(node._sentCard); g._cards.push(node._sentCard); }
       }
     }
   }
-  const dataUrl = (img) => img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
+  // History pages carry a URL for each picture instead of its bytes (they were most of a page).
+  const dataUrl = (img) => img?.url ? img.url + '?token=' + encodeURIComponent(state.token || '') : img?.source?.data ? `data:${img.source.media_type || 'image/png'};base64,${img.source.data}` : (img?.dataUrl || '');
   // Desktop shows a player when an answer mentions a video/audio file on the PC, even as a
   // bare path or in backticks (`out/hasanlu.mp4`). Files that do not exist simply drop out.
   // A path that is merely mentioned used to grow a player underneath the message, which
@@ -1866,7 +1928,12 @@
     // Images Claude looked at (Read on a screenshot, a browser capture…) are shown, like Desktop.
     for (const x of blocks) if (x.type === 'image') { const im = el('img', 'tool-img'); im.src = dataUrl(x); im.alt = 'image'; im.loading = 'lazy'; b.appendChild(im); }
     if (blocks.some((x) => x.type === 'image')) { toolNode.open = true; toolNode.classList.add('has-image'); }
-    if (result.is_error) toolNode.classList.add('error');
+    if (result.is_error) {
+      toolNode.classList.add('error');
+      // "Ran 12 commands (2 failed)": the group's line counts what went wrong in it.
+      const g = toolNode.closest('details.tool-group');
+      if (g && toolNode._groupIndex != null) { (g._outcome ||= {})[toolNode._groupIndex] = STOPPED.test(text) ? 'stopped' : 'failed'; paintGroupSummary(g); }
+    }
   }
 
   function userMsg(text, { queued = false, id = null, images = [], uuid = null } = {}) {
@@ -1941,6 +2008,7 @@
   // Copy + time under a finished assistant turn (the Desktop action row).
   function addActions(msg, whenMs) {
     if (!msg?.root || msg.root.querySelector('.msg-actions')) return;
+    const cards = fileCards(msg); if (cards) msg.body.appendChild(cards);
     const row = el('div', 'msg-actions');
     const copy = el('button'); copy.type = 'button'; copy.title = 'Copy';
     copy.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15"><rect x="7" y="7" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v6A1.5 1.5 0 0 0 5.5 13H7" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
@@ -1950,33 +2018,271 @@
     msg.body.appendChild(row);
   }
 
+  // Narration: a thinking block the model meant to be read, which Desktop draws as part of the
+  // answer while the rest of the thinking stays hidden. Its signature is a protobuf that says
+  // "narration" at field 2 > 1 > 8. History pages arrive with this already done by the server
+  // (lib/history.mjs); a turn watched live needs it here.
+  function pbField(buf, want) {
+    let i = 0, found;
+    const varint = () => { let v = 0, m = 1; while (i < buf.length) { const b = buf[i++]; v += (b & 127) * m; if (!(b & 128)) return v; m *= 128; } return -1; };
+    while (i < buf.length) {
+      const key = varint(); if (key < 0) return undefined;
+      const wire = key & 7, no = Math.floor(key / 8);
+      if (wire === 0) { if (varint() < 0) return undefined; }
+      else if (wire === 1) i += 8;
+      else if (wire === 5) i += 4;
+      else if (wire === 2) { const len = varint(); if (len < 0 || len > buf.length - i) return undefined; if (no === want) found = buf.subarray(i, i + len); i += len; }
+      else return undefined;
+    }
+    return i === buf.length ? found : undefined;
+  }
+  function isNarration(b) {
+    if (b?.type !== 'thinking' || typeof b.signature !== 'string' || !b.signature) return false;
+    try {
+      const raw = atob(b.signature), bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const f2 = pbField(bytes, 2), f1 = f2 && pbField(f2, 1), f8 = f1 && pbField(f1, 8);
+      return !!f8 && new TextDecoder().decode(f8) === 'narration';
+    } catch { return false; }
+  }
+  const asShown = (b) => b?.type === 'thinking' ? (isNarration(b) && b.thinking ? { type: 'text', text: b.thinking } : null) : b?.type === 'redacted_thinking' ? null : b;
+
+  // ---------- history: the transcript, drawn a page at a time ----------
+  // One assistant row per turn, like Desktop. A page never holds a tool result without its call
+  // (the server begins pages where that holds), so each page keeps its own map of calls.
+  // Thinking is not drawn: Desktop shows the answer, the tool calls and the "Thinking…" line
+  // while it happens, and a transcript full of "Thought" rows read differently from it.
+  function historyRenderer(into) {
+    const toolNodes = new Map();
+    let row = null, lastAt = 0, compact = null;
+    const openRow = () => (row = row || assistantMsg());
+    const place = () => { if (!row.placed) { into.appendChild(row.root); row.placed = true; } };
+    const closeRow = () => { if (row?.placed) addActions(row, lastAt); row = null; };
+    return {
+      add(m) {
+        if (m.role !== 'compact_summary') compact = null;
+        switch (m.role) {
+          case 'user': {
+            for (const r of m.content.filter((b) => b.type === 'tool_result')) attachResult(toolNodes.get(r.tool_use_id), r);
+            const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
+            const images = m.content.filter((b) => b.type === 'image');
+            // A message typed mid-turn, or one from before a compaction, is not a point to rewind to.
+            if (text || images.length) { closeRow(); into.appendChild(userMsg(text, { images, uuid: m.queued || m.old ? null : m.uuid })); }
+            break;
+          }
+          case 'assistant': {
+            const r = openRow(); let any = false;
+            m.content.forEach((b, i) => {
+              if (b.type === 'thinking' || b.type === 'redacted_thinking') return;
+              const key = m.uuid + ':' + i;
+              renderBlock(r, key, b); any = true;
+              if (b.type === 'tool_use') toolNodes.set(b.id, r.blocks.get(key));
+            });
+            if (any) place();
+            break;
+          }
+          case 'task': addTaskStep(openRow(), m, toolNodes.get(m.toolUseId)); place(); break;
+          case 'notice': { const n = noticeRow(m); if (row) { row.body.appendChild(n); row.group = null; place(); } else into.appendChild(n); break; }
+          case 'compact': closeRow(); compact = compactRow(m); into.appendChild(compact); break;
+          case 'compact_summary': if (compact) setCompactSummary(compact, m.text); break;
+        }
+        if (m.timestamp) lastAt = Date.parse(m.timestamp) || lastAt;
+      },
+      // `finished`: false when the turn goes on in the page drawn after this one.
+      end(finished = true) { if (row?.placed && finished) addActions(row, lastAt); },
+    };
+  }
   function renderHistory(messages) {
     thread.innerHTML = '';
-    const toolNodes = new Map();
-    let group = null; // the assistant row for the current turn
-    let lastAt = 0;
-    for (const m of messages) {
-      if (m.role === 'user') {
-        const results = m.content.filter((b) => b.type === 'tool_result');
-        for (const r of results) attachResult(toolNodes.get(r.tool_use_id), r);
-        const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
-        const images = m.content.filter((b) => b.type === 'image');
-        if (text || images.length) { if (group) addActions(group, lastAt); thread.appendChild(userMsg(text, { images, uuid: m.uuid })); group = null; }
-      } else if (m.role === 'assistant') {
-        // One assistant row per turn: consecutive assistant API messages share it, like Desktop.
-        if (!group) group = assistantMsg();
-        let any = false;
-        m.content.forEach((b, i) => {
-          if (b.type === 'thinking' && !b.thinking) return;
-          const key = m.uuid + ':' + i;
-          renderBlock(group, key, b); any = true;
-          if (b.type === 'tool_use') toolNodes.set(b.id, group.blocks.get(key));
-        });
-        if (m.timestamp) lastAt = Date.parse(m.timestamp) || lastAt;
-        if (any && !group.root.isConnected) thread.appendChild(group.root);
-      }
+    const r = historyRenderer(thread);
+    for (const m of messages) r.add(m);
+    r.end();
+  }
+
+  // The files a turn wrote, as cards under its answer - Desktop's "doc-masjed.md  +68 −0 ›" -
+  // each opening its diff in Changes. A write that failed changed nothing and has no card.
+  function fileCards(msg) {
+    const files = new Map();
+    for (const g of msg.body.querySelectorAll(':scope > details.tool-group')) {
+      (g._names || []).forEach((n, i) => {
+        if (!/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(n) || g._outcome?.[i]) return;
+        const inp = g._inputs[i] || {}, p = inp.file_path || inp.notebook_path;
+        if (!p) return;
+        const d = groupDiff([n], [inp]), f = files.get(p) || { add: 0, del: 0 };
+        f.add += d.add; f.del += d.del; files.set(p, f);
+      });
     }
-    if (group) addActions(group, lastAt);
+    if (!files.size) return null;
+    const wrap = el('div', 'file-cards');
+    for (const [p, f] of files) {
+      const card = el('button', 'file-card'); card.type = 'button'; card.title = p;
+      card.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15"><path d="M5.5 2.5h6l4 4v11h-10z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M11.5 2.5v4h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+      card.appendChild(el('span', 'fc-name', baseName(p)));
+      const st = el('span', 'fc-diff'); st.innerHTML = `<span class="add">+${f.add.toLocaleString()}</span> <span class="del">−${f.del.toLocaleString()}</span>`;
+      card.appendChild(st); card.appendChild(el('span', 'fc-chev', '›'));
+      card.addEventListener('click', () => openFileChange(p));
+      wrap.appendChild(card);
+    }
+    return wrap;
+  }
+  // Inside the session's folder a changed file opens as its diff; anywhere else, as the file.
+  function openFileChange(p) {
+    const cwd = String(state.cwd || '').replace(/[\\/]+$/, ''), norm = (s) => s.replace(/\\/g, '/').toLowerCase();
+    if (cwd && norm(p).startsWith(norm(cwd) + '/')) { openChanges(); loadDiff(p.slice(cwd.length + 1).replace(/\\/g, '/')); }
+    else { openFiles(); openFileAt(p, baseName(p)); }
+  }
+
+  // A background task's notice goes where Desktop puts it: into the run of tool calls it came
+  // in with ("Ran 3 commands, …, finished a background command"), or as a line of its own
+  // between answers ("Background task stopped · …").
+  function taskLine(m) {
+    const st = m.status === 'completed' ? 'completed' : m.status === 'failed' ? 'failed' : m.status ? 'stopped' : 'finished';
+    if (m.command) return 'Background command ' + st + ' · ' + m.command;
+    const monitor = String(m.summary || '').match(/^Monitor event:\s*"?([\s\S]*?)"?$/);
+    if (monitor) return 'Monitor event · ' + monitor[1];
+    return 'Background task ' + st + (m.summary ? ' · ' + m.summary : '');
+  }
+  function addTaskStep(msg, m, started = null) {
+    // A background command that failed later counts as failed where it was started - Desktop's
+    // "Ran 12 commands (2 failed)" includes it - even when that group is long closed.
+    const src = started || (m.toolUseId ? findTool(m.toolUseId) : null);
+    const sg = src?.closest('details.tool-group');
+    if (sg && src._groupIndex != null && (m.status === 'failed' || m.status === 'stopped') && !sg._outcome?.[src._groupIndex]) { (sg._outcome ||= {})[src._groupIndex] = m.status; paintGroupSummary(sg); }
+    const g = toolGroupFor(msg);
+    const line = taskLine(m);
+    const n = el('div', 'step task-step' + (m.status === 'failed' ? ' error' : ''), line); n.dir = 'auto';
+    g.querySelector('.group-body').appendChild(n);
+    g._names.push(TASK_STEP); g._inputs.push({ line, status: m.status });
+    paintGroupSummary(g);
+  }
+  const noticeRow = (m) => el('div', 'note' + (m.level === 'error' ? ' error' : ''), m.text);
+  const fmtTokens = (n) => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+  // Where the context was compacted. Everything above it is still here - only Claude's working
+  // memory was summarised - and the summary it kept opens under the marker.
+  function compactRow(m) {
+    const d = el('details', 'compact-mark');
+    d.appendChild(el('summary', null, 'Compacted session' + (m.preTokens ? ' · from ' + fmtTokens(m.preTokens) + ' tokens' : '')));
+    return d;
+  }
+  function setCompactSummary(d, text) {
+    const t = String(text || '').replace(/^This session is being continued from a previous conversation[^\n]*\n+/, '').trim();
+    if (!t || d.querySelector('.compact-summary')) return;
+    const b = el('div', 'prose compact-summary'); b.dir = 'auto'; b.innerHTML = md(t); d.appendChild(b);
+  }
+
+  // An older page that ends partway through the turn the next page starts with: the halves
+  // become one assistant row again, and a run of tool calls cut in two becomes one group.
+  // The newer row is the one kept - a live turn may still be adding to it.
+  function joinTurn(older, newer) {
+    if (!older?.classList?.contains('assistant') || !newer?.classList?.contains('assistant')) return;
+    const ob = older.querySelector('.msg-body'), nb = newer.querySelector('.msg-body');
+    ob.querySelectorAll(':scope > .msg-actions, :scope > .file-cards').forEach((n) => n.remove());
+    // The older half may end in files its group sent, which sit after the group without ending it.
+    let og = ob.lastElementChild;
+    if (og?.classList.contains('sent-card')) {
+      let p = og;
+      while (p?.classList.contains('sent-card')) p = p.previousElementSibling;
+      if (p?.classList.contains('tool-group') && p._cards?.includes(og)) og = p;
+    }
+    const ng = nb.firstElementChild;
+    if (og?.classList.contains('tool-group') && ng?.classList.contains('tool-group')) {
+      const body = ng.querySelector('.group-body'), shift = og._names.length, out = { ...(og._outcome || {}) };
+      for (const [k, v] of Object.entries(ng._outcome || {})) out[+k + shift] = v;
+      body.prepend(...og.querySelector('.group-body').childNodes);
+      ng._names = og._names.concat(ng._names); ng._inputs = og._inputs.concat(ng._inputs); ng._outcome = out;
+      [...body.children].forEach((c, i) => { c._groupIndex = i; });
+      // files the older half sent go under the joined group's line, before the newer half's
+      let after = ng; for (const c of og._cards || []) { after.after(c); after = c; }
+      ng._cards = (og._cards || []).concat(ng._cards || []);
+      og.remove(); paintGroupSummary(ng);
+    }
+    nb.prepend(...ob.childNodes);
+    older.remove();
+  }
+
+  // ---------- older pages, fetched as the reader nears the top (Desktop pages the same way) ----------
+  const hist = { id: null, before: 0, more: false, midTurn: false, until: 0, loading: false, failed: false, el: null };
+  let reanchor = () => {}; // the thread's own scroll anchor, below
+  function paintHistoryTop() {
+    if (!hist.more && !hist.failed) { hist.el?.remove(); hist.el = null; return; }
+    if (!hist.el?.isConnected) { hist.el = el('div', 'history-top'); thread.prepend(hist.el); }
+    const n = hist.el; n.innerHTML = '';
+    if (hist.failed) {
+      n.appendChild(el('span', null, 'Couldn’t load earlier messages.'));
+      const b = el('button', 'link-btn inline', 'Try again'); b.type = 'button';
+      b.addEventListener('click', () => { hist.failed = false; paintHistoryTop(); loadOlder(); });
+      n.appendChild(b);
+    } else n.appendChild(el('span', 'shimmer', 'Loading earlier messages…'));
+  }
+  async function loadOlder() {
+    if (!hist.more || hist.loading || hist.failed || !hist.id || hist.id !== state.current) return;
+    const id = hist.id, seq = openSeq;
+    hist.loading = true;
+    try {
+      const p = await api(`/sessions/${id}/history?before=${hist.before}` + (hist.until ? '&until=' + hist.until : ''));
+      if (seq !== openSeq) return;
+      const frag = document.createDocumentFragment();
+      const r = historyRenderer(frag);
+      for (const m of p.messages) r.add(m);
+      r.end(!hist.midTurn);
+      // Keep what is on screen where it is: moved once, by exactly what went in above.
+      const h0 = scroll.scrollHeight, t0 = scroll.scrollTop;
+      const first = hist.el ? hist.el.nextSibling : thread.firstChild;
+      thread.insertBefore(frag, first);
+      if (hist.midTurn) joinTurn(first?.previousElementSibling, first);
+      hist.before = p.before; hist.more = !!p.more; hist.midTurn = !!p.midTurn;
+      paintHistoryTop();
+      // A reader at the end stays at the end; anyone else keeps what they were looking at.
+      scrollThreadTo(stickToBottom ? scroll.scrollHeight : t0 + (scroll.scrollHeight - h0));
+      reanchor();
+    } catch (e) {
+      if (seq === openSeq) { hist.failed = true; paintHistoryTop(); }
+    } finally { if (seq === openSeq) hist.loading = false; }
+    if (seq === openSeq) fillTop();
+  }
+  // Near the top - a short first page, or a quick flick upwards - the next page is on its way.
+  function fillTop() { if (hist.more && !hist.loading && !hist.failed && scroll.scrollTop < 900) loadOlder(); }
+  scroll.addEventListener('scroll', fillTop, { passive: true });
+  // What the reader is looking at stays where it is while the thread changes size above it: an
+  // older page going in, and the pictures it brings, which settle a frame or two later. A
+  // browser's own scroll anchoring is not everywhere (Safari), and where it is it has to be
+  // paused while a page is placed - the pictures landed in that pause and moved the view 167 px
+  // on an iPhone. So the thread keeps one anchor of its own, the element at the top of the
+  // view, the same in every browser, and the browser's is off (#scroll, theme v50).
+  if (typeof ResizeObserver === 'function') {
+    let anchor = null, anchorTop = 0;
+    // The first element that starts inside the view: the reader's first line. What only crosses
+    // the top edge is mostly out of sight, and a picture that finishes loading in it should grow
+    // it upwards, out of view, not push down everything the reader is looking at - so the anchor
+    // is inside such an element (a message spanning the edge) or right after it.
+    const after = (n) => { while (n && n !== thread && !n.nextElementSibling) n = n.parentElement; return n && n !== thread ? n.nextElementSibling : null; };
+    // Inside a message some blocks are not drawn (an answer that was only harness notes) and
+    // measure 0 at the top of the page, so they are passed over rather than searched.
+    const drawn = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 || r.height > 0; };
+    const atTop = () => {
+      const edge = scroll.getBoundingClientRect().top;
+      // The thread's rows can run to thousands: a binary search for the first one reaching below the edge.
+      const rows = thread.children;
+      let lo = 0, hi = rows.length - 1, pick = null;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (rows[mid].getBoundingClientRect().bottom <= edge) lo = mid + 1; else { pick = rows[mid]; hi = mid - 1; } }
+      for (let depth = 0; pick && depth < 5; depth++) {
+        // The "Loading earlier messages" line stays on top while pages go in under it: never the anchor.
+        if (pick.classList.contains('history-top')) { pick = pick.nextElementSibling; continue; }
+        if (pick.getBoundingClientRect().top >= edge - 0.5) return pick;
+        const inner = pick.classList.contains('msg') ? pick.querySelector('.msg-body') : pick.matches('details.tool-group[open]') ? pick.querySelector('.group-body') : null;
+        const next = inner && [...inner.children].find((c) => drawn(c) && c.getBoundingClientRect().bottom > edge);
+        if (!next) return after(pick) || pick;
+        pick = next;
+      }
+      return pick;
+    };
+    const remember = () => { anchor = stickToBottom ? null : atTop(); if (anchor) anchorTop = anchor.getBoundingClientRect().top; };
+    scroll.addEventListener('scroll', remember, { passive: true });
+    reanchor = remember; // an older page, placed and scrolled for: measure from here, not from before it
+    new ResizeObserver(() => {
+      if (anchor?.isConnected && !stickToBottom && !holdScroll) { const d = anchor.getBoundingClientRect().top - anchorTop; if (Math.abs(d) >= 1) scrollThreadTo(scroll.scrollTop + d); }
+      remember();
+    }).observe(thread);
   }
 
   // ---------- tasks: what the turn is running (commands, subagents, workflows) ----------
@@ -2949,6 +3255,22 @@
           state.live = null; thread.appendChild(userMsg(text, { images })); autoscroll(); break;
         }
         case 'mode': break;
+        // A background task's notice, a message typed mid-turn, a compaction, a notice - drawn
+        // as the history draws them, into the turn that is under way.
+        case 'row': {
+          const m = ev.m; if (!m) break;
+          if (m.role === 'user') {
+            const text = m.content.filter((b) => b.type === 'text').map((b) => stripHarness(b.text)).filter(Boolean).join('\n\n');
+            const images = m.content.filter((b) => b.type === 'image');
+            if (text || images.length) { state.live = null; thread.appendChild(userMsg(text, { images })); }
+          } else if (m.role === 'task') {
+            if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
+            addTaskStep(state.live, m);
+          } else if (m.role === 'compact') { state.live = null; thread.appendChild(compactRow(m)); }
+          else if (m.role === 'compact_summary') { const c = thread.lastElementChild; if (c?.classList.contains('compact-mark')) setCompactSummary(c, m.text); }
+          else if (m.role === 'notice') { const n = noticeRow(m); if (state.live) { state.live.body.appendChild(n); state.live.group = null; } else thread.appendChild(n); }
+          autoscroll(); break;
+        }
         case 'queued': {
           if (ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`)) break;
           // our own ghost bubble, posted a moment ago and not yet tagged with its id
@@ -2994,21 +3316,18 @@
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
           partial.set(ev.index, { type: ev.block.type, name: ev.block.name, id: ev.block.id, text: '', thinking: '', json: '', since: ev.at || Date.now() });
           if (ev.block.type === 'tool_use') { renderBlock(state.live, key(ev.index), { type: 'tool_use', name: ev.block.name, id: ev.block.id, input: {} }); status.tool = ev.block.name; status.toolSince = 0; }
-          if (ev.block.type === 'thinking') { renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: '', live: true }); status.verb = 'Thinking'; }
+          if (ev.block.type === 'thinking') status.verb = 'Thinking'; // the status line says so; the thoughts are not drawn, as in Desktop
           if (ev.block.type === 'text') { status.tool = null; status.verb = 'Writing'; }
           statusPaint(); autoscroll();
           break;
         case 'delta': {
           const p = partial.get(ev.index); if (!p || !state.live) break;
           if (ev.kind === 'text_delta') { p.text += ev.text; renderBlock(state.live, key(ev.index), { type: 'text', text: p.text }); state.live.blocks.get(key(ev.index))?.classList.add('cursor'); }
-          else if (ev.kind === 'thinking_delta') { p.thinking += ev.text; renderBlock(state.live, key(ev.index), { type: 'thinking', thinking: p.thinking, live: true }); }
           else if (ev.kind === 'input_json_delta') { p.json += ev.text; const n = state.live.blocks.get(key(ev.index)); if (n) n.querySelector('.arg').textContent = p.json.slice(0, 200); }
           autoscroll(); break;
         }
         case 'block_stop': {
-          const n = state.live?.blocks.get(key(ev.index)); n?.classList.remove('cursor');
-          const p = partial.get(ev.index);
-          if (n && p?.type === 'thinking') { n.open = false; n.classList.remove('live'); n.querySelector('.name').textContent = 'Thought for ' + Math.max(1, Math.round(((ev.at || Date.now()) - p.since) / 1000)) + 's'; if (!p.thinking) n.classList.add('hidden'); }
+          state.live?.blocks.get(key(ev.index))?.classList.remove('cursor');
           break;
         }
         case 'assistant':
@@ -3016,18 +3335,18 @@
           if (!state.live) { state.live = assistantMsg(); thread.appendChild(state.live.root); }
           if (ev.tail) {
             // From the transcript file: one finished block per line, keyed by its uuid.
-            ev.content.forEach((b, i) => { if (b.type === 'thinking' && !b.thinking) return; renderBlock(state.live, ev.uuid + ':' + i, b); });
+            ev.content.forEach((b, i) => { const s = asShown(b); if (s) renderBlock(state.live, ev.uuid + ':' + i, s); });
             autoscroll(); break;
           }
           // The SDK emits one `assistant` message per finished block, so its content index is not
           // the stream index. Match tool blocks by id and text/thinking blocks by the latest
           // streamed block of that type.
-          for (const b of ev.content) {
-            if (b.type === 'thinking' && !b.thinking) continue;
+          for (const raw of ev.content) {
+            const b = asShown(raw); if (!b) continue;
             let k = null;
             if (b.type === 'tool_use') { for (const [kk, n] of state.live.blocks) if (n._toolId === b.id) k = kk; }
-            else { for (const [idx, p] of partial) if (p.type === b.type) k = key(idx); }
-            renderBlock(state.live, k ?? key('final:' + b.type + ':' + (b.id || msgNo)), b);
+            else { for (const [idx, p] of partial) if (p.type === raw.type) k = key(idx); }
+            renderBlock(state.live, k ?? key('final:' + raw.type + ':' + (b.id || msgNo)), b);
           }
           autoscroll(); break;
         case 'tool_results':
@@ -3493,14 +3812,22 @@
       if (seq !== openSeq) return;
       // A turn started here and still running is replayed by the live stream from
       // its prompt onwards, so the history stops just before it.
-      const messages = await api(`/sessions/${id}/messages` + (info.live && info.runStartedAt ? '?before=' + info.runStartedAt : ''));
+      const until = info.live && info.runStartedAt ? info.runStartedAt : 0;
+      // The newest page only; older ones come as the reader scrolls up. A server from before
+      // paging has no /history and answers with the whole list.
+      let page;
+      try { page = await api(`/sessions/${id}/history` + (until ? '?until=' + until : '')); }
+      catch (e) { if (e.status !== 404) throw e; page = { messages: await api(`/sessions/${id}/messages` + (until ? '?before=' + until : '')), more: false }; }
       if (seq !== openSeq) return;
+      const messages = page.messages;
+      Object.assign(hist, { id, before: page.before, more: !!page.more, midTurn: !!page.midTurn, until, loading: false, failed: false, el: null });
       $('#chat-title').textContent = info.title;
       applySessionSettings(info.settings);
       $('#chat-meta').textContent = info.project || '';
       $('#chat-meta').title = [info.cwd, info.branch && 'Branch: ' + info.branch].filter(Boolean).join('\n');
       state.cwd = info.cwd || state.cwd; renderProjectChip(); pvFollow(); $('#project-btn').classList.add('locked');
       renderHistory(messages);
+      paintHistoryTop();
       // The last turn never finished (the app or the PC restarted mid-work): say so, offer to go on.
       if (info.interrupted) {
         const n = el('div', 'interrupted');
@@ -3510,6 +3837,7 @@
         n.appendChild(b); thread.appendChild(n);
       }
       stickToBottom = true; pinToBottom();
+      requestAnimationFrame(fillTop); // a first page shorter than the window brings the next one
       setRunning(false); setElsewhere(false);
       markRead(id);
       subscribe(id); // streams our own turn, or follows the file if another window is working
@@ -3522,6 +3850,7 @@
   }
   function openNew() {
     openSeq++; // a session still loading must not paint over the new-chat screen
+    hist.id = null; hist.more = false;
     state.current = null; state.live = null; state.tasks = []; hiddenTasks.clear(); paintTasks(); if (changesOpen) closeChanges(); if (filesOpen) closeFiles(); stopPrWatch(); $("#sb-pr-state").classList.add("hidden");
     if (state.es) { state.es.close(); state.es = null; }
     app.classList.remove('sidebar-open');
