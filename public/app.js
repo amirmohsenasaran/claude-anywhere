@@ -1698,12 +1698,12 @@
 
   // ---------- thread rendering ----------
   const thread = $('#thread'), scroll = $('#scroll'), empty = $('#empty');
-  let stickToBottom = true, ownTop = -1;
+  let stickToBottom = true, ownTop = NaN;
   // Only the reader's own scrolling decides whether the thread sticks to its end. A scroll the
   // page makes itself (to the end, or past an older page it placed) has its scroll event a frame
   // later, when the pictures and videos just placed may have grown the thread - and that read as
   // "the reader left the end": a tall window opened a long session 1,300 px above its end.
-  scroll.addEventListener('scroll', () => { if (Math.abs(scroll.scrollTop - ownTop) < 2) return; ownTop = -1; stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
+  scroll.addEventListener('scroll', () => { if (Math.abs(scroll.scrollTop - ownTop) < 2) return; ownTop = NaN; stickToBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 80; });
   const scrollThreadTo = (y) => { scroll.scrollTop = y; ownTop = scroll.scrollTop; };
   // Held while a backlog is drawn in one pass: scrolling after every piece of it made the
   // browser lay the whole thread out again each time. It scrolls once, at the end.
@@ -2251,21 +2251,30 @@
   // view, the same in every browser, and the browser's is off (#scroll, theme v50).
   if (typeof ResizeObserver === 'function') {
     let anchor = null, anchorTop = 0;
-    // The first element crossing the top of the view, looking inside a message that spans it.
+    // The first element that starts inside the view: the reader's first line. What only crosses
+    // the top edge is mostly out of sight, and a picture that finishes loading in it should grow
+    // it upwards, out of view, not push down everything the reader is looking at - so the anchor
+    // is inside such an element (a message spanning the edge) or right after it.
+    const after = (n) => { while (n && n !== thread && !n.nextElementSibling) n = n.parentElement; return n && n !== thread ? n.nextElementSibling : null; };
+    // Inside a message some blocks are not drawn (an answer that was only harness notes) and
+    // measure 0 at the top of the page, so they are passed over rather than searched.
+    const drawn = (n) => { const r = n.getBoundingClientRect(); return r.width > 0 || r.height > 0; };
     const atTop = () => {
       const edge = scroll.getBoundingClientRect().top;
-      let list = thread.children, found = null;
-      for (let depth = 0; depth < 3 && list.length; depth++) {
-        let lo = 0, hi = list.length - 1, pick = null;
-        while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].getBoundingClientRect().bottom <= edge) lo = mid + 1; else { pick = list[mid]; hi = mid - 1; } }
-        if (!pick) break;
-        found = pick;
-        const body = pick.classList.contains('msg') ? pick.querySelector('.msg-body') : null;
-        if (!body || pick.getBoundingClientRect().top >= edge) break;
-        list = body.children;
+      // The thread's rows can run to thousands: a binary search for the first one reaching below the edge.
+      const rows = thread.children;
+      let lo = 0, hi = rows.length - 1, pick = null;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (rows[mid].getBoundingClientRect().bottom <= edge) lo = mid + 1; else { pick = rows[mid]; hi = mid - 1; } }
+      for (let depth = 0; pick && depth < 5; depth++) {
+        // The "Loading earlier messages" line stays on top while pages go in under it: never the anchor.
+        if (pick.classList.contains('history-top')) { pick = pick.nextElementSibling; continue; }
+        if (pick.getBoundingClientRect().top >= edge - 0.5) return pick;
+        const inner = pick.classList.contains('msg') ? pick.querySelector('.msg-body') : pick.matches('details.tool-group[open]') ? pick.querySelector('.group-body') : null;
+        const next = inner && [...inner.children].find((c) => drawn(c) && c.getBoundingClientRect().bottom > edge);
+        if (!next) return after(pick) || pick;
+        pick = next;
       }
-      // The "Loading earlier messages" line stays on top while pages go in under it: never the anchor.
-      return found?.classList.contains('history-top') ? found.nextElementSibling : found;
+      return pick;
     };
     const remember = () => { anchor = stickToBottom ? null : atTop(); if (anchor) anchorTop = anchor.getBoundingClientRect().top; };
     scroll.addEventListener('scroll', remember, { passive: true });

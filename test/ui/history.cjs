@@ -47,22 +47,29 @@ async function upToStart(page, max = 60) {
   }
   return !(await page.$('.history-top'));
 }
-// Scroll to the top once and measure how far a bubble that is on screen moved when the older
-// page landed above it. It should not move - give or take the pixel or two a picture that
-// finishes loading inside the view moves what is under it, in any browser. (Before the thread
-// kept its own anchor, an iPhone moved 167 px.)
+// Scroll to the top once and measure how far what was on screen moved when the older page landed
+// above it, with its pictures arriving late. It should not move; 4 px is for rounding. (Before
+// the thread kept its own anchor, an iPhone moved 167 px; anchored to an element only half in
+// view, the pictures loading in it moved Linux's WebKit 434 px.)
 const STILL = 4;
+// Pictures arrive late, as on a phone or a slow machine: after the older page is placed.
+const late = (ctx) => ctx.route(/\/api\/file\?/, async (r) => { await wait(700); r.continue().catch(() => {}); });
 async function drift(page) {
   const before = await page.evaluate(() => {
     const sc = document.getElementById('scroll'); sc.scrollTop = 0;
-    const ref = [...document.querySelectorAll('#thread .msg.user')].find((m) => m.getBoundingClientRect().bottom > sc.getBoundingClientRect().top);
+    // The first thing that was on screen under the loading line. Nothing below it can move it,
+    // so any movement is the older page's going in above it (or its pictures settling there).
+    const first = [...document.getElementById('thread').children].find((c) => !c.classList.contains('history-top'));
+    const ref = first.classList.contains('msg') ? first.querySelector('.msg-body').firstElementChild || first : first;
     ref.dataset.anchor = '1';
-    return { top: ref.getBoundingClientRect().top, n: document.querySelectorAll('#thread *').length };
+    return { top: ref.getBoundingClientRect().top, n: document.querySelectorAll('#thread *').length, at: sc.scrollTop, h: sc.scrollHeight, ref: ref.className + ' "' + ref.textContent.slice(0, 40) + '"' };
   });
   await until(() => page.evaluate((k) => document.querySelectorAll('#thread *').length > k, before.n), 8000);
-  await wait(300);
-  const after = await page.evaluate(() => document.querySelector('[data-anchor="1"]').getBoundingClientRect().top);
-  return Math.abs(after - before.top);
+  await wait(1200);
+  const after = await page.evaluate(() => { const sc = document.getElementById('scroll'); return { top: document.querySelector('[data-anchor="1"]').getBoundingClientRect().top, at: sc.scrollTop, h: sc.scrollHeight }; });
+  const moved = Math.abs(after.top - before.top);
+  // What a failure in CI needs to be read: where the page was, what it measured, how it changed.
+  return { moved, detail: `${moved} px; ref ${before.ref}; top ${before.top} -> ${after.top}; scrollTop ${before.at} -> ${after.at}; height ${before.h} -> ${after.h}` };
 }
 
 async function main() {
@@ -92,14 +99,14 @@ async function main() {
 
   // ---------- desktop, Chromium ----------
   {
-    const { browser, page, errors, requests } = await open(chromium, { viewport: { width: 1380, height: 900 } });
+    const { browser, page, errors, requests } = await open(chromium, { viewport: { width: 1380, height: 900 } }, late);
     const rows = await rowsOf(page);
     check('it opens on the newest page, not the whole session', requests.length <= 2 && !(await text(page)).includes('Turn 1: build thing 1'), requests.length + ' requests');
     check('the newest turn is at the bottom: its notice, then the file it wrote', rows.at(-2)?.startsWith("NOTICE Background task stopped · 2 background shell command tasks didn't finish") && /^CARDS thing-80\.txt\+3 −0/.test(rows.at(-1) || ''), rows.slice(-3).join(' / '));
     check('while there is more, the top says it is loading earlier messages', rows[0] === 'TOP Loading earlier messages…', rows[0]);
     await shot(page, 'history-end');
-    const moved = await drift(page);
-    check('an older page lands above without moving what is on screen', moved < STILL, moved + ' px');
+    const d = await drift(page);
+    check('an older page lands above without moving what is on screen', d.moved < STILL, d.detail);
     check('it reaches the first message, and the loading line goes', await upToStart(page) && (await text(page)).includes('Turn 1: build thing 1'));
     const all = await rowsOf(page);
     const joined = all.join('\n');
@@ -176,12 +183,12 @@ async function main() {
 
   // ---------- an iPhone, WebKit ----------
   {
-    const { browser, page, errors } = await open(webkit, { ...devices['iPhone 13'] });
+    const { browser, page, errors } = await open(webkit, { ...devices['iPhone 13'] }, late);
     const rows = await rowsOf(page);
     check('iPhone: opens on the newest turn', /^CARDS thing-80\.txt/.test(rows.at(-1) || ''), rows.at(-1));
     await shot(page, 'history-phone');
-    const moved = await drift(page);
-    check('iPhone: an older page lands without moving what is on screen', moved < STILL, moved + ' px');
+    const d = await drift(page);
+    check('iPhone: an older page lands without moving what is on screen', d.moved < STILL, d.detail);
     check('iPhone: it reaches the first message', await upToStart(page) && (await text(page)).includes('Turn 1: build thing 1'));
     check('iPhone: no errors on the page', !errors.length, errors.join(' | '));
     await browser.close();
