@@ -114,6 +114,83 @@ export function makeSession(configDir, cwd, id = 'cccccccc-1111-2222-3333-444444
   return id;
 }
 
+// A thinking block's signature, the way the API writes one: a protobuf whose field 2 > 1 > 8 is
+// "narration" when the model meant the block to be read. Any other word there is thinking.
+const pbBytes = (field, bytes) => Buffer.concat([Buffer.from([(field << 3) | 2, bytes.length]), bytes]);
+export const thinkingSignature = (kind) => Buffer.concat([Buffer.from([0x08, 0x04]), pbBytes(2, pbBytes(1, pbBytes(8, Buffer.from(kind))))]).toString('base64');
+export const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+// A long session the way a day of work leaves one: turns of commands, reads and writes, two
+// compactions, a message answered by a second process off the parent chain, background
+// commands whose notices arrive mid-turn (one fails), a message typed mid-turn, thinking that
+// is narration and thinking that is not, pictures - and the lines nobody is shown: meta
+// prompts, the CLI answering itself, a subagent's sidechain, titles and queue bookkeeping.
+// `said` lists what the chat must show and `hidden` what it must not.
+export function makeLongSession(configDir, cwd, { id = 'eeeeeeee-1111-2222-3333-444444444444', turns = 60 } = {}) {
+  const dir = path.join(configDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(cwd, { recursive: true });
+  let n = 0, clock = Date.now() - (turns + 5) * 90 * 1000, parent = null;
+  const lines = [], said = [], hidden = [];
+  const uid = () => `${id.slice(0, 8)}-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+  const add = (o) => { const l = { parentUuid: parent, isSidechain: false, userType: 'external', cwd, sessionId: id, version: '2.1.281', gitBranch: 'main', ...o, uuid: uid(), timestamp: new Date((clock += 1000)).toISOString() }; lines.push(l); parent = l.uuid; return l; };
+  const msg = (content) => ({ model: 'claude-opus-5-5', id: 'msg_' + (n + 1), type: 'message', role: 'assistant', content });
+  const user = (text) => add({ type: 'user', message: { role: 'user', content: text }, promptSource: 'sdk', origin: { kind: 'human' } });
+  const say = (text) => add({ type: 'assistant', message: msg([{ type: 'text', text }]) });
+  const think = (text, kind) => add({ type: 'assistant', message: msg([{ type: 'thinking', thinking: text, signature: thinkingSignature(kind) }]) });
+  const call = (name, input, result, { isError = false, image = false } = {}) => {
+    const toolId = 'toolu_' + String(n + 1).padStart(8, '0');
+    add({ type: 'assistant', message: msg([{ type: 'tool_use', id: toolId, name, input }]) });
+    const content = image ? [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PIXEL } }] : [{ type: 'text', text: result }];
+    add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content, ...(isError ? { is_error: true } : {}) }] } });
+    return toolId;
+  };
+  const notice = (desc, status, toolUseId) => `<task-notification>\n<task-id>b${n}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<status>${status}</status>\n<summary>Background command "${desc}" ${status === 'failed' ? 'failed with exit code 1' : 'completed (exit code 0)'}</summary>\n</task-notification>`;
+  const folded = (prompt, commandMode) => add({ type: 'attachment', attachment: { type: 'queued_command', prompt, commandMode } });
+  const compaction = (k) => {
+    add({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', level: 'info', parentUuid: null, logicalParentUuid: parent, compactMetadata: { trigger: 'auto', preTokens: 950000 + k, postTokens: 9000 } });
+    add({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary ${k}: the first ${turns} things were being built.` } });
+  };
+  lines.push({ type: 'custom-title', customTitle: 'A long day of work', sessionId: id });
+  let bg = null, failing = null;
+  for (let i = 1; i <= turns; i++) {
+    clock += 60 * 1000;
+    user(`Turn ${i}: build thing ${i}`); said.push(`Turn ${i}: build thing ${i}`);
+    if (i % 6 === 0) { add({ type: 'user', isMeta: true, message: { role: 'user', content: `Base directory for this skill ${i}` } }); hidden.push(`Base directory for this skill ${i}`); }
+    think(`private reasoning about thing ${i}`, 'reasoning'); hidden.push(`private reasoning about thing ${i}`);
+    say(`Working on thing ${i}.`); said.push(`Working on thing ${i}.`);
+    call('Bash', { command: `make thing-${i}`, description: `Build thing ${i}` }, 'built');
+    if (i === 10) { folded('also keep the logs', 'prompt'); said.push('also keep the logs'); }
+    if (i === 12) bg = call('Bash', { command: 'render --long', description: 'Render the long video', run_in_background: true }, 'Command running in background with ID: b12');
+    if (i === 13) folded(notice('Render the long video', 'completed', bg), 'task-notification');
+    if (i === 14) failing = call('Bash', { command: 'upload --all', description: 'Upload the renders', run_in_background: true }, 'Command running in background with ID: b14');
+    call('Bash', { command: `test thing-${i}`, description: `Test thing ${i}` }, i === 16 ? 'Exit code 2' : 'ok', { isError: i === 16 });
+    if (i === 15) folded(notice('Upload the renders', 'failed', failing), 'task-notification');
+    // The pictures a turn reads or sends are on disk, as they would be: a sent one is drawn from its file.
+    if (i % 5 === 0 || i % 9 === 0) fs.writeFileSync(path.join(cwd, `shot-${i}.png`), Buffer.from(PIXEL, 'base64'));
+    if (i % 5 === 0) call('Read', { file_path: path.join(cwd, `shot-${i}.png`) }, '', { image: true });
+    if (i % 7 === 0 || i === turns) call('Write', { file_path: path.join(cwd, 'out', `thing-${i}.txt`), content: 'one\ntwo\nthree\n' }, 'File created');
+    if (i % 9 === 0) call('mcp__claude-anywhere__SendUserFile', { files: [path.join(cwd, `shot-${i}.png`)], caption: `Thing ${i}` }, 'Sent');
+    think(`Thing ${i} is built and tested.`, 'narration'); said.push(`Thing ${i} is built and tested.`);
+    if (i === 25) {
+      // A second process answering a message from an earlier point, beside the main thread.
+      const main = parent; parent = lines.filter((l) => l.uuid && !l.isSidechain).at(-6).uuid;
+      user('stop the gpu for a game'); say('Stopped the GPU jobs, play away.'); said.push('stop the gpu for a game', 'Stopped the GPU jobs, play away.');
+      parent = main;
+    }
+    if (i === 30) { lines.push({ type: 'assistant', parentUuid: null, isSidechain: true, cwd, sessionId: id, uuid: uid(), timestamp: new Date(clock).toISOString(), message: msg([{ type: 'text', text: 'subagent chatter' }]) }); hidden.push('subagent chatter'); }
+    if (i === 33) { add({ type: 'user', isMeta: true, message: { role: 'user', content: 'Continue from where you left off.' } }); add({ type: 'assistant', message: { ...msg([{ type: 'text', text: 'No response requested.' }]), model: '<synthetic>' } }); hidden.push('Continue from where you left off.', 'No response requested.'); }
+    say(`Done with thing ${i}.`); said.push(`Done with thing ${i}.`);
+    lines.push({ type: 'queue-operation', operation: 'dequeue', timestamp: new Date(clock).toISOString(), sessionId: id });
+    if (i === Math.round(turns / 3) || i === Math.round((2 * turns) / 3)) compaction(i);
+  }
+  add({ type: 'user', origin: { kind: 'task-notification' }, promptSource: 'system', queueTranscriptOnly: true, message: { role: 'user', content: "<task-notification>\n<task-id>b1</task-id>\n<status>stopped</status>\n<summary>2 background shell command tasks didn't finish before the previous session ended.</summary>\n</task-notification>" } });
+  const file = path.join(dir, id + '.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const then = new Date(Date.now() - 10 * 60 * 1000); fs.utimesSync(file, then, then);
+  return { id, file, said, hidden, lines };
+}
+
 // The app, on its own port and data, with no app password: this computer only, and the
 // open token for whoever signs in from it.
 export async function startApp({ port, dataDir, configDir }) {

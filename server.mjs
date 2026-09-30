@@ -21,6 +21,7 @@ const SERVER_STARTED_AT = Date.now();
 import { promisify } from 'node:util';
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, forkSession, deleteSession, tagSession } from '@anthropic-ai/claude-agent-sdk';
 import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
+import { historyPage, historyImage } from './lib/history.mjs';
 import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
 import { tailSession, isWorkingElsewhere, WORKING_WINDOW_MS, sessionFile } from './lib/tail.mjs';
@@ -171,7 +172,7 @@ app.post('/api/login', (req, res) => {
 app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   // EventSource cannot send headers, so the live-events stream may carry the token in the query string.
-  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/events$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && knownToken(String(req.query.token || ''));
+  const viaQuery = req.method === 'GET' && (/^\/sessions\/[0-9a-f-]+\/(events|image\/[0-9a-f-]+\/\d+)$/i.test(req.path) || req.path === '/notify' || req.path === '/file') && knownToken(String(req.query.token || ''));
   if (!knownToken(auth.replace(/^Bearer /, '')) && !viaQuery) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
@@ -467,6 +468,25 @@ async function sessionLineStats(id) {
   const value = { added, removed }; lineStatsCache.set(id, { key, value }); return value;
 }
 
+// Untracked files, counted the way Desktop counts them so both apps show the same "+N": the
+// files the whole repository lists (from its root, not the session's subfolder), the first 200
+// of them read - text only, up to 1 MB each - and the rest listed with nothing added. Counting
+// 400 files of up to 2 MB, as this did, showed +64,172 where Desktop said +32,414.
+const UNTRACKED_READ = 200, UNTRACKED_MAX = 1024 * 1024;
+async function untrackedLines(cwd) {
+  const git = (args) => execFileP('git', ['-C', cwd, ...args], { timeout: 30000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout).catch(() => null);
+  const top = ((await git(['rev-parse', '--show-toplevel'])) || '').trim() || cwd;
+  const files = ((await git(['ls-files', '--others', '--exclude-standard', '--full-name', ':/'])) || '').split('\n').filter(Boolean);
+  let added = 0;
+  for (const rel of files.slice(0, UNTRACKED_READ)) {
+    try {
+      const p = path.join(top, rel), st = fs.statSync(p);
+      if (st.isFile() && st.size <= UNTRACKED_MAX) { const buf = fs.readFileSync(p); if (!buf.includes(0)) { const lines = buf.toString('utf8').split('\n'); if (lines[lines.length - 1] === '') lines.pop(); added += lines.length; } }
+    } catch {}
+  }
+  return { files, added };
+}
+
 // Branch and uncommitted diff of the session's folder, for the bar above the composer.
 app.get('/api/sessions/:id/git', async (req, res) => {
   try {
@@ -476,13 +496,12 @@ app.get('/api/sessions/:id/git', async (req, res) => {
     const branch = await run(['rev-parse', '--abbrev-ref', 'HEAD']);
     if (branch === null) return res.json({ git: false });
     const stat = (await run(['diff', '--shortstat', 'HEAD'])) || '';
-    const untrackedFiles = ((await run(['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean);
     let added = Number((stat.match(/(\d+) insertion/) || [])[1] || 0), removed = Number((stat.match(/(\d+) deletion/) || [])[1] || 0);
     const files = Number((stat.match(/(\d+) files? changed/) || [])[1] || 0);
-    // New files are part of the work too: count their lines (text files up to 2 MB), as Desktop does.
-    for (const rel of untrackedFiles.slice(0, 400)) {
-      try { const p = path.join(s.cwd, rel); const st = fs.statSync(p); if (st.size > 2 * 1024 * 1024 || /\.(png|jpe?g|gif|webp|mp4|mp3|wav|zip|pdf|woff2?|ico|exe|dll)$/i.test(rel)) continue; const buf = fs.readFileSync(p); if (buf.includes(0)) continue; added += buf.toString('utf8').split('\n').length - 1; } catch {}
-    }
+    // New files are part of the work too, counted as Desktop counts them (see untrackedLines).
+    const untracked = await untrackedLines(s.cwd);
+    const untrackedFiles = untracked.files;
+    added += untracked.added;
     const lines = await sessionLineStats(req.params.id);
     const dirty = files + untrackedFiles.length > 0;
     res.json({ git: true, branch, added, removed, files: files + untrackedFiles.length, dirty, sessionAdded: dirty ? added : lines.added, sessionRemoved: dirty ? removed : lines.removed });
@@ -510,11 +529,12 @@ app.get('/api/sessions/:id/changes', async (req, res) => {
     const numstat = (await gitIn(cwd, ['diff', '--numstat', '-M', 'HEAD'])) || '';
     for (const line of numstat.split('\n')) { if (!line.trim()) continue; const [a, d, ...rest] = line.split('\t'); let p = rest.join('\t'); const m = p.match(/^(.*)\{(.*) => (.*)\}(.*)$/); if (m) p = m[1] + m[3] + m[4]; else if (p.includes(' => ')) p = p.split(' => ').pop(); const f = files.get(p) || files.get(rest.join('\t')); if (f) { if (a === '-') f.binary = true; else { f.added = Number(a); f.removed = Number(d); } } }
     const untracked = ((await gitIn(cwd, ['ls-files', '--others', '--exclude-standard'])) || '').split('\n').filter(Boolean);
-    for (const p of untracked.slice(0, 500)) {
+    // Counted as the bar counts them (untrackedLines): the first 200 read, text up to 1 MB.
+    untracked.slice(0, 500).forEach((p, i) => {
       const f = { path: p, status: '?', added: 0, removed: 0, binary: BINARY_EXT.test(p) };
-      try { const full = path.join(cwd, p); const st = fs.statSync(full); if (!f.binary && st.size <= 2 * 1024 * 1024) { const buf = fs.readFileSync(full); if (buf.includes(0)) f.binary = true; else { const t = buf.toString('utf8'); f.added = t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; } } } catch {}
+      try { const full = path.join(cwd, p); const st = fs.statSync(full); if (!f.binary && i < UNTRACKED_READ && st.size <= UNTRACKED_MAX) { const buf = fs.readFileSync(full); if (buf.includes(0)) f.binary = true; else { const t = buf.toString('utf8'); f.added = t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0; } } } catch {}
       files.set(p, f);
-    }
+    });
     const list = [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
     res.json({ git: true, branch, cwd, files: list, added: list.reduce((n, f) => n + f.added, 0), removed: list.reduce((n, f) => n + f.removed, 0) });
   } catch (e) { res.json({ git: false, error: String(e.message || e) }); }
@@ -1035,6 +1055,27 @@ app.post('/api/sessions/:id/prefs', (req, res) => {
   res.json(cur);
 });
 
+// The conversation a page at a time, newest first: `before` is the previous page's, `until` leaves
+// out a turn still running here (the live stream replays it). All of it, across compactions.
+app.get('/api/sessions/:id/history', async (req, res, next) => {
+  try {
+    const before = req.query.before != null && req.query.before !== '' ? Number(req.query.before) : Infinity;
+    const page = await historyPage(req.params.id, { before: Number.isFinite(before) ? before : Infinity, until: Number(req.query.until) || 0 });
+    res.json(page || { messages: [], before: 0, more: false, midTurn: false });
+  } catch (e) { next(e); }
+});
+// A picture from the transcript, drawn when it scrolls into view. The line never changes.
+app.get('/api/sessions/:id/image/:uuid/:n', async (req, res, next) => {
+  try {
+    const pic = await historyImage(req.params.id, req.params.uuid, Number(req.params.n));
+    if (!pic) return res.status(404).end();
+    res.setHeader('Content-Type', /^image\/(png|jpeg|gif|webp)$/.test(pic.type) ? pic.type : 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.end(pic.data);
+  } catch (e) { next(e); }
+});
+
+// The page before this server paged its history asks here, and draws the whole list it gets.
 app.get('/api/sessions/:id/messages', async (req, res, next) => {
   try {
     const out = [];
