@@ -147,6 +147,9 @@ test('over HTTP: /history pages back through the session, and a picture needs th
   assert.match(pic.headers.get('cache-control'), /immutable/);
   const unknown = await get('/api/sessions/00000000-1111-2222-3333-444444444444/history');
   assert.deepEqual(unknown.messages, []);
+  // An id that is not a session's names no file, however it is spelled.
+  fs.writeFileSync(path.join(configDir, 'secret.jsonl'), JSON.stringify({ type: 'user', uuid: 'x', message: { role: 'user', content: 'not a session' } }) + '\n');
+  for (const id of ['..%5Csecret', '..%2Fsecret', '..%5C..%5Csecret']) assert.deepEqual((await get(`/api/sessions/${id}/history`)).messages ?? [], [], id);
 });
 
 test('untracked files count as Desktop counts them: the first 200, text up to 1 MB each', async () => {
