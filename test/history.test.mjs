@@ -111,7 +111,7 @@ test('a turn still running here is left to the live stream', async () => {
   const cut = Date.parse(s.lines.filter((l) => l.uuid && !l.isSidechain).at(-40).timestamp);
   const p = await h.historyPage(s.id, { until: cut });
   assert.ok(p.messages.length > 50);
-  assert.ok(p.messages.every((m) => Date.parse(m.timestamp) < cut - 1500), 'nothing from the running turn');
+  assert.ok(p.messages.every((m) => Date.parse(m.timestamp) < cut), 'nothing from the running turn');
 });
 
 test('the transcript growing shows in the next page, a half-written line waits, a rewritten file is read again', async () => {

@@ -40,6 +40,10 @@ await page.goto('http://127.0.0.1:7779/');
   changed — this app is used from Safari on a Mac too.
 - Real turns are cheap with `model: 'claude-haiku-4-5-20251001'` and a prompt
   that does one small thing.
+- Turns without any account: `startFakeApi()` and `fakeApiEnv()` in `test/fixtures` point
+  the real Claude Code at a fake Anthropic API — the CLI, the app and the page end to end,
+  offline, free and the same every time (`test/ui/realtime.cjs`). It answers word by word,
+  slowly on `[slow]`, and starts a background command on `[background]`.
 - For the native window: it renders through WebView2, so take the shot with a
   DPI-aware script (`SetProcessDPIAware`) or the right-hand side is cut off and
   you will chase a bug that is not there.
@@ -154,6 +158,17 @@ await page.goto('http://127.0.0.1:7779/');
   pictures settle a frame later; browser anchoring is not in every Safari and has to be
   paused while a page is placed, which is when the pictures land. `#scroll` has
   `overflow-anchor: none` and `app.js` holds the element at the top of the view in place.
+- **Claude Code rests between turns.** A run's process stays up ten minutes after its
+  answer, so the next message goes straight in (on a 430 MB session: 2.6 s to the first
+  word before, 0.1 s now). `live` is "the process runs"; `busy` is "at work" — a turn, a
+  queued message, a background task. Whatever waits for nothing to be running (restart,
+  leaving with the app, removing a worktree, the sidebar's dot) means `busy`. A resting
+  process another window has written past is closed, never fed: it no longer knows the
+  conversation.
+- **A message's id is the page's.** The page draws its bubble under an id it made and sends
+  it along; the server uses it for the `queued` and `prompt` events, and the CLI keeps it as
+  the transcript line's uuid. Find a bubble by id, never by its words: matching dashed
+  bubbles by text showed a message twice whenever only a background task was running.
 
 ## Git
 

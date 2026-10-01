@@ -202,11 +202,62 @@ export function makeLongSession(configDir, cwd, { id = 'eeeeeeee-1111-2222-3333-
   return { id, file, said, hidden, lines };
 }
 
+// A stand-in for the Anthropic API, for the real Claude Code to talk to (ANTHROPIC_BASE_URL):
+// turns run end to end - the CLI, the app, the page - offline, free and the same every time.
+// An answer streams back a word at a time. A prompt with "[background]" in it is answered first
+// with a background command (`sleep`), the way a render keeps a run alive after its answer;
+// "[slow]" streams at 150 ms a word. `requests` lists what the CLI asked for.
+export async function startFakeApi({ delay = 15 } = {}) {
+  const requests = [];
+  const userText = (m) => (typeof m?.content === 'string' ? m.content : (m?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n'));
+  const server = http.createServer(async (req, res) => {
+    let body = ''; for await (const c of req) body += c;
+    const url = new URL(req.url, 'http://x');
+    let j = {}; try { j = JSON.parse(body || '{}'); } catch {}
+    requests.push({ method: req.method, path: url.pathname, stream: !!j.stream, at: Date.now() });
+    if (url.pathname.endsWith('/count_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"input_tokens":12}'); }
+    if (req.method !== 'POST' || !url.pathname.endsWith('/v1/messages')) { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"type":"error","error":{"type":"not_found_error","message":"not here"}}'); }
+    const last = (j.messages || []).at(-1) || {};
+    const afterTool = Array.isArray(last.content) && last.content.some((b) => b.type === 'tool_result');
+    const said = userText(last);
+    const words = afterTool ? 'Started it in the background.' : /\[background\]/.test(said) ? null : `Answer to: ${(said.match(/Q\d+/) || ['it'])[0]}. Done.`;
+    if (!j.stream) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ id: 'msg_' + requests.length, type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: words || 'ok' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 12, output_tokens: 6 } }));
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const pace = /\[slow\]/.test(said) ? 150 : delay;
+    send('message_start', { type: 'message_start', message: { id: 'msg_' + requests.length, type: 'message', role: 'assistant', model: j.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 12, output_tokens: 1 } } });
+    if (words) {
+      send('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+      for (const w of words.split(/(?<= )/)) { send('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: w } }); await new Promise((r) => setTimeout(r, pace)); }
+      send('content_block_stop', { type: 'content_block_stop', index: 0 });
+      send('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 6 } });
+    } else {
+      const input = JSON.stringify({ command: 'sleep 20', description: 'Render the long video', run_in_background: true });
+      send('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_fake_' + requests.length, name: 'Bash', input: {} } });
+      send('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: input } });
+      send('content_block_stop', { type: 'content_block_stop', index: 0 });
+      send('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use', stop_sequence: null }, usage: { output_tokens: 20 } });
+    }
+    send('message_stop', { type: 'message_stop' });
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  return { url, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }) };
+}
+// What the app needs to run Claude Code against the fake API: its address, a key it will accept,
+// and none of the CLI's own traffic elsewhere.
+export const fakeApiEnv = (api) => ({ ANTHROPIC_BASE_URL: api.url, ANTHROPIC_API_KEY: 'sk-ant-test-fake', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1', DISABLE_AUTOUPDATER: '1' });
+
 // The app, on its own port and data, with no app password: this computer only, and the
 // open token for whoever signs in from it.
-export async function startApp({ port, dataDir, configDir }) {
-  const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1', CLAUDE_ANYWHERE_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: configDir };
+export async function startApp({ port, dataDir, configDir, env: extra = {} }) {
+  const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1', CLAUDE_ANYWHERE_DATA_DIR: dataDir, CLAUDE_CONFIG_DIR: configDir, ...extra };
   delete env.REMOTE_PASSWORD; delete env.CLAUDE_ANYWHERE_REMOTE_PASSWORD;
+  if (extra.ANTHROPIC_API_KEY) delete env.CLAUDE_CODE_OAUTH_TOKEN; // the fake API's key, not a real login
   const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
   const base = `http://127.0.0.1:${port}`;

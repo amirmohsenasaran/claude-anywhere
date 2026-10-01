@@ -20,7 +20,7 @@ import { execFile, spawn } from 'node:child_process';
 const SERVER_STARTED_AT = Date.now();
 import { promisify } from 'node:util';
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, forkSession, deleteSession, tagSession } from '@anthropic-ai/claude-agent-sdk';
-import { runs, pendingPermissions, isLive, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
+import { runs, pendingPermissions, isLive, isBusy, startRun, answerPermission, bus, contextBySession, lastLimits } from './lib/runs.mjs';
 import { historyPage, historyImage } from './lib/history.mjs';
 import * as runsMod from './lib/runs.mjs';
 const execFileP = promisify(execFile);
@@ -359,7 +359,10 @@ const shape = (s, pinned) => ({
   createdAt: s.createdAt,
   live: isLive(s.sessionId),
   runStartedAt: isLive(s.sessionId) ? runs.get(s.sessionId).startedAt : null,
-  working: isLive(s.sessionId) || Date.now() - s.lastModified < WORKING_WINDOW_MS,
+  // A process can rest between turns, ready for the next message: live, but not working.
+  busy: isBusy(s.sessionId),
+  turnStartedAt: isLive(s.sessionId) && runs.get(s.sessionId).inTurn ? runs.get(s.sessionId).turnStartedAt : null,
+  working: isBusy(s.sessionId) || Date.now() - s.lastModified < WORKING_WINDOW_MS,
   pinned: !!pinned?.has(s.sessionId),
   tag: s.tag || '',
   archived: s.tag === 'archived',
@@ -406,7 +409,8 @@ function trashSession(id, info) {
 app.delete('/api/sessions/:id', async (req, res, next) => {
   try {
     const id = req.params.id;
-    if (isLive(id)) return res.status(409).json({ error: 'Stop the running turn first.' });
+    if (isBusy(id)) return res.status(409).json({ error: 'Stop the running turn first.' });
+    runs.get(id)?.close(); // a process resting between turns goes with its session
     const info = await getSessionInfo(id).catch(() => null);
     const kept = trashSession(id, info);
     if (!kept) await deleteSession(id); // nothing to move, or the move failed: do as asked
@@ -691,7 +695,8 @@ app.delete('/api/worktrees', async (req, res) => {
     const dir = String(req.body?.path || '');
     const known = listWorktrees().find((w) => worktrees.sameDir(w.path, dir));
     if (!known) return res.status(400).json({ error: 'That is not a worktree this app made.' });
-    if ([...runs.values()].some((r) => !r.done && r.cwd && worktrees.sameDir(r.cwd, dir))) return res.status(409).json({ error: 'Claude is working in that worktree. Stop the turn first.' });
+    if ([...runs.values()].some((r) => r.busy() && r.cwd && worktrees.sameDir(r.cwd, dir))) return res.status(409).json({ error: 'Claude is working in that worktree. Stop the turn first.' });
+    for (const r of runs.values()) if (r.cwd && worktrees.sameDir(r.cwd, dir)) r.close(); // resting there: it goes with the worktree
     await worktrees.remove(known, { force: !!req.body?.force });
     const p = readPrefs(); p.worktrees = listWorktrees().filter((w) => !worktrees.sameDir(w.path, dir)); writePrefs(p);
     res.json({ ok: true });
@@ -1098,13 +1103,16 @@ app.post('/api/sessions/:id/send', async (req, res, next) => {
     const id = req.params.id;
     const { text: prompt, images } = parseAttachments(req.body);
     if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
-    // Claude is mid-turn here: hand the message over, it runs right after (Desktop behaviour).
-    if (isLive(id)) { const qid = runs.get(id).enqueue(prompt, images); if (qid) return res.json({ queued: true, id: qid, sessionId: id }); }
+    const cid = clientId(req.body?.cid);
+    // Claude Code is running for this session - mid-turn, or resting ready for the next message:
+    // hand the message over, it runs right after (Desktop behaviour), without starting it again.
+    if (isLive(id)) { const qid = runs.get(id).enqueue(prompt, images, cid || undefined); if (qid) return res.json({ queued: true, id: qid, sessionId: id }); }
     const info = await getSessionInfo(id);
     if (!info) return res.status(404).json({ error: 'Session not found' });
     const { model, permissionMode, effort } = req.body || {};
-    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [] });
-    res.json({ runId: run.id, sessionId: id });
+    const { run } = startRun({ sessionId: id, cwd: info.cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [], promptId: cid });
+    joinRun(id, run); // other devices with this session open watch the turn as it streams
+    res.json({ runId: run.id, sessionId: id, id: cid });
   } catch (e) { next(e); }
 });
 
@@ -1126,11 +1134,11 @@ app.post('/api/sessions', async (req, res) => {
   if (!prompt && !images.length) return res.status(400).json({ error: 'Empty message' });
   if (!fs.existsSync(cwd)) return res.status(400).json({ error: 'That folder does not exist on this machine.' });
   const { model, permissionMode, effort } = req.body || {};
-  const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [] });
+  const { run, ready } = startRun({ cwd, prompt, images, model, permissionMode, effort, disabledMcp: readPrefs().disabledMcp || [], promptId: clientId(req.body?.cid) });
   try {
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Claude Code did not start in time')), 60000));
     const sessionId = await Promise.race([ready, timeout]);
-    res.json({ runId: run.id, sessionId });
+    res.json({ runId: run.id, sessionId, id: run.events[0]?.id });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
@@ -1181,23 +1189,53 @@ app.get('/api/sessions/:id/tasks/:taskId/output', (req, res) => {
 // it streams that turn (replaying what the client missed via Last-Event-ID).
 // Otherwise it follows the transcript file, so work done in VS Code, a
 // terminal or Claude Desktop shows up here as it happens.
+// A page's own id for a message it sends: its bubble carries it, and the events saying the message
+// was queued and then taken up carry it back, so the page finds that bubble instead of drawing a
+// second one. Only ever an id - it goes into the page's selectors.
+const clientId = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v) ? v : null);
+
+// A page that knows `batch` gets what it missed condensed, in a few messages it draws in one pass
+// each; a page loaded before this server still gets the events one by one. About a megabyte a
+// message, each with its own id - screenshots make a long turn tens of MB, and a phone that drops
+// the connection halfway resumes from the last piece, not the start.
+function writeEvents(res, events, batch) {
+  if (!batch) { for (const ev of events) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`); return; }
+  let part = [], size = 0, last = -1;
+  const flush = () => { if (part.length) res.write(`id: ${last}\ndata: {"t":"batch","events":[${part.join(',')}]}\n\n`); part = []; size = 0; };
+  for (const ev of events) { const s = JSON.stringify(ev); part.push(s); size += s.length; last = ev.i; if (size > 1 << 20) flush(); }
+  flush();
+}
+
+// Pages following a session's transcript (it was idle when they opened it). When a turn starts
+// here they are moved onto the run itself: another device sees the message and the answer as
+// they stream, at once, instead of a block at a time from the file, and only once it reconnects.
+const followers = new Map(); // sessionId -> Set<{ res, batch, stop, run }>
+function joinRun(id, run) {
+  const set = followers.get(id);
+  if (!set) return;
+  followers.delete(id);
+  for (const f of set) { f.stop?.(); f.run = run; writeEvents(f.res, f.batch ? run.backlog(-1) : run.events, f.batch); run.listeners.add(f.res); }
+}
+
+// Server-sent events for one session. While Claude Code runs here (in a turn, or resting ready for
+// the next message) it streams the run; otherwise it follows the transcript file, so work done in
+// VS Code, a terminal or Claude Desktop shows up here as it happens.
 app.get('/api/sessions/:id/events', (req, res) => {
   const id = req.params.id;
   const run = runs.get(id);
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-  const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+  // Back within a second after a drop (a phone changing networks), not the browser's three.
+  res.write('retry: 1000\n\n');
+  // A ping the page can see - an EventSource never shows comments, so a page could not tell a
+  // quiet session from a dead connection. One that hears nothing for a while reconnects.
+  const ping = setInterval(() => res.write('data: {"t":"ping"}\n\n'), 15000);
   if (run && !run.done) {
-    const since = Number(req.get('last-event-id') ?? req.query.since ?? -1);
-    // A page that knows `batch` gets what it missed condensed, in a few messages it draws in
-    // one pass each; a page loaded before this server still gets the events one by one. About
-    // a megabyte a message, each with its own id - screenshots make a long turn tens of MB, and
-    // a phone that drops the connection halfway resumes from the last piece, not the start.
-    if (req.query.batch) {
-      let part = [], size = 0, last = -1;
-      const flush = () => { if (part.length) res.write(`id: ${last}\ndata: {"t":"batch","events":[${part.join(',')}]}\n\n`); part = []; size = 0; };
-      for (const ev of run.backlog(since)) { const s = JSON.stringify(ev); part.push(s); size += s.length; last = ev.i; if (size > 1 << 20) flush(); }
-      flush();
-    } else for (const ev of run.events) if (ev.i > since) res.write(`id: ${ev.i}\ndata: ${JSON.stringify(ev)}\n\n`);
+    const lastId = req.get('last-event-id');
+    const since = Number(lastId ?? req.query.since ?? -1);
+    // Opening the session, the page reads the earlier turns from the transcript: from the run it
+    // needs the turn under way. Reconnecting, it needs what it missed.
+    const events = lastId == null && req.query.from === 'turn' ? run.attach() : req.query.batch ? run.backlog(since) : run.events.filter((ev) => ev.i > since);
+    writeEvents(res, events, !!req.query.batch);
     run.listeners.add(res);
     req.on('close', () => { clearInterval(ping); run.listeners.delete(res); });
     return;
@@ -1205,8 +1243,10 @@ app.get('/api/sessions/:id/events', (req, res) => {
   // A turn that just finished here also touched the file; that is not "another window".
   const quietUntil = run?.finishedAt || 0;
   res.write(`data: ${JSON.stringify({ t: 'tail', working: isWorkingElsewhere(id, quietUntil) })}\n\n`);
-  const stop = tailSession(id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`), { quietUntil });
-  req.on('close', () => { clearInterval(ping); if (stop) stop(); });
+  const f = { res, batch: !!req.query.batch, stop: null, run: null };
+  f.stop = tailSession(id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`), { quietUntil });
+  (followers.get(id) || followers.set(id, new Set()).get(id)).add(f);
+  req.on('close', () => { clearInterval(ping); f.stop?.(); const set = followers.get(id); set?.delete(f); if (set && !set.size) followers.delete(id); f.run?.listeners.delete(res); });
 });
 
 app.post('/api/permissions/:reqId', (req, res) => {
@@ -1269,7 +1309,8 @@ app.get('/api/addresses', (_req, res) => {
 });
 
 // ---------- updating from anywhere: what is running, restart the server, rebuild the app ----------
-const liveCount = () => [...runs.values()].filter((r) => !r.done).length;
+// Runs at work. One resting between turns holds nothing up - not a restart, not leaving.
+const liveCount = () => [...runs.values()].filter((r) => r.busy()).length;
 
 // What this copy of the app is. A packaged install has no checkout to ask, so the
 // shell passes its own compiled-in version and commit; running from a clone, the
@@ -1425,7 +1466,7 @@ app.get('/api/rebuild/log', (_req, res) => {
 });
 
 app.get('/api/runs', (_req, res) => {
-  res.json([...runs.values()].filter((r) => !r.done).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));
+  res.json([...runs.values()].filter((r) => r.busy()).map((r) => ({ sessionId: r.sessionId, startedAt: r.startedAt, waiting: [...pendingPermissions.values()].some((p) => p.run === r) })));
 });
 
 app.use((err, _req, res, _next) => {
@@ -1463,11 +1504,11 @@ let parentPid = Number(envOf('PARENT_PID')) || 0;
 let orphanSince = 0;
 if (parentPid) setInterval(() => {
   try { process.kill(parentPid, 0); orphanSince = 0; return; } catch {}
-  const live = [...runs.values()].filter((r) => !r.done).length;
+  const live = liveCount();
   if (live) { if (!orphanSince) { orphanSince = Date.now(); console.log(`[claude-anywhere] desktop app is gone; staying up for ${live} running turn(s)`); } return; }
   console.log('[claude-anywhere] desktop app is gone and nothing is running, exiting'); process.exit(0);
 }, 2000).unref();
 // The adopting app may be a newer build than the one that started this server, and
 // until the server restarts its own environment still describes the old one — so the
 // About line and the update check take the version from whoever owns it now.
-app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; if (req.body?.version) appVersion = String(req.body.version); if (req.body?.commit) appCommit = String(req.body.commit); console.log('[claude-anywhere] adopted by app pid', pid, req.body?.version ? 'v' + req.body.version : ''); } res.json({ ok: true, parentPid, liveRuns: [...runs.values()].filter((r) => !r.done).length }); });
+app.post('/api/adopt', (req, res) => { const pid = Number(req.body?.pid); if (pid > 0) { parentPid = pid; orphanSince = 0; if (req.body?.version) appVersion = String(req.body.version); if (req.body?.commit) appCommit = String(req.body.commit); console.log('[claude-anywhere] adopted by app pid', pid, req.body?.version ? 'v' + req.body.version : ''); } res.json({ ok: true, parentPid, liveRuns: liveCount() }); });

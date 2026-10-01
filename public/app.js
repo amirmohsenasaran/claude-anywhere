@@ -494,7 +494,9 @@
     return d.getFullYear() === now.getFullYear() ? d.toLocaleDateString(undefined, { month: 'long' }) : String(d.getFullYear());
   }
   const STATES = ['Needs your input', 'Working', 'Failed', 'Unread', 'Archived', 'Idle'];
-  const stateBucket = (s) => s.needsInput ? STATES[0] : s.live || s.working ? STATES[1] : s.failed ? STATES[2] : s.unread ? STATES[3] : s.archived ? STATES[4] : STATES[5];
+  // `busy`, not `live`: Claude Code can rest between turns, ready for the next message, and that is not working.
+  const working = (s) => (s.busy ?? s.live) || s.working;
+  const stateBucket = (s) => s.needsInput ? STATES[0] : working(s) ? STATES[1] : s.failed ? STATES[2] : s.unread ? STATES[3] : s.archived ? STATES[4] : STATES[5];
   const GROUPS = [['project', 'Project', 'Your own order, drag to arrange'], ['date', 'Date', 'Today, yesterday, this month'], ['state', 'Activity', 'Needs input, working, unread']];
   const SORTS = [['manual', 'Manual', 'The order you dragged them into'], ['recent', 'Recently active', ''], ['name', 'Name', '']];
   function setView(patch) {
@@ -629,7 +631,7 @@
   function sessionRow(s, kind = 'session', group = null) {
     const onBranch = s.branch && !/^(main|master)$/i.test(s.branch);
     const attn = s.needsInput ? 'needs-input' : s.failed ? 'failed' : s.unread ? 'unread' : '';
-    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (s.live || s.working ? ' working' : '') + (attn ? ' ' + attn : ''));
+    const a = el('a', 'session-item' + (s.id === state.current ? ' active' : '') + (s.pinned ? ' pinned' : '') + (onBranch ? ' on-branch' : '') + (working(s) ? ' working' : '') + (attn ? ' ' + attn : ''));
     a.href = '#/s/' + s.id; a.title = s.title + (s.branch ? '\nBranch: ' + s.branch : '') + (s.archived ? '\nArchived' : ''); a.dataset.id = s.id;
     if (selected.has(s.id)) a.classList.add('selected');
     if (s.archived) a.classList.add('is-archived');
@@ -646,7 +648,7 @@
       if (selected.size) clearSelection();
     });
     if (attn) { const d = el('span', 'dot ' + attn); d.title = attn === 'needs-input' ? 'Needs your input' : attn === 'failed' ? 'The last turn failed' : 'Finished while you were away'; a.appendChild(d); }
-    else if (s.live || s.working) { const d = el('span', 'dot'); d.title = s.live ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
+    else if (working(s)) { const d = el('span', 'dot'); d.title = (s.busy ?? s.live) ? 'Working (started here)' : 'Working in another window'; a.appendChild(d); }
     const t = el('span', 't', s.title); t.dir = 'auto'; a.appendChild(t);
     // Found inside the transcript: the row grows a second line with what was found there.
     const found = hits.get(s.id);
@@ -3221,16 +3223,45 @@
     input.placeholder = on ? 'Claude is working on this chat in another window…' : (state.current ? 'Type / for commands' : 'Describe a task or ask a question');
   }
 
-  function subscribe(sessionId, { since = -1 } = {}) {
+  // The bubble a message already has on the page: by the id the page gave it when it was sent (the
+  // server hands it back with every event about that message), by the transcript line it was
+  // drawn from, or - with a server from before those ids - the page's own unconfirmed bubble with
+  // the same words. A message used to appear twice: the "queued" event looked only for a dashed
+  // bubble, and one sent while only a background task ran is not drawn dashed.
+  function bubbleFor(ev) {
+    if (ev.id) { const n = thread.querySelector(`.msg.user[data-prompt-id="${CSS.escape(ev.id)}"], .msg.user[data-uuid="${CSS.escape(ev.id)}"]`); if (n) return n; }
+    const words = String(ev.text || '').trim();
+    return [...thread.querySelectorAll('.msg.user[data-pending]')].find((n) => (n.querySelector('.msg-text')?.textContent || '').trim() === words) || null;
+  }
+  // An id the page gives a message before it is sent - a UUID, since the CLI keeps it as the
+  // transcript line's. getRandomValues, not randomUUID: other devices reach the app over plain
+  // http, and randomUUID exists only on secure pages.
+  const newId = () => {
+    const b = crypto.getRandomValues(new Uint8Array(16)); b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
+
+  function subscribe(sessionId, { since = -1, fromTurn = false } = {}) {
     if (state.current !== sessionId) return; // the chat moved on while this was being set up
     if (state.es) { state.es.close(); state.es = null; }
-    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}&batch=1`);
+    const es = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(state.token)}&since=${since}&batch=1${fromTurn ? '&from=turn' : ''}`);
     state.es = es;
     // partial blocks under construction, by index
     const partial = new Map();
     let msgNo = 0, mode = 'run', replaying = false;
     const key = (index) => msgNo + ':' + index;
+    // A connection can die without a word - a phone's radio asleep, a change of network. The
+    // server pings every 15 s; a page in front of the reader that has heard nothing for 40 s opens
+    // the chat again. (Only once a ping has come: a server from before them is silent when idle.)
+    const heard = { at: Date.now(), pings: false };
+    const watch = setInterval(() => {
+      if (state.es !== es) { clearInterval(watch); return; }
+      if (!heard.pings || document.hidden || Date.now() - heard.at < 40000) return;
+      clearInterval(watch); openSession(sessionId);
+    }, 5000);
     es.onmessage = (e) => {
+      heard.at = Date.now();
       // Whatever else happens, a stream never writes into another session's thread.
       if (state.current !== sessionId) { es.close(); if (state.es === es) state.es = null; return; }
       const ev = JSON.parse(e.data);
@@ -3252,8 +3283,12 @@
         case 'user_text': {
           const text = stripHarness(ev.text); const images = ev.images || [];
           if (!text && !images.length) break;
-          state.live = null; thread.appendChild(userMsg(text, { images })); autoscroll(); break;
+          state.live = null;
+          const mine = bubbleFor({ id: ev.uuid, text });
+          if (mine) delete mine.dataset.pending; else thread.appendChild(userMsg(text, { images }));
+          autoscroll(); break;
         }
+        case 'ping': heard.pings = true; break;
         case 'mode': break;
         // A background task's notice, a message typed mid-turn, a compaction, a notice - drawn
         // as the history draws them, into the turn that is under way.
@@ -3272,16 +3307,14 @@
           autoscroll(); break;
         }
         case 'queued': {
-          if (ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`)) break;
-          // our own ghost bubble, posted a moment ago and not yet tagged with its id
-          const mine = [...thread.querySelectorAll('.msg.user.queued:not([data-prompt-id])')].find((n) => n.querySelector('.msg-body').textContent === ev.text);
-          if (mine) { mine.dataset.promptId = ev.id; break; }
+          const mine = bubbleFor(ev);
+          if (mine) { mine.dataset.promptId = ev.id; delete mine.dataset.pending; break; }
           thread.appendChild(userMsg(ev.text, { queued: true, id: ev.id })); autoscroll(); break;
         }
         case 'prompt': {
           state.live = null;
-          const q = ev.id && thread.querySelector(`[data-prompt-id="${ev.id}"]`);
-          if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); }
+          const q = bubbleFor(ev);
+          if (q) { q.classList.remove('queued'); q.querySelector('.queued-label')?.remove(); if (ev.id) q.dataset.promptId = ev.id; delete q.dataset.pending; }
           else thread.appendChild(userMsg(ev.text, { id: ev.id, images: ev.images || [] }));
           // A prompt being taken up is a turn starting - including a queued message that runs
           // after only a background task was left, when the composer had gone idle. Relight it.
@@ -3368,8 +3401,13 @@
           break;
         case 'error': authNote(ev.text); break;
         case 'stderr': console.warn('[claude]', ev.text); break;
+        // Claude Code runs, resting between turns: ready for the next message, not answering one.
+        case 'ready': setAnswering(false); break;
         case 'done':
           setRunning(false); state.live = null; es.close(); loadSessions(); state.tasks = []; paintTasks();
+          // Another window went on with the session while Claude Code rested here: what it wrote
+          // so far is read from the transcript, then the page follows the file.
+          if (ev.why === 'elsewhere' && state.current === sessionId) { openSession(sessionId); break; }
           // keep watching the file in case another window continues this chat
           if (state.current === sessionId) setTimeout(() => { if (state.current === sessionId && !state.running) subscribe(sessionId); }, 500);
           break;
@@ -3631,22 +3669,31 @@
     pending.length = 0; renderPending();
     input.value = ''; input.style.height = 'auto'; try { localStorage.removeItem(draftKey(state.current)); } catch {}
     empty.classList.remove('show'); stickToBottom = true;
-    const body = { text, attachments, files };
-    // Our run's stream is open, so the message goes into it (like Desktop). If Claude is still
-    // answering it waits its turn and is labelled so; if only a background task is left it runs
-    // at once, so it is shown as a plain message, not "queued behind" that task.
+    // The message's own id, drawn on its bubble now and sent with it: every event about the
+    // message carries it back, so this bubble is the one that turns solid - never a second one.
+    const cid = newId();
+    const body = { text, attachments, files, cid };
+    // Our run's stream is open (Claude is answering, or Claude Code is resting ready for the next
+    // message), so the message goes into it, like Desktop. If Claude is still answering it waits
+    // its turn and is labelled so; otherwise it runs at once and is shown as a plain message.
     if (state.running && state.current) {
-      const ghost = userMsg(shown, { queued: state.answering, images }); thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
+      const ghost = userMsg(shown, { queued: state.answering, images, id: cid }); ghost.dataset.pending = '1';
+      thread.appendChild(ghost); statusPaint(); autoscroll(); paintSendButton();
       try { const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify(body) }); if (r.id) ghost.dataset.promptId = r.id; }
       catch (e) { ghost.remove(); thread.appendChild(el('div', 'note error', e.message)); }
       return;
     }
-    thread.appendChild(userMsg(shown, { images })); autoscroll();
+    const mine = userMsg(shown, { images, id: cid }); mine.dataset.pending = '1';
+    thread.appendChild(mine); autoscroll();
+    // Following the transcript stops before the run starts: it would bring this message back, and
+    // the run's first lines, a block at a time.
+    if (state.es) { state.es.close(); state.es = null; }
     setRunning(true);
     try {
       if (state.current) {
-        await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ ...body, ...turnOptions() }) });
-        subscribe(state.current, { since: 0 }); // event 0 is our own prompt, already on screen
+        const r = await api(`/sessions/${state.current}/send`, { method: 'POST', body: JSON.stringify({ ...body, ...turnOptions() }) });
+        if (r.id && r.id !== cid) mine.dataset.promptId = r.id;
+        subscribe(state.current, { fromTurn: true }); // the turn from its prompt - this bubble, found by its id
       } else {
         const r = await api('/sessions', { method: 'POST', body: JSON.stringify({ ...body, cwd: state.cwd || '~', ...turnOptions() }) });
         state.current = r.sessionId;
@@ -3655,10 +3702,12 @@
         $('#chat-title').textContent = text.slice(0, 60);
         $('#chat-meta').textContent = state.cwd.split(/[\\/]/).pop();
         $('#project-btn').classList.add('locked');
-        subscribe(r.sessionId, { since: 0 });
+        if (r.id && r.id !== cid) mine.dataset.promptId = r.id;
+        subscribe(r.sessionId, { fromTurn: true });
       }
     } catch (e) {
       thread.appendChild(el('div', 'note error', e.message)); setRunning(false);
+      if (state.current) subscribe(state.current); // back to following the session
     }
   }
   async function stop() { if (state.current) await api(`/sessions/${state.current}/stop`, { method: 'POST' }); }
@@ -3812,7 +3861,10 @@
       if (seq !== openSeq) return;
       // A turn started here and still running is replayed by the live stream from
       // its prompt onwards, so the history stops just before it.
-      const until = info.live && info.runStartedAt ? info.runStartedAt : 0;
+      // From a server that tells turns apart (`busy` comes with it), the run gives the turn under way and
+      // the transcript everything before it; from an older one, the run gives all it has served.
+      const byTurn = info.busy !== undefined;
+      const until = !info.live ? 0 : byTurn ? info.turnStartedAt || 0 : info.runStartedAt || 0;
       // The newest page only; older ones come as the reader scrolls up. A server from before
       // paging has no /history and answers with the whole list.
       let page;
@@ -3840,7 +3892,7 @@
       requestAnimationFrame(fillTop); // a first page shorter than the window brings the next one
       setRunning(false); setElsewhere(false);
       markRead(id);
-      subscribe(id); // streams our own turn, or follows the file if another window is working
+      subscribe(id, { fromTurn: byTurn }); // streams our own turn, or follows the file if another window is working
       restoreDraft(id);
       usage.context = info.context || null; paintUsage(); refreshGit(); watchPr(); $('#session-menu-btn').classList.remove('hidden'); $('#new-bar').classList.add('hidden');
       input.placeholder = 'Type / for commands';
@@ -3937,7 +3989,9 @@
     let hiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { hiddenAt = Date.now(); return; }
-      if (state.current && !state.running && Date.now() - hiddenAt > 15000) openSession(state.current);
+      // Mid-turn too: a phone that slept may hold a connection that died without a word, and the
+      // run it was watching may have ended and another begun. Opening again costs one page.
+      if (state.current && (Date.now() - hiddenAt > 15000 || state.es?.readyState === 2)) openSession(state.current);
       else loadSessions().catch(() => {});
     });
   }
